@@ -37,6 +37,7 @@ final class TechnoRapper_AI_Wire {
         add_filter('cron_schedules', array($this, 'cron_schedules'));
         add_action('update_option_' . self::OPTION, array($this, 'reschedule_cron'), 10, 2);
         add_action('init', array($this, 'maybe_upgrade_schema'), 5);
+        add_action('init', array($this, 'ensure_cron_schedule'), 20);
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
@@ -142,6 +143,20 @@ final class TechnoRapper_AI_Wire {
         $schedules['tr_ai_wire_30min'] = array('interval' => 30 * MINUTE_IN_SECONDS, 'display' => 'Every 30 minutes');
         $schedules['tr_ai_wire_6hours'] = array('interval' => 6 * HOUR_IN_SECONDS, 'display' => 'Every 6 hours');
         return $schedules;
+    }
+
+    public function ensure_cron_schedule() {
+        $settings = $this->settings();
+        $desired = isset($settings['run_interval']) ? $settings['run_interval'] : 'hourly';
+        $allowed = array('tr_ai_wire_15min', 'tr_ai_wire_30min', 'hourly', 'tr_ai_wire_6hours', 'daily');
+        if (!in_array($desired, $allowed, true)) {
+            $desired = 'hourly';
+        }
+        $current = wp_get_schedule(self::CRON_HOOK);
+        if ($current !== $desired) {
+            wp_clear_scheduled_hook(self::CRON_HOOK);
+            wp_schedule_event(time() + 60, $desired, self::CRON_HOOK);
+        }
     }
 
     public function reschedule_cron($old_value, $new_value) {
