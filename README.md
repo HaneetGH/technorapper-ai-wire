@@ -24,6 +24,8 @@ WordPress plugin that reads configured RSS/Atom feeds, generates a short origina
 5. Use **Fetch feeds and process queue now** for an initial small supervised run. Scheduled polling runs hourly through WP-Cron.
 6. Review generated drafts in the normal WordPress Posts screen. The plugin never auto-publishes.
 
+Manual and scheduled feed runs are serialized with a database-backed lock to prevent overlapping executions. A stale lock is recoverable after 45 minutes. Deactivation clears the scheduled hook.
+
 ## Spend and volume controls
 
 - Daily cap counts drafts created by this plugin on the current UTC day. Set to `0` to pause creation.
@@ -40,8 +42,12 @@ WordPress plugin that reads configured RSS/Atom feeds, generates a short origina
 - Feed URLs are validated as HTTP(S); feed text is treated as untrusted input and is never allowed to control plugin behavior.
 - This MVP does not migrate or modify existing Feedzy posts/jobs and does not import source images.
 
+## Development checks
+
+GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1, and 8.3 for pushes and pull requests. This is a syntax/compatibility smoke check, not a substitute for WordPress integration tests.
+
 ## Operational notes
 
 - WP-Cron is traffic-triggered and can run late on low-traffic sites. Configure the host's system cron to invoke WordPress cron if dependable hourly polling is needed.
 - Each scheduled/manual run scans up to 10 latest items per feed and processes until the daily cap is reached. Feed caching may delay detection of new entries.
-- Remove the plugin's API key from `wp-config.php` and deactivate the plugin to stop processing.
+- Remove the plugin's API key from `wp-config.php` and deactivate the plugin to stop processing. Deactivation clears scheduled polling; it does not delete queue records or generated drafts.
