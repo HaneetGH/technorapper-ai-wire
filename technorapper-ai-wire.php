@@ -567,7 +567,7 @@ final class TechnoRapper_AI_Wire {
             'article_id' => (string) $post_id,
             'article_title' => get_the_title($post_id),
         );
-        echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',p);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},p));}})();\n</script>\n";
+        echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";p.page_location=window.location.href;p.page_title=document.title;if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',p);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},p));}})();\n</script>\n";
     }
 
     public function experiments_page() {
