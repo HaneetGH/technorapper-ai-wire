@@ -24,6 +24,8 @@ WordPress plugin that reads configured RSS/Atom feeds, generates a short origina
 5. Use **Fetch feeds and process queue now** for an initial small supervised run. Scheduled polling runs hourly through WP-Cron.
 6. Review generated drafts in the normal WordPress Posts screen. The plugin never auto-publishes.
 
+Manual and scheduled feed runs are serialized with a database-backed lock to prevent overlapping executions. A stale lock is recoverable after 45 minutes. Deactivation clears the scheduled hook.
+
 ## Spend and volume controls
 
 - Daily cap counts drafts created by this plugin on the current UTC day. Set to `0` to pause creation.
@@ -40,8 +42,24 @@ WordPress plugin that reads configured RSS/Atom feeds, generates a short origina
 - Feed URLs are validated as HTTP(S); feed text is treated as untrusted input and is never allowed to control plugin behavior.
 - This MVP does not migrate or modify existing Feedzy posts/jobs and does not import source images.
 
+## Editorial A/B experiments
+
+- The experiment is enabled by default for newly discovered feed items. Variant A uses the existing writer prompt; Variant B uses the original editorial-desk prompt that prioritizes a distinct angle, useful context, and source-grounded analysis rather than paragraph-by-paragraph rewriting.
+- Assignment is deterministic per source item, based on its source key, so retries do not switch variants. The experiment ID is configurable in **AI Wire → Settings**. Disabling the experiment assigns new items to A. Existing queue records retain their assigned variant.
+- The **AI Wire → A/B experiments** screen reports generation outcomes and first-party engaged reads over the last 30 days, split by variant and filtered to the selected experiment ID.
+- Published AI Wire articles count an engaged read after the visitor stays for at least 3 seconds. The same article is counted once per browser session. No IP address or personal identifier is stored. Drafts do not count.
+- Published AI Wire articles also emit the GA4 event `tr_ai_wire_article_view` with `experiment_id`, `variant`, `article_id`, `article_title`, `page_location`, and `page_title`. If gtag is unavailable, the event is pushed to `dataLayer` for Google Tag Manager.
+- In GA4 Admin → Custom definitions, register event-scoped dimensions for `experiment_id`, `variant`, and `article_id`. Then use Explore to compare event counts, engaged sessions, engagement time and key events by variant. Use page URL/article ID to inspect individual articles.
+- For monetisation, use linked AdSense/GA4 reporting where available, or export ad revenue by page URL and join it to article IDs. Compare revenue per 1,000 sessions. Search Console remains the source for Google organic impressions, clicks and CTR.
+- The WordPress dashboard shows first-party 3-second engaged-read counts. This version does not fetch GA4, Search Console or AdSense reports into WordPress, so it does not display revenue or Google organic-click totals. Validate the GA4 event in DebugView/Realtime before starting a multi-week experiment.
+- A/B assignment is approximately 50/50 across a sufficiently large feed sample; it is not a paired topic-matching or visitor-level randomized experiment. Compare similar topics, publication age and traffic sources before drawing conclusions.
+
+## Development checks
+
+GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1, and 8.3 for pushes and pull requests. This is a syntax/compatibility smoke check, not a substitute for WordPress integration tests.
+
 ## Operational notes
 
 - WP-Cron is traffic-triggered and can run late on low-traffic sites. Configure the host's system cron to invoke WordPress cron if dependable hourly polling is needed.
 - Each scheduled/manual run scans up to 10 latest items per feed and processes until the daily cap is reached. Feed caching may delay detection of new entries.
-- Remove the plugin's API key from `wp-config.php` and deactivate the plugin to stop processing.
+- Remove the plugin's API key from `wp-config.php` and deactivate the plugin to stop processing. Deactivation clears scheduled polling; it does not delete queue records or generated drafts.
