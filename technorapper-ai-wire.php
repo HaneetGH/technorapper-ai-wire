@@ -33,7 +33,7 @@ final class TechnoRapper_AI_Wire {
         $this->table = $wpdb->prefix . self::TABLE_SUFFIX;
         add_action('admin_menu', array($this, 'admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
-        add_action('admin_init', array($this, 'maybe_upgrade_schema'), 5);
+        add_action('init', array($this, 'maybe_upgrade_schema'), 5);
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
