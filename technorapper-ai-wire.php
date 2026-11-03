@@ -615,7 +615,7 @@ final class TechnoRapper_AI_Wire {
         $settings = $this->settings();
         $rows = $wpdb->get_results("SELECT variant, status, COUNT(*) AS total FROM {$this->table} GROUP BY variant, status", ARRAY_A);
         $views_table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
-        $view_rows = $wpdb->get_results("SELECT pm.meta_value AS variant, SUM(v.views) AS views, COUNT(DISTINCT v.post_id) AS articles FROM {$views_table} v INNER JOIN {$wpdb->postmeta} pm ON pm.post_id = v.post_id AND pm.meta_key = '_tr_ai_wire_variant' INNER JOIN {$wpdb->posts} p ON p.ID = v.post_id AND p.post_status = 'publish' WHERE v.view_date >= DATE_SUB(UTC_DATE(), INTERVAL 30 DAY) GROUP BY pm.meta_value", ARRAY_A);
+        $view_rows = $wpdb->get_results($wpdb->prepare("SELECT pm.meta_value AS variant, SUM(v.views) AS views, COUNT(DISTINCT v.post_id) AS articles FROM {$views_table} v INNER JOIN {$wpdb->postmeta} pm ON pm.post_id = v.post_id AND pm.meta_key = '_tr_ai_wire_variant' INNER JOIN {$wpdb->postmeta} exp ON exp.post_id = v.post_id AND exp.meta_key = '_tr_ai_wire_experiment_id' AND exp.meta_value = %s INNER JOIN {$wpdb->posts} p ON p.ID = v.post_id AND p.post_status = 'publish' WHERE v.view_date >= DATE_SUB(UTC_DATE(), INTERVAL 30 DAY) GROUP BY pm.meta_value", $settings['experiment_id']), ARRAY_A);
         $view_counts = array('A' => array('views' => 0, 'articles' => 0), 'B' => array('views' => 0, 'articles' => 0));
         foreach ($view_rows as $view_row) {
             $v = in_array($view_row['variant'], array('A', 'B'), true) ? $view_row['variant'] : 'A';
@@ -645,7 +645,7 @@ final class TechnoRapper_AI_Wire {
         <h2>Reader and revenue measurement</h2>
         <p>Published articles automatically emit the GA4 event <code>tr_ai_wire_article_view</code> with <code>experiment_id</code>, <code>variant</code>, <code>article_id</code>, and <code>article_title</code>. Drafts do not emit events.</p>
         <ol><li>Confirm your existing GA4 tag or Google Tag Manager is installed on the site.</li><li>In GA4 Admin → Custom definitions, create event-scoped dimensions for <code>experiment_id</code>, <code>variant</code>, and <code>article_id</code>.</li><li>Wait for data to populate, then use Explore to compare event counts, engaged sessions, engagement time and key events by variant. Use article_id/page path to inspect individual URLs.</li><li>For revenue, link AdSense to GA4 where supported, or export ad revenue by page URL and join it to article_id. Compare revenue per 1,000 sessions, not raw revenue alone.</li></ol>
-        <p><strong>Important:</strong> This page shows generation outcomes, not fabricated traffic or revenue. GA4 reporting is processed by Google and is not fetched into WordPress by this version. Search Console clicks and ad revenue must be checked in their respective reports.</p>
+        <p><strong>Important:</strong> Engaged reads shown above are first-party counts from the plugin's 3-second tracker. GA4 engagement, Search Console clicks, and ad revenue are not fetched into WordPress by this version; check those reports separately. No revenue figures are estimated or fabricated.</p>
         <p>Do not compare a handful of posts. Run the experiment for several weeks and compare similar topics, publication age and traffic sources before selecting a winner.</p>
         </div>
         <?php
