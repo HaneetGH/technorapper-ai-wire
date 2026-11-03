@@ -390,7 +390,7 @@ final class TechnoRapper_AI_Wire {
             'source_key' => $key, 'experiment_id' => $experiment_id, 'variant' => $variant, 'feed_url' => $feed, 'feed_name' => $name, 'source_guid' => $guid,
             'source_url' => $url, 'source_title' => $title, 'source_body' => $body,
             'status' => 'new', 'created_at' => $now, 'updated_at' => $now,
-        ), array('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s'));
+        ), array('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s'));
         return $ok ? (int) $wpdb->insert_id : 0;
     }
 
