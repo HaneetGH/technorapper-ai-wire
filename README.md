@@ -51,7 +51,7 @@ Manual and scheduled feed runs are serialized with a database-backed lock to pre
 - Published AI Wire articles also emit the GA4 event `tr_ai_wire_article_view` with `experiment_id`, `variant`, `article_id`, `article_title`, `page_location`, and `page_title`. If gtag is unavailable, the event is pushed to `dataLayer` for Google Tag Manager.
 - In GA4 Admin → Custom definitions, register event-scoped dimensions for `experiment_id`, `variant`, and `article_id`. Then use Explore to compare event counts, engaged sessions, engagement time and key events by variant. Use page URL/article ID to inspect individual articles.
 - For monetisation, use linked AdSense/GA4 reporting where available, or export ad revenue by page URL and join it to article IDs. Compare revenue per 1,000 sessions. Search Console remains the source for Google organic impressions, clicks and CTR.
-- This version sends analytics events but does not fetch GA4, Search Console or AdSense reports into WordPress. The dashboard deliberately avoids inventing read or revenue totals. Validate the event in GA4 DebugView/Realtime before starting a multi-week experiment.
+- The WordPress dashboard shows first-party 3-second engaged-read counts. This version does not fetch GA4, Search Console or AdSense reports into WordPress, so it does not display revenue or Google organic-click totals. Validate the GA4 event in DebugView/Realtime before starting a multi-week experiment.
 - A/B assignment is approximately 50/50 across a sufficiently large feed sample; it is not a paired topic-matching or visitor-level randomized experiment. Compare similar topics, publication age and traffic sources before drawing conclusions.
 
 ## Development checks
