@@ -34,6 +34,8 @@ final class TechnoRapper_AI_Wire {
         $this->table = $wpdb->prefix . self::TABLE_SUFFIX;
         add_action('admin_menu', array($this, 'admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
+        add_filter('cron_schedules', array($this, 'cron_schedules'));
+        add_action('update_option_' . self::OPTION, array($this, 'settings_updated'), 10, 2);
         add_action('admin_post_tr_ai_wire_save_api_key', array($this, 'save_api_key'));
         add_action('init', array($this, 'maybe_upgrade_schema'), 5);
         add_action('wp_head', array($this, 'track_article_view'), 20);
@@ -83,9 +85,7 @@ final class TechnoRapper_AI_Wire {
         if (!get_option(self::OPTION)) {
             add_option(self::OPTION, self::defaults());
         }
-        if (!wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_event(time() + 300, 'hourly', self::CRON_HOOK);
-        }
+        self::schedule_cron();
     }
 
     public static function deactivate() {
@@ -96,6 +96,7 @@ final class TechnoRapper_AI_Wire {
     public static function defaults() {
         return array(
             'feeds' => '',
+            'cron_frequency' => 'hourly',
             'max_posts_per_day' => 10,
             'monthly_budget_usd' => 5,
             'monthly_token_limit' => 1000000,
@@ -115,6 +116,30 @@ final class TechnoRapper_AI_Wire {
 
     public function register_settings() {
         register_setting('tr_ai_wire', self::OPTION, array($this, 'sanitize_settings'));
+    }
+
+    public function cron_schedules($schedules) {
+        $schedules['every_3_hours'] = array('interval' => 3 * HOUR_IN_SECONDS, 'display' => __('Every 3 hours', 'technorapper-ai-wire'));
+        $schedules['every_6_hours'] = array('interval' => 6 * HOUR_IN_SECONDS, 'display' => __('Every 6 hours', 'technorapper-ai-wire'));
+        $schedules['every_12_hours'] = array('interval' => 12 * HOUR_IN_SECONDS, 'display' => __('Every 12 hours', 'technorapper-ai-wire'));
+        return $schedules;
+    }
+
+    public function settings_updated($old_value, $value) {
+        $old_frequency = $old_value['cron_frequency'] ?? 'hourly';
+        $new_frequency = $value['cron_frequency'] ?? 'hourly';
+        if ($old_frequency !== $new_frequency) {
+            self::schedule_cron();
+        }
+    }
+
+    private static function schedule_cron() {
+        wp_clear_scheduled_hook(self::CRON_HOOK);
+        $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        $frequency = $settings['cron_frequency'];
+        if ($frequency !== 'manual') {
+            wp_schedule_event(time() + 300, $frequency, self::CRON_HOOK);
+        }
     }
 
     public function maybe_upgrade_schema() {
@@ -142,6 +167,8 @@ final class TechnoRapper_AI_Wire {
             $clean_lines[] = $url . ($label !== '' ? ' | ' . $label : '');
         }
         $out['feeds'] = implode("\n", array_unique($clean_lines));
+        $frequencies = array('hourly', 'every_3_hours', 'every_6_hours', 'every_12_hours', 'daily', 'manual');
+        $out['cron_frequency'] = in_array($input['cron_frequency'] ?? '', $frequencies, true) ? $input['cron_frequency'] : $defaults['cron_frequency'];
         $out['max_posts_per_day'] = min(500, max(0, absint($input['max_posts_per_day'] ?? $defaults['max_posts_per_day'])));
         $out['monthly_budget_usd'] = min(10000, max(0, (float) ($input['monthly_budget_usd'] ?? $defaults['monthly_budget_usd'])));
         $out['monthly_token_limit'] = min(1000000000, max(0, absint($input['monthly_token_limit'] ?? $defaults['monthly_token_limit'])));
@@ -238,6 +265,7 @@ undefined
             <form method="post" action="options.php">
                 <?php settings_fields('tr_ai_wire'); ?>
                 <table class="form-table" role="presentation">
+                    <tr><th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th><td><select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]"><?php foreach (array('hourly' => 'Every hour', 'every_3_hours' => 'Every 3 hours', 'every_6_hours' => 'Every 6 hours', 'every_12_hours' => 'Every 12 hours', 'daily' => 'Once per day', 'manual' => 'Manual only (disable scheduled runs)') as $frequency => $label) : ?><option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p></td></tr>
                     <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
                     <tr><th scope="row"><label for="tr-daily">Maximum drafts per day</label></th><td><input id="tr-daily" type="number" min="0" max="500" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts created by this plugin today. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"> <p class="description">Processing stops when tracked usage reaches the cap. Set to 0 to stop AI calls.</p></td></tr>
