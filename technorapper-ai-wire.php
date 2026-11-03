@@ -567,15 +567,20 @@ final class TechnoRapper_AI_Wire {
             'methods' => 'POST',
             'callback' => array($this, 'record_article_view'),
             'permission_callback' => '__return_true',
-            'args' => array('post_id' => array('required' => true, 'type' => 'integer', 'sanitize_callback' => 'absint')),
+            'args' => array(
+                'post_id' => array('required' => true, 'type' => 'integer', 'sanitize_callback' => 'absint'),
+                'view_token' => array('required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field'),
+            ),
         ));
     }
 
     public function record_article_view($request) {
         global $wpdb;
         $post_id = absint($request->get_param('post_id'));
-        if (!$post_id || get_post_status($post_id) !== 'publish' || !get_post_meta($post_id, '_tr_ai_wire_experiment_id', true)) {
-            return new WP_Error('tr_ai_wire_invalid_view', 'Unknown published experiment article.', array('status' => 404));
+        $expected_token = hash_hmac('sha256', $post_id . '|' . gmdate('Y-m-d'), wp_salt('auth'));
+        $provided_token = (string) $request->get_param('view_token');
+        if (!$post_id || get_post_status($post_id) !== 'publish' || !get_post_meta($post_id, '_tr_ai_wire_experiment_id', true) || !hash_equals($expected_token, $provided_token)) {
+            return new WP_Error('tr_ai_wire_invalid_view', 'Invalid experiment article view.', array('status' => 404));
         }
         $table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
         $result = $wpdb->query($wpdb->prepare(
@@ -607,16 +612,17 @@ final class TechnoRapper_AI_Wire {
             'variant' => $variant,
             'article_id' => (string) $post_id,
             'article_title' => get_the_title($post_id),
+            'view_token' => hash_hmac('sha256', $post_id . '|' . gmdate('Y-m-d'), wp_salt('auth')),
         );
         $tracking_url = esc_url_raw(rest_url('tr-ai-wire/v1/view'));
-        echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";var endpoint=" . wp_json_encode($tracking_url) . ";p.page_location=window.location.href;p.page_title=document.title;var sent=false;function record(){if(sent)return;sent=true;try{var key='tr_ai_wire_view_' + p.article_id;if(window.sessionStorage.getItem(key))return;window.sessionStorage.setItem(key,'1');}catch(e){}if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',p);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},p));}if(navigator.sendBeacon){navigator.sendBeacon(endpoint,new Blob([JSON.stringify({post_id:parseInt(p.article_id,10)})],{type:'application/json'}));}else{fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({post_id:parseInt(p.article_id,10)}),keepalive:true,credentials:'same-origin'});}}window.setTimeout(record,3000);})();\n</script>\n";
+        echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";var endpoint=" . wp_json_encode($tracking_url) . ";p.page_location=window.location.href;p.page_title=document.title;var sent=false;function record(){if(sent)return;sent=true;try{var key='tr_ai_wire_view_' + p.article_id;if(window.sessionStorage.getItem(key))return;window.sessionStorage.setItem(key,'1');}catch(e){}if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',p);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},p));}if(navigator.sendBeacon){navigator.sendBeacon(endpoint,new Blob([JSON.stringify({post_id:parseInt(p.article_id,10),view_token:p.view_token})],{type:'application/json'}));}else{fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({post_id:parseInt(p.article_id,10)}),keepalive:true,credentials:'same-origin'});}}window.setTimeout(record,3000);})();\n</script>\n";
     }
 
     public function experiments_page() {
         if (!current_user_can('manage_options')) { return; }
         global $wpdb;
         $settings = $this->settings();
-        $rows = $wpdb->get_results("SELECT variant, status, COUNT(*) AS total FROM {$this->table} GROUP BY variant, status", ARRAY_A);
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT variant, status, COUNT(*) AS total FROM {$this->table} WHERE experiment_id = %s GROUP BY variant, status", $settings['experiment_id']), ARRAY_A);
         $views_table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
         $view_rows = $wpdb->get_results($wpdb->prepare("SELECT pm.meta_value AS variant, SUM(v.views) AS views, COUNT(DISTINCT v.post_id) AS articles FROM {$views_table} v INNER JOIN {$wpdb->postmeta} pm ON pm.post_id = v.post_id AND pm.meta_key = '_tr_ai_wire_variant' INNER JOIN {$wpdb->postmeta} exp ON exp.post_id = v.post_id AND exp.meta_key = '_tr_ai_wire_experiment_id' AND exp.meta_value = %s INNER JOIN {$wpdb->posts} p ON p.ID = v.post_id AND p.post_status = 'publish' WHERE v.view_date >= DATE_SUB(UTC_DATE(), INTERVAL 30 DAY) GROUP BY pm.meta_value", $settings['experiment_id']), ARRAY_A);
         $view_counts = array('A' => array('views' => 0, 'articles' => 0), 'B' => array('views' => 0, 'articles' => 0));
