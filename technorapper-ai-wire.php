@@ -594,6 +594,9 @@ final class TechnoRapper_AI_Wire {
             return;
         }
         $post_id = get_queried_object_id();
+        if (get_post_status($post_id) !== 'publish') {
+            return;
+        }
         $experiment_id = get_post_meta($post_id, '_tr_ai_wire_experiment_id', true);
         $variant = get_post_meta($post_id, '_tr_ai_wire_variant', true);
         if (!$experiment_id || !in_array($variant, array('A', 'B'), true)) {
