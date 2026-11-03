@@ -17,6 +17,7 @@ if (!defined('ABSPATH')) {
 final class TechnoRapper_AI_Wire {
     const VERSION = '0.1.0';
     const OPTION = 'tr_ai_wire_settings';
+    const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
     const TABLE_SUFFIX = 'tr_ai_wire_items';
     const API_URL = 'https://api.openai.com/v1/responses';
@@ -33,6 +34,8 @@ final class TechnoRapper_AI_Wire {
         $this->table = $wpdb->prefix . self::TABLE_SUFFIX;
         add_action('admin_menu', array($this, 'admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
+        add_filter('cron_schedules', array($this, 'cron_schedules'));
+        add_action('update_option_' . self::OPTION, array($this, 'reschedule_cron'), 10, 2);
         add_action('init', array($this, 'maybe_upgrade_schema'), 5);
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
@@ -82,7 +85,9 @@ final class TechnoRapper_AI_Wire {
             add_option(self::OPTION, self::defaults());
         }
         if (!wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_event(time() + 300, 'hourly', self::CRON_HOOK);
+            $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+            $interval = isset($settings['run_interval']) ? $settings['run_interval'] : 'hourly';
+            wp_schedule_event(time() + 300, $interval, self::CRON_HOOK);
         }
     }
 
@@ -94,6 +99,8 @@ final class TechnoRapper_AI_Wire {
     public static function defaults() {
         return array(
             'feeds' => '',
+            'run_interval' => 'hourly',
+            'max_items_per_run' => 10,
             'max_posts_per_day' => 10,
             'monthly_budget_usd' => 5,
             'monthly_token_limit' => 1000000,
@@ -113,6 +120,38 @@ final class TechnoRapper_AI_Wire {
 
     public function register_settings() {
         register_setting('tr_ai_wire', self::OPTION, array($this, 'sanitize_settings'));
+        register_setting('tr_ai_wire', self::API_KEY_OPTION, array($this, 'sanitize_api_key'));
+    }
+
+    public function sanitize_api_key($input) {
+        $value = trim((string) $input);
+        if ($value === '') {
+            return get_option(self::API_KEY_OPTION, '');
+        }
+        if ($value === '__CLEAR__') {
+            delete_option(self::API_KEY_OPTION);
+            return '';
+        }
+        $value = sanitize_text_field($value);
+        update_option(self::API_KEY_OPTION, $value, false);
+        return $value;
+    }
+
+    public function cron_schedules($schedules) {
+        $schedules['tr_ai_wire_15min'] = array('interval' => 15 * MINUTE_IN_SECONDS, 'display' => 'Every 15 minutes');
+        $schedules['tr_ai_wire_30min'] = array('interval' => 30 * MINUTE_IN_SECONDS, 'display' => 'Every 30 minutes');
+        $schedules['tr_ai_wire_6hours'] = array('interval' => 6 * HOUR_IN_SECONDS, 'display' => 'Every 6 hours');
+        return $schedules;
+    }
+
+    public function reschedule_cron($old_value, $new_value) {
+        $interval = isset($new_value['run_interval']) ? $new_value['run_interval'] : 'hourly';
+        $allowed = array('tr_ai_wire_15min', 'tr_ai_wire_30min', 'hourly', 'tr_ai_wire_6hours', 'daily');
+        if (!in_array($interval, $allowed, true)) {
+            $interval = 'hourly';
+        }
+        wp_clear_scheduled_hook(self::CRON_HOOK);
+        wp_schedule_event(time() + 60, $interval, self::CRON_HOOK);
     }
 
     public function maybe_upgrade_schema() {
@@ -140,6 +179,9 @@ final class TechnoRapper_AI_Wire {
             $clean_lines[] = $url . ($label !== '' ? ' | ' . $label : '');
         }
         $out['feeds'] = implode("\n", array_unique($clean_lines));
+        $intervals = array('tr_ai_wire_15min', 'tr_ai_wire_30min', 'hourly', 'tr_ai_wire_6hours', 'daily');
+        $out['run_interval'] = in_array($input['run_interval'] ?? '', $intervals, true) ? $input['run_interval'] : $defaults['run_interval'];
+        $out['max_items_per_run'] = min(100, max(1, absint($input['max_items_per_run'] ?? $defaults['max_items_per_run'])));
         $out['max_posts_per_day'] = min(500, max(0, absint($input['max_posts_per_day'] ?? $defaults['max_posts_per_day'])));
         $out['monthly_budget_usd'] = min(10000, max(0, (float) ($input['monthly_budget_usd'] ?? $defaults['monthly_budget_usd'])));
         $out['monthly_token_limit'] = min(1000000000, max(0, absint($input['monthly_token_limit'] ?? $defaults['monthly_token_limit'])));
@@ -168,7 +210,7 @@ final class TechnoRapper_AI_Wire {
         if (defined('TR_AI_WIRE_OPENAI_API_KEY') && TR_AI_WIRE_OPENAI_API_KEY) {
             return TR_AI_WIRE_OPENAI_API_KEY;
         }
-        return '';
+        return (string) get_option(self::API_KEY_OPTION, '');
     }
 
     public function settings_page() {
@@ -177,29 +219,57 @@ final class TechnoRapper_AI_Wire {
         }
         $s = $this->settings();
         $key_ready = (bool) $this->api_key();
+        $key_from_constant = (defined('OPENAI_API_KEY') && OPENAI_API_KEY) || (defined('TR_AI_WIRE_OPENAI_API_KEY') && TR_AI_WIRE_OPENAI_API_KEY);
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
-            <p>Feed items are rewritten and reviewed, then saved as WordPress drafts when they pass the review gate. Publishing remains a human action.</p>
-            <?php if (!$key_ready) : ?>
-                <div class="notice notice-warning"><p><strong>OpenAI API key is not configured.</strong> Add <code>define('OPENAI_API_KEY', 'your-key');</code> to <code>wp-config.php</code> (or use <code>TR_AI_WIRE_OPENAI_API_KEY</code>) to enable processing. API billing is separate from ChatGPT.</p></div>
-            <?php else : ?>
-                <div class="notice notice-success"><p>OpenAI API key detected. The key is not displayed or stored in plugin settings.</p></div>
-            <?php endif; ?>
+            <p>Configure the complete ingestion, AI, budget and schedule workflow here. Passing content is saved as a WordPress draft; a human remains responsible for publishing.</p>
             <form method="post" action="options.php">
                 <?php settings_fields('tr_ai_wire'); ?>
+                <h2>1. API credentials</h2>
                 <table class="form-table" role="presentation">
-                    <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
-                    <tr><th scope="row"><label for="tr-daily">Maximum drafts per day</label></th><td><input id="tr-daily" type="number" min="0" max="500" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts created by this plugin today. Set to 0 to pause creation.</p></td></tr>
-                    <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"> <p class="description">Processing stops when tracked usage reaches the cap. Set to 0 to stop AI calls.</p></td></tr>
-                    <tr><th scope="row"><label for="tr-monthly-tokens">Monthly token limit</label></th><td><input id="tr-monthly-tokens" type="number" min="0" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[monthly_token_limit]" value="<?php echo esc_attr($s['monthly_token_limit']); ?>"> <p class="description">Combined input + output tokens, based on API usage reports. Also stops at this cap.</p></td></tr>
+                    <tr><th scope="row"><label for="tr-api-key">OpenAI API key</label></th><td>
+                        <?php if ($key_from_constant) : ?>
+                            <p><span class="dashicons dashicons-yes-alt" style="color:green"></span> API key is supplied by a server constant. The dashboard field is overridden by the constant.</p>
+                        <?php else : ?>
+                            <p><?php echo $key_ready ? '<span class="dashicons dashicons-yes-alt" style="color:green"></span> A key is saved in WordPress.' : '<span class="dashicons dashicons-warning" style="color:#b32d2e"></span> No API key configured yet.'; ?></p>
+                            <input id="tr-api-key" type="password" autocomplete="new-password" spellcheck="false" class="regular-text" name="<?php echo esc_attr(self::API_KEY_OPTION); ?>" value="" placeholder="<?php echo $key_ready ? 'Leave blank to keep the saved key' : 'sk-…'; ?>">
+                            <p class="description">The key is stored in the WordPress options database with autoload disabled. It is never shown again after saving. For stricter secret management, define OPENAI_API_KEY in wp-config.php; server constants take priority.</p>
+                            <?php if ($key_ready) : ?><label><input type="checkbox" name="<?php echo esc_attr(self::API_KEY_OPTION); ?>" value="__CLEAR__"> Remove the saved API key</label><?php endif; ?>
+                        <?php endif; ?>
+                        <p class="description">OpenAI API billing is separate from a ChatGPT subscription.</p>
+                    </td></tr>
+                </table>
+                <h2>2. Sources and automation schedule</h2>
+                <table class="form-table" role="presentation">
+                    <tr><th scope="row"><label for="tr-feeds">RSS / Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
+                    <tr><th scope="row"><label for="tr-run-interval">Run automatically</label></th><td><select id="tr-run-interval" name="<?php echo esc_attr(self::OPTION); ?>[run_interval]">
+                        <option value="tr_ai_wire_15min" <?php selected($s['run_interval'], 'tr_ai_wire_15min'); ?>>Every 15 minutes</option>
+                        <option value="tr_ai_wire_30min" <?php selected($s['run_interval'], 'tr_ai_wire_30min'); ?>>Every 30 minutes</option>
+                        <option value="hourly" <?php selected($s['run_interval'], 'hourly'); ?>>Every hour</option>
+                        <option value="tr_ai_wire_6hours" <?php selected($s['run_interval'], 'tr_ai_wire_6hours'); ?>>Every 6 hours</option>
+                        <option value="daily" <?php selected($s['run_interval'], 'daily'); ?>>Once a day</option>
+                    </select><p class="description">Uses WordPress Cron. For reliable timing on low-traffic sites, configure a host-level system cron to call wp-cron.php.</p></td></tr>
+                    <tr><th scope="row"><label for="tr-run-items">Maximum items per run</label></th><td><input id="tr-run-items" type="number" min="1" max="100" name="<?php echo esc_attr(self::OPTION); ?>[max_items_per_run]" value="<?php echo esc_attr($s['max_items_per_run']); ?>"></td></tr>
+                    <tr><th scope="row"><label for="tr-daily">Maximum drafts per day</label></th><td><input id="tr-daily" type="number" min="0" max="500" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"><p class="description">Set to 0 to pause draft creation.</p></td></tr>
+                </table>
+                <h2>3. AI processing and content limits</h2>
+                <table class="form-table" role="presentation">
+                    <tr><th scope="row">AI models</th><td>Writer: <?php $this->model_select('writer_model', $s['writer_model']); ?><br>Reviewer: <?php $this->model_select('reviewer_model', $s['reviewer_model']); ?></td></tr>
                     <tr><th scope="row"><label for="tr-output-tokens">Maximum output tokens per AI pass</label></th><td><input id="tr-output-tokens" type="number" min="200" max="8000" step="100" name="<?php echo esc_attr(self::OPTION); ?>[max_output_tokens]" value="<?php echo esc_attr($s['max_output_tokens']); ?>"></td></tr>
                     <tr><th scope="row"><label for="tr-source-chars">Maximum source characters per item</label></th><td><input id="tr-source-chars" type="number" min="1000" max="50000" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[max_source_chars]" value="<?php echo esc_attr($s['max_source_chars']); ?>"></td></tr>
-                    <tr><th scope="row">AI models</th><td>Writer: <?php $this->model_select('writer_model', $s['writer_model']); ?><br>Reviewer: <?php $this->model_select('reviewer_model', $s['reviewer_model']); ?><p class="description">Usage estimates use published standard rates for these models. Recheck provider pricing before changing models.</p></td></tr>
-                    <tr><th scope="row">Independent web search</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_web_search]" value="1" <?php checked($s['enable_web_search'], 1); ?>> Enable up to one web-search call during each review</label><p class="description">Adds search-tool charges (currently $0.01 per call, plus tokens). Search is corroboration, not a guarantee. Leave off to check claims against the supplied feed only.</p></td></tr>
-                    <tr><th scope="row">Editorial A/B experiment</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_experiment]" value="1" <?php checked($s['enable_experiment'], 1); ?>> Enable 50/50 writer experiment</label><p class="description">A = current writer. B = original editorial writer. Assignment is stable per source item. Disable to use A for new items.</p><label for="tr-experiment-id">Experiment ID</label> <input id="tr-experiment-id" type="text" maxlength="64" name="<?php echo esc_attr(self::OPTION); ?>[experiment_id]" value="<?php echo esc_attr($s['experiment_id']); ?>"></td></tr>
+                    <tr><th scope="row">Independent web search</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_web_search]" value="1" <?php checked($s['enable_web_search'], 1); ?>> Enable one corroborating web-search call during review</label></td></tr>
                 </table>
-                <?php submit_button('Save settings'); ?>
+                <h2>4. Spend and token guardrails</h2>
+                <table class="form-table" role="presentation">
+                    <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"><p class="description">Plugin-side estimate. Set 0 to stop AI calls; also configure a provider-side budget.</p></td></tr>
+                    <tr><th scope="row"><label for="tr-monthly-tokens">Monthly token limit</label></th><td><input id="tr-monthly-tokens" type="number" min="0" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[monthly_token_limit]" value="<?php echo esc_attr($s['monthly_token_limit']); ?>"><p class="description">Combined input and output tokens recorded by this plugin.</p></td></tr>
+                </table>
+                <h2>5. Editorial experiment</h2>
+                <table class="form-table" role="presentation">
+                    <tr><th scope="row">A/B experiment</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_experiment]" value="1" <?php checked($s['enable_experiment'], 1); ?>> Enable 50/50 writer experiment</label><p class="description">Assignment is stable per source item. Disable to use A for new items.</p><label for="tr-experiment-id">Experiment ID</label> <input id="tr-experiment-id" type="text" maxlength="64" name="<?php echo esc_attr(self::OPTION); ?>[experiment_id]" value="<?php echo esc_attr($s['experiment_id']); ?>"></td></tr>
+                </table>
+                <?php submit_button('Save all AI Wire settings'); ?>
             </form>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_run_now">
@@ -331,7 +401,8 @@ final class TechnoRapper_AI_Wire {
             return;
         }
         global $wpdb;
-        $waiting_ids = $wpdb->get_col("SELECT id FROM {$this->table} WHERE status = 'waiting_budget' ORDER BY id ASC LIMIT 10");
+        $run_limit = max(1, min(100, (int) $s['max_items_per_run']));
+        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status = 'waiting_budget' ORDER BY id ASC LIMIT %d", $run_limit));
         foreach ($waiting_ids as $waiting_id) {
             if ($this->remaining_posts_today($s) <= 0) {
                 return;
@@ -339,6 +410,7 @@ final class TechnoRapper_AI_Wire {
             $this->process_item((int) $waiting_id, $s);
         }
         $lines = preg_split('/\r\n|\r|\n/', $s['feeds']);
+        $processed_this_run = 0;
         foreach ($lines as $line) {
             if ($this->remaining_posts_today($s) <= 0) {
                 break;
@@ -353,8 +425,16 @@ final class TechnoRapper_AI_Wire {
             if (is_wp_error($feed)) {
                 continue;
             }
-            $items = $feed->get_items(0, 10);
+            $remaining_run_items = max(0, $run_limit - $processed_this_run);
+            if ($remaining_run_items === 0) {
+                break;
+            }
+            $items = $feed->get_items(0, $remaining_run_items);
             foreach ($items as $item) {
+                if ($processed_this_run >= $run_limit) {
+                    break 2;
+                }
+                $processed_this_run++;
                 if ($this->remaining_posts_today($s) <= 0) {
                     break 2;
                 }
