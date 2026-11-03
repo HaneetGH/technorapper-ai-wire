@@ -403,6 +403,7 @@ final class TechnoRapper_AI_Wire {
         global $wpdb;
         $run_limit = max(1, min(100, (int) $s['max_items_per_run']));
         $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status = 'waiting_budget' ORDER BY id ASC LIMIT %d", $run_limit));
+        $processed_this_run = count($waiting_ids);
         foreach ($waiting_ids as $waiting_id) {
             if ($this->remaining_posts_today($s) <= 0) {
                 return;
@@ -410,7 +411,6 @@ final class TechnoRapper_AI_Wire {
             $this->process_item((int) $waiting_id, $s);
         }
         $lines = preg_split('/\r\n|\r|\n/', $s['feeds']);
-        $processed_this_run = 0;
         foreach ($lines as $line) {
             if ($this->remaining_posts_today($s) <= 0) {
                 break;
