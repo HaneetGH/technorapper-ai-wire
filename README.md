@@ -154,7 +154,7 @@ flowchart TD
 
 ## CI and release pipeline
 
-GitHub Actions currently runs PHP syntax checks on PHP 7.4, 8.1 and 8.3 for pushes to `main`/feature branches and pull requests into `main`.
+GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1 and 8.3 for pushes to `main`/feature branches and pull requests into `main`. A separate release workflow builds a WordPress-installable ZIP (with the plugin directory at the archive root), generates a SHA-256 checksum, and uploads both as a workflow artifact. Pushing a `v*` tag also publishes those files as a GitHub Release. Production deployment remains a deliberate manual action; this repository does not hold WordPress credentials.
 
 ```mermaid
 flowchart LR
@@ -171,9 +171,12 @@ flowchart LR
     G -- Yes --> I["Review diff + staging acceptance"]
     I --> J["Merge to main"]
     J --> K["Post-merge CI"]
-    K --> L["Build ZIP / deploy manually"]
-    L --> M["Smoke test production"]
-    M --> N["Monitor cron, spend, drafts and analytics"]
+    K --> L["Tag v* or run release workflow"]
+    L --> M["Build installable ZIP + SHA-256"]
+    M --> N["GitHub Release asset"]
+    N --> O["Manual staging / production install"]
+    O --> P["Smoke test"]
+    P --> Q["Monitor cron, spend, drafts and analytics"]
 ```
 
 **Important:** CI lint is only a syntax/compatibility smoke check. It does not boot WordPress, execute database migrations, mock the OpenAI API, test cron concurrency, or verify browser tracking. The staging acceptance test above is mandatory before treating a release as production-validated. A fully automated WordPress integration/browser test suite is a future hardening item.
@@ -186,4 +189,4 @@ Run syntax checks locally:
 find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
 ```
 
-The repository's GitHub Actions workflow runs the same check across the PHP matrix. Keep secrets out of fixtures and logs, and test schema changes against a copy of production data before release.
+The repository's GitHub Actions workflow runs the same check across the PHP matrix. To create a release, push a version tag such as `v0.2.0`; download the ZIP and checksum from the GitHub Release page, verify the checksum, then install the ZIP on staging. Keep secrets out of fixtures and logs, and test schema changes against a copy of production data before release.
