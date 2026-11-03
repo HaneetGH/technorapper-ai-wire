@@ -65,7 +65,32 @@ flowchart TD
 
 The API key entered in the dashboard is stored in the WordPress options database with autoload disabled. Restrict database and administrator access, use HTTPS, and prefer a server constant when your hosting environment provides a secrets manager. API usage is billed separately from ChatGPT.
 
-#### What is configurable in the WordPress dashboard
+#### WordPress dashboard configuration map
+
+Open **AI Wire** in the WordPress admin sidebar. The single settings page is organized into these sections:
+
+```mermaid
+flowchart TB
+    A["WordPress Admin → AI Wire"] --> B["API credentials"]
+    A --> C["Sources & schedule"]
+    A --> D["AI processing"]
+    A --> E["Spend guardrails"]
+    A --> F["Editorial experiment"]
+    B --> B1["OpenAI API key<br/>masked write-only field"]
+    C --> C1["RSS / Atom feed URLs"]
+    C --> C2["15m · 30m · hourly · 6h · daily"]
+    C --> C3["Items per run · drafts per day"]
+    D --> D1["Writer and reviewer models"]
+    D --> D2["Output tokens · source characters"]
+    D --> D3["Optional web search"]
+    E --> E1["Monthly USD budget"]
+    E --> E2["Monthly combined token ceiling"]
+    F --> F1["A/B enablement · experiment ID"]
+    A --> G["Save all settings"]
+    G --> H["Run now or wait for scheduled cron"]
+```
+
+### What is configurable in the WordPress dashboard
 
 | Dashboard section | Settings |
 |---|---|
