@@ -21,9 +21,10 @@ jobs:
 
       - name: Build installable plugin ZIP
         run: |
-          mkdir -p dist
-          zip -r dist/technorapper-ai-wire.zip technorapper-ai-wire.php README.md
+          mkdir -p dist/technorapper-ai-wire
+          cp technorapper-ai-wire.php README.md dist/technorapper-ai-wire/
           cd dist
+          zip -r technorapper-ai-wire.zip technorapper-ai-wire
           sha256sum technorapper-ai-wire.zip > technorapper-ai-wire.zip.sha256
 
       - name: Upload build artifact
