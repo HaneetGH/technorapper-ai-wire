@@ -17,6 +17,7 @@ if (!defined('ABSPATH')) {
 final class TechnoRapper_AI_Wire {
     const VERSION = '0.1.0';
     const OPTION = 'tr_ai_wire_settings';
+    const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
     const TABLE_SUFFIX = 'tr_ai_wire_items';
     const API_URL = 'https://api.openai.com/v1/responses';
@@ -33,6 +34,7 @@ final class TechnoRapper_AI_Wire {
         $this->table = $wpdb->prefix . self::TABLE_SUFFIX;
         add_action('admin_menu', array($this, 'admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
+        add_action('admin_post_tr_ai_wire_save_api_key', array($this, 'save_api_key'));
         add_action('init', array($this, 'maybe_upgrade_schema'), 5);
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
@@ -162,6 +164,10 @@ final class TechnoRapper_AI_Wire {
     }
 
     private function api_key() {
+        $dashboard_key = get_option(self::API_KEY_OPTION, '');
+        if (is_string($dashboard_key) && $dashboard_key !== '') {
+            return $dashboard_key;
+        }
         if (defined('OPENAI_API_KEY') && OPENAI_API_KEY) {
             return OPENAI_API_KEY;
         }
@@ -171,21 +177,64 @@ final class TechnoRapper_AI_Wire {
         return '';
     }
 
+    public function save_api_key() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to manage API credentials.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_save_api_key');
+        $remove = !empty($_POST['remove_api_key']);
+        $submitted = isset($_POST['api_key']) ? trim((string) wp_unslash($_POST['api_key'])) : '';
+        if ($remove) {
+            delete_option(self::API_KEY_OPTION);
+        } elseif ($submitted !== '') {
+            if (strlen($submitted) > 512 || preg_match('/\\s/', $submitted)) {
+                wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire&api_key_error=1'));
+                exit;
+            }
+            if (get_option(self::API_KEY_OPTION, null) === null) {
+                add_option(self::API_KEY_OPTION, $submitted, '', false);
+            } else {
+                update_option(self::API_KEY_OPTION, $submitted, false);
+            }
+        }
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire&api_key_saved=' . ($remove ? 'removed' : '1')));
+        exit;
+    }
+
     public function settings_page() {
         if (!current_user_can('manage_options')) {
             return;
         }
         $s = $this->settings();
+        $dashboard_key = get_option(self::API_KEY_OPTION, '');
         $key_ready = (bool) $this->api_key();
+        $key_managed_in_dashboard = is_string($dashboard_key) && $dashboard_key !== '';
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
             <p>Feed items are rewritten and reviewed, then saved as WordPress drafts when they pass the review gate. Publishing remains a human action.</p>
-            <?php if (!$key_ready) : ?>
-                <div class="notice notice-warning"><p><strong>OpenAI API key is not configured.</strong> Add <code>define('OPENAI_API_KEY', 'your-key');</code> to <code>wp-config.php</code> (or use <code>TR_AI_WIRE_OPENAI_API_KEY</code>) to enable processing. API billing is separate from ChatGPT.</p></div>
-            <?php else : ?>
-                <div class="notice notice-success"><p>OpenAI API key detected. The key is not displayed or stored in plugin settings.</p></div>
-            <?php endif; ?>
+undefined
+            <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
+                <h2>1. OpenAI API connection</h2>
+                <?php if ($key_ready) : ?>
+                    <p><span class="dashicons dashicons-yes-alt" style="color:#16803c;"></span> <strong>API key configured.</strong> <?php echo $key_managed_in_dashboard ? 'Managed securely from this dashboard.' : 'Using a server-level key from wp-config.php.'; ?> The secret is never displayed.</p>
+                <?php else : ?>
+                    <p><span class="dashicons dashicons-warning" style="color:#b32d2e;"></span> <strong>API key required.</strong> Add your OpenAI API key below to enable processing.</p>
+                <?php endif; ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="tr_ai_wire_save_api_key">
+                    <?php wp_nonce_field('tr_ai_wire_save_api_key'); ?>
+                    <p><label for="tr-ai-wire-api-key"><strong>OpenAI API key</strong></label></p>
+                    <p><input id="tr-ai-wire-api-key" name="api_key" type="password" class="regular-text" autocomplete="new-password" spellcheck="false" placeholder="<?php echo $key_managed_in_dashboard ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Paste your API key'); ?>"></p>
+                    <p class="description">Saved in a dedicated non-autoloaded WordPress option. Existing key is retained when this field is blank. API usage is billed separately from ChatGPT.</p>
+                    <?php submit_button($key_managed_in_dashboard ? 'Save / replace API key' : 'Save API key', 'primary', 'submit', false); ?>
+                    <?php if ($key_managed_in_dashboard) : ?>
+                        <label style="margin-left:12px;"><input type="checkbox" name="remove_api_key" value="1"> Remove saved dashboard key</label>
+                    <?php endif; ?>
+                </form>
+                <p class="description">A server-level constant can still be used as a fallback if no dashboard key is saved.</p>
+            </div>
+            <h2>2. Feed, editorial and processing settings</h2>
             <form method="post" action="options.php">
                 <?php settings_fields('tr_ai_wire'); ?>
                 <table class="form-table" role="presentation">
