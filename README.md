@@ -10,18 +10,20 @@ The diagram below shows the normal scheduled/manual path, the editorial gate, an
 
 ```mermaid
 flowchart TD
-    A["WP-Cron hourly<br/>or administrator runs now"] --> B["Acquire database-backed run lock"]
+    A["WP-Cron schedule<br/>or administrator runs now"] --> B["Acquire database-backed run lock"]
     B --> C{"Lock acquired?"}
     C -- No --> C1["Exit; another run is active"]
-    C -- Yes --> D["Load feed settings and usage limits"]
-    D --> E["Fetch configured RSS / Atom feeds"]
-    E --> F["Read up to 10 newest items per feed"]
+    C -- Yes --> CFG["WordPress Admin: AI Wire Settings<br/>API key · RSS feeds · cron cadence<br/>daily cap · per-run cap · token limits<br/>models · spend budget · experiments"]
+    CFG --> D["Load saved configuration and usage limits"]
+    D --> E["Apply run cadence, per-run cap,<br/>daily cap, token and spend guardrails"]
+    E --> E1["Fetch configured RSS / Atom feeds"]
+    E1 --> F["Read up to configured items per run"]
     F --> G["Validate URL, normalize and truncate source"]
     G --> H{"Already seen source key?"}
     H -- Yes --> F
     H -- No --> I["Assign stable experiment ID + A/B variant"]
     I --> J["Persist item in queue"]
-    J --> K["Writer model creates original draft JSON"]
+    J --> K["Writer model creates original draft JSON<br/>output token cap is applied"]
     K --> L{"Writer output valid?"}
     L -- No --> L1["Mark error / hold for retry review"]
     L -- Yes --> M["Independent reviewer checks claims,<br/>novelty, usefulness and policy flags"]
@@ -53,22 +55,30 @@ flowchart TD
 
 ## Install and configure
 
-1. Upload the plugin directory through **Plugins → Add New → Upload Plugin**, or copy it to `wp-content/plugins/technorapper-ai-wire/`.
-2. Add an API key to `wp-config.php`, above the “That's all, stop editing” line:
+1. Upload the plugin ZIP through **Plugins → Add New → Upload Plugin**, or copy the plugin directory to `wp-content/plugins/technorapper-ai-wire/`.
+2. Activate **TechnoRapper AI Wire**. Activation creates/updates the queue and view tables and registers the scheduled task.
+3. Open **AI Wire** in wp-admin. The complete setup is available from one dashboard screen; normal configuration does not require editing PHP or `wp-config.php`.
+4. Enter your OpenAI API key in **API credentials**. The field is write-only: after saving, the key is never shown again. Leave it blank to keep the saved key, or select **Remove the saved API key** to delete it. A server constant (`OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY`) can still be used and takes priority over the dashboard value.
+5. Add RSS/Atom feeds and choose the run cadence: every 15 minutes, 30 minutes, hourly, every 6 hours or daily. Configure the maximum items per run and daily draft cap.
+6. Set writer/reviewer models, maximum output tokens per AI pass, maximum source characters, monthly token ceiling, monthly USD budget, optional web search and A/B experiment settings.
+7. Save all settings, then run **Fetch feeds and process queue now** once. Inspect **AI Wire → Queue & usage**, review each generated draft in WordPress, and publish manually only after editorial approval.
 
-   ```php
-   define('OPENAI_API_KEY', 'your-api-key');
-   // Alternative constant supported by the plugin:
-   // define('TR_AI_WIRE_OPENAI_API_KEY', 'your-api-key');
-   ```
+The API key entered in the dashboard is stored in the WordPress options database with autoload disabled. Restrict database and administrator access, use HTTPS, and prefer a server constant when your hosting environment provides a secrets manager. API usage is billed separately from ChatGPT.
 
-   The key is not saved in the plugin settings. Keep it out of source control, logs, screenshots and support tickets. API usage is billed separately from ChatGPT.
-3. Activate **TechnoRapper AI Wire**. Activation creates/updates the queue and view tables and schedules hourly polling.
-4. Open **AI Wire** in wp-admin. Configure feeds (one URL per line; optional label after `|`), daily draft cap, monthly USD/token limits, model choices, source/output limits and optional web-search corroboration.
-5. Start with one trusted feed, a low daily cap and a conservative monthly budget. Run **Fetch feeds and process queue now** once.
-6. Inspect **AI Wire → Queue & usage**, review each generated draft in WordPress, and publish manually only after editorial approval.
+#### What is configurable in the WordPress dashboard
 
-### Suggested initial production settings
+| Dashboard section | Settings |
+|---|---|
+| API credentials | OpenAI API key; server constants override the saved dashboard key |
+| Sources & schedule | RSS/Atom feeds, 15-minute/30-minute/hourly/6-hourly/daily cadence |
+| Automation limits | Maximum feed items per run and maximum drafts per UTC day |
+| AI processing | Writer/reviewer models, output-token cap per pass, source-character cap, optional web search |
+| Spend guardrails | Monthly USD budget and combined monthly input/output token limit |
+| Editorial experiment | Enable/disable A/B assignment and experiment ID |
+
+The schedule is implemented with WordPress Cron. Its cadence controls when WordPress schedules a run; it does not guarantee exact wall-clock execution. On low-traffic sites, configure a hosting-level system cron to invoke `wp-cron.php`.
+
+## Suggested initial production settings
 
 - Start with 1–3 trusted feeds and a daily cap of 1–3 drafts.
 - Set a low monthly API budget and token ceiling; raise only after observing real usage.
@@ -79,6 +89,7 @@ flowchart TD
 ## Spend, rate and volume controls
 
 - The daily cap counts drafts created by this plugin on the current UTC day. Set it to `0` to pause draft creation.
+- The per-run item cap limits how many queued/new feed items are attempted in one scheduled or manual execution. It includes budget-held retries.
 - Monthly USD and token limits use this plugin's recorded API usage and pre-request estimates. They are not provider-side hard limits and do not cap other apps using the same API project/key.
 - Configure a provider-side project budget/rate limit as a second independent control.
 - Cost estimates depend on the model rates configured in the source. Verify current provider pricing and update the rate table before changing model IDs or pricing.
@@ -135,7 +146,7 @@ flowchart TD
 ## Security and privacy notes
 
 - Admin settings and manual execution are restricted to administrators; manual execution uses a WordPress nonce.
-- API credentials are read from constants, not the options screen.
+- API credentials can be entered in the administrator-only dashboard and are stored as a non-autoloaded WordPress option; server constants override the dashboard key. Treat database backups and administrator access as secret-bearing surfaces.
 - Feed/source text is untrusted model input. Generated HTML is passed through `wp_kses_post()`; titles and excerpts are sanitized.
 - The public view endpoint only accepts published experiment articles with a valid daily HMAC token. The token is not sent to GA4/GTM.
 - The view table stores aggregate post/day counters, not IP addresses, cookies, names or user IDs. Browser session storage is used only for per-session deduplication.
