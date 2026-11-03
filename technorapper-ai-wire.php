@@ -23,7 +23,8 @@ final class TechnoRapper_AI_Wire {
     const SEARCH_CALL_USD = 0.01;
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
     const PROCESSING_LOCK_TTL = 2700;
-    const SCHEMA_VERSION = '2';
+    const SCHEMA_VERSION = '3';
+    const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
 
     private $table;
 
@@ -34,6 +35,7 @@ final class TechnoRapper_AI_Wire {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('admin_init', array($this, 'maybe_upgrade_schema'), 5);
         add_action('wp_head', array($this, 'track_article_view'), 20);
+        add_action('rest_api_init', array($this, 'register_tracking_route'));
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
         add_action('admin_post_tr_ai_wire_run_now', array($this, 'run_now'));
     }
@@ -66,6 +68,15 @@ final class TechnoRapper_AI_Wire {
             KEY status_created (status, created_at)
         ) {$charset};";
         dbDelta($sql);
+        $views_table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
+        $views_sql = "CREATE TABLE {$views_table} (
+            post_id bigint(20) unsigned NOT NULL,
+            view_date date NOT NULL,
+            views bigint(20) unsigned NOT NULL DEFAULT 0,
+            PRIMARY KEY  (post_id, view_date),
+            KEY view_date (view_date)
+        ) {$charset};";
+        dbDelta($views_sql);
         update_option('tr_ai_wire_schema_version', self::SCHEMA_VERSION, false);
         if (!get_option(self::OPTION)) {
             add_option(self::OPTION, self::defaults());
@@ -551,6 +562,33 @@ final class TechnoRapper_AI_Wire {
         $this->update_item($id, array('status' => 'draft', 'wp_post_id' => (int) $post_id, 'error_text' => null));
     }
 
+    public function register_tracking_route() {
+        register_rest_route('tr-ai-wire/v1', '/view', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'record_article_view'),
+            'permission_callback' => '__return_true',
+            'args' => array('post_id' => array('required' => true, 'type' => 'integer', 'sanitize_callback' => 'absint')),
+        ));
+    }
+
+    public function record_article_view($request) {
+        global $wpdb;
+        $post_id = absint($request->get_param('post_id'));
+        if (!$post_id || get_post_status($post_id) !== 'publish' || !get_post_meta($post_id, '_tr_ai_wire_experiment_id', true)) {
+            return new WP_Error('tr_ai_wire_invalid_view', 'Unknown published experiment article.', array('status' => 404));
+        }
+        $table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
+        $result = $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$table} (post_id, view_date, views) VALUES (%d, %s, 1) ON DUPLICATE KEY UPDATE views = views + 1",
+            $post_id,
+            gmdate('Y-m-d')
+        ));
+        if ($result === false) {
+            return new WP_Error('tr_ai_wire_view_store_failed', 'Could not record article view.', array('status' => 500));
+        }
+        return rest_ensure_response(array('recorded' => true));
+    }
+
     public function track_article_view() {
         if (!is_singular('post')) {
             return;
@@ -567,7 +605,8 @@ final class TechnoRapper_AI_Wire {
             'article_id' => (string) $post_id,
             'article_title' => get_the_title($post_id),
         );
-        echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";p.page_location=window.location.href;p.page_title=document.title;if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',p);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},p));}})();\n</script>\n";
+        $tracking_url = esc_url_raw(rest_url('tr-ai-wire/v1/view'));
+        echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";var endpoint=" . wp_json_encode($tracking_url) . ";p.page_location=window.location.href;p.page_title=document.title;var sent=false;function record(){if(sent)return;sent=true;try{var key='tr_ai_wire_view_' + p.article_id;if(window.sessionStorage.getItem(key))return;window.sessionStorage.setItem(key,'1');}catch(e){}if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',p);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},p));}if(navigator.sendBeacon){navigator.sendBeacon(endpoint,new Blob([JSON.stringify({post_id:parseInt(p.article_id,10)})],{type:'application/json'}));}else{fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({post_id:parseInt(p.article_id,10)}),keepalive:true,credentials:'same-origin'});}}window.setTimeout(record,3000);})();\n</script>\n";
     }
 
     public function experiments_page() {
@@ -575,6 +614,14 @@ final class TechnoRapper_AI_Wire {
         global $wpdb;
         $settings = $this->settings();
         $rows = $wpdb->get_results("SELECT variant, status, COUNT(*) AS total FROM {$this->table} GROUP BY variant, status", ARRAY_A);
+        $views_table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
+        $view_rows = $wpdb->get_results("SELECT pm.meta_value AS variant, SUM(v.views) AS views, COUNT(DISTINCT v.post_id) AS articles FROM {$views_table} v INNER JOIN {$wpdb->postmeta} pm ON pm.post_id = v.post_id AND pm.meta_key = '_tr_ai_wire_variant' INNER JOIN {$wpdb->posts} p ON p.ID = v.post_id AND p.post_status = 'publish' WHERE v.view_date >= DATE_SUB(UTC_DATE(), INTERVAL 30 DAY) GROUP BY pm.meta_value", ARRAY_A);
+        $view_counts = array('A' => array('views' => 0, 'articles' => 0), 'B' => array('views' => 0, 'articles' => 0));
+        foreach ($view_rows as $view_row) {
+            $v = in_array($view_row['variant'], array('A', 'B'), true) ? $view_row['variant'] : 'A';
+            $view_counts[$v]['views'] = (int) $view_row['views'];
+            $view_counts[$v]['articles'] = (int) $view_row['articles'];
+        }
         $counts = array('A' => array('draft' => 0, 'quarantined' => 0, 'other' => 0), 'B' => array('draft' => 0, 'quarantined' => 0, 'other' => 0));
         foreach ($rows as $row) {
             $variant = in_array($row['variant'], array('A', 'B'), true) ? $row['variant'] : 'A';
@@ -587,6 +634,13 @@ final class TechnoRapper_AI_Wire {
         <table class="widefat striped"><thead><tr><th>Variant</th><th>Writer</th><th>Drafts created</th><th>Quarantined</th><th>Other queue items</th></tr></thead><tbody>
         <tr><td><strong>A</strong></td><td>Current writer</td><td><?php echo esc_html((string) $counts['A']['draft']); ?></td><td><?php echo esc_html((string) $counts['A']['quarantined']); ?></td><td><?php echo esc_html((string) $counts['A']['other']); ?></td></tr>
         <tr><td><strong>B</strong></td><td>Original editorial writer</td><td><?php echo esc_html((string) $counts['B']['draft']); ?></td><td><?php echo esc_html((string) $counts['B']['quarantined']); ?></td><td><?php echo esc_html((string) $counts['B']['other']); ?></td></tr>
+        </tbody></table>
+        <h2>Reader performance — last 30 days</h2>
+        <p>Engaged reads are counted after a visitor remains on a published experiment article for at least 3 seconds. Repeat views of the same article in one browser session are counted once. This is a lightweight first-party engagement proxy, not a replacement for GA4.</p>
+        <table class="widefat striped"><thead><tr><th>Variant</th><th>Engaged reads</th><th>Articles with reads</th><th>Average reads per article</th></tr></thead><tbody>
+        <?php foreach (array('A' => 'Current writer', 'B' => 'Original editorial writer') as $variant => $label) : $avg = $view_counts[$variant]['articles'] ? round($view_counts[$variant]['views'] / $view_counts[$variant]['articles'], 1) : 0; ?>
+        <tr><td><strong><?php echo esc_html($variant); ?></strong> — <?php echo esc_html($label); ?></td><td><?php echo esc_html(number_format_i18n($view_counts[$variant]['views'])); ?></td><td><?php echo esc_html(number_format_i18n($view_counts[$variant]['articles'])); ?></td><td><?php echo esc_html(number_format_i18n($avg, 1)); ?></td></tr>
+        <?php endforeach; ?>
         </tbody></table>
         <h2>Reader and revenue measurement</h2>
         <p>Published articles automatically emit the GA4 event <code>tr_ai_wire_article_view</code> with <code>experiment_id</code>, <code>variant</code>, <code>article_id</code>, and <code>article_title</code>. Drafts do not emit events.</p>
