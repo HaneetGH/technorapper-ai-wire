@@ -55,7 +55,7 @@ flowchart TD
 
 ## WordPress dashboard configuration
 
-The **AI Wire** menu in wp-admin is the single place to configure credentials, feed ingestion, scheduling, processing limits, model selection, web search and editorial experiments. The API key uses a separate save action; all other settings are saved together.
+The **AI Wire** menu in wp-admin is the single place to configure credentials, feed ingestion, scheduling, processing limits, model selection, web search and editorial experiments. The API key uses a separate save action; all other settings are saved together. The manual-run action enqueues background work and returns immediately; it does not keep the administrator request open during feed/API processing.
 
 ```mermaid
 flowchart TD
@@ -73,13 +73,19 @@ flowchart TD
     H --> I
 ```
 
+## Production-readiness status
+
+The plugin release is **not considered production-validated until the staging acceptance checklist has passed on the target WordPress host**. Version 0.2.0 adds background enqueueing for manual runs, scheduled bounded retries, permanent-vs-transient API error handling, an idempotent draft recovery path, atomic stale-lock deletion/heartbeat handling, and an atomic database-backed public-view rate limiter. The schema migration creates the rate-limit table without dropping existing queue/view data.
+
+Automated WordPress integration tests now exercise selected critical paths. They do not prove the production host's cron runner, outbound networking, database upgrade behavior on a copy of the live database, proxy/IP configuration, or end-to-end analytics. Keep auto-publishing disabled (it is not implemented) and complete the staging runbook before enabling scheduled processing.
+
 ## Install and configure
 
 1. Upload the plugin ZIP through **Plugins → Add New → Upload Plugin**, or copy the plugin directory to `wp-content/plugins/technorapper-ai-wire/`.
 2. Activate **TechnoRapper AI Wire**. The plugin creates/updates its queue and view tables and schedules its initial processing run.
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
 4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
-5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** for a manual run.
+5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to enqueue a background run. WP-Cron (preferably triggered by a real system cron) executes it.
 6. Inspect **AI Wire → Queue & usage**, review generated drafts in WordPress, and publish manually only after editorial approval.
 
 ### Dashboard configuration reference
@@ -190,7 +196,7 @@ The API-key section has its own save action so the secret is not included in the
 
 ## CI and release pipeline
 
-GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1 and 8.3 for pushes to `main`/feature branches and pull requests into `main`. A separate release workflow builds a WordPress-installable ZIP (with the plugin directory at the archive root), generates a SHA-256 checksum, and uploads both as a workflow artifact. Pushing a `v*` tag also publishes those files as a GitHub Release. Production deployment remains a deliberate manual action; this repository does not hold WordPress credentials.
+GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1 and 8.3 and a WordPress integration suite on PHP 8.2 and 8.3 with MySQL. Integration tests cover schema creation, queue retry scheduling, same-second lock heartbeats, draft idempotency after an interrupted queue update, API authentication error classification and public-view rate limiting. A separate release workflow builds a WordPress-installable ZIP (with the plugin directory at the archive root), generates a SHA-256 checksum, and uploads both as a workflow artifact. Pushing a `v*` tag also publishes those files as a GitHub Release. Production deployment remains a deliberate manual action; this repository does not hold WordPress credentials.
 
 ```mermaid
 flowchart LR
@@ -215,11 +221,11 @@ flowchart LR
     P --> Q["Monitor cron, spend, drafts and analytics"]
 ```
 
-**Important:** CI lint is only a syntax/compatibility smoke check. It does not boot WordPress, execute database migrations, mock the OpenAI API, test cron concurrency, or verify browser tracking. The staging acceptance test above is mandatory before treating a release as production-validated. A fully automated WordPress integration/browser test suite is a future hardening item.
+**Important:** CI now boots WordPress and tests selected database/API/queue paths, but it is not a substitute for a staging rollout. It does not reproduce your live hosting stack, reverse proxy/Cloudflare behavior, real feed providers, real OpenAI account limits, system-cron reliability, concurrent traffic under load, or browser analytics configuration. Complete the staging acceptance checklist and observe a controlled canary before calling a release production-validated.
 
 ## Development checks
 
-Run syntax checks locally:
+Run syntax checks and WordPress integration tests locally (after installing the WordPress test library and PHPUnit):
 
 ```bash
 find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
