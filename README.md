@@ -138,7 +138,7 @@ The API-key section has its own save action so the secret is not included in the
 - [ ] Deploy to staging first and take a database + files backup.
 - [ ] Confirm the site is on a supported PHP version (7.4+) and WordPress 6.2+.
 - [ ] Confirm HTTPS, valid TLS, working outbound HTTPS requests and DNS resolution to the API/feed hosts.
-- [ ] Set the API key in server configuration; verify it is not present in the repository or public diagnostics.
+- [ ] Save the API key in the AI Wire dashboard (or use a server-level constant as a fallback); verify it is not present in the repository or public diagnostics.
 - [ ] Configure a provider-side budget and alerts in addition to plugin limits.
 - [ ] Add only trusted feed URLs. Review each feed's publisher rights, attribution requirements and content reuse terms.
 - [ ] Confirm the WordPress database user can create/alter the plugin tables.
