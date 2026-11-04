@@ -71,8 +71,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $review = array('verdict' => 'pass', 'safe_to_publish' => true);
 
         $this->invoke_private('create_draft', array($id, $item, $rewrite, $review));
-        $first_post_id = (int) get_post_meta($id, '_tr_ai_wire_queue_id', true);
-        $this->assertGreaterThan(0, $first_post_id);
+        $first_posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $first_posts);
+        $first_post_id = (int) $first_posts[0];
 
         // Simulate a crash window by reverting only the queue state.
         global $wpdb;
@@ -92,6 +100,18 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame('draft', $row['status']);
         $this->assertSame((string) $posts[0], (string) $row['wp_post_id']);
+    }
+
+    public function test_lock_heartbeat_succeeds_within_the_same_second() {
+        $token = wp_generate_uuid4();
+        update_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION, array(
+            'created_at' => time(),
+            'token' => $token,
+        ), false);
+        $this->assertTrue($this->invoke_private('refresh_processing_lock', array($token)));
+        $current = get_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
+        $this->assertSame($token, $current['token']);
+        delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
     }
 
     public function test_transient_failure_is_scheduled_for_retry() {
