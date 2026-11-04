@@ -482,6 +482,10 @@ final class TechnoRapper_AI_Wire {
             }
             $items = $feed->get_items(0, 10);
             foreach ($items as $item) {
+                if ((microtime(true) - $started_at) >= $time_budget_seconds) {
+                    wp_schedule_single_event(time() + 15, self::CRON_HOOK);
+                    break 2;
+                }
                 if (!$this->refresh_processing_lock($lock_token)) { return; }
                 if ($this->remaining_posts_today($s) <= 0 || $processed_this_run >= $run_limit) {
                     break 2;
