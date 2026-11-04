@@ -476,7 +476,7 @@ final class TechnoRapper_AI_Wire {
         $run_limit = (int) $s['max_items_per_run'];
         // Keep both cron and admin requests bounded; continue remaining work in a later cron tick.
         $started_at = microtime(true);
-        $time_budget_seconds = 20;
+        $time_budget_seconds = 10;
         $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status IN ('new', 'waiting_budget', 'rewritten', 'reviewed') OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
         foreach ($waiting_ids as $waiting_id) {
             if ((microtime(true) - $started_at) >= $time_budget_seconds) {
