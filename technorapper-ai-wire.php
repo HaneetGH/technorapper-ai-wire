@@ -468,7 +468,7 @@ final class TechnoRapper_AI_Wire {
             require_once ABSPATH . WPINC . '/feed.php';
         }
         $s = $this->settings();
-        if (!$this->api_key() || empty($s['feeds']) || $this->remaining_posts_today($s) <= 0) {
+        if (!$this->api_key() || $this->remaining_posts_today($s) <= 0) {
             return;
         }
         global $wpdb;
@@ -477,7 +477,7 @@ final class TechnoRapper_AI_Wire {
         // Keep both cron and admin requests bounded; continue remaining work in a later cron tick.
         $started_at = microtime(true);
         $time_budget_seconds = 20;
-        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status IN ('waiting_budget', 'rewritten', 'reviewed') OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
+        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status IN ('new', 'waiting_budget', 'rewritten', 'reviewed') OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
         foreach ($waiting_ids as $waiting_id) {
             if ((microtime(true) - $started_at) >= $time_budget_seconds) {
                 wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
@@ -606,6 +606,10 @@ final class TechnoRapper_AI_Wire {
                 return;
             }
             $this->update_item($id, array('status' => 'rewritten', 'rewrite_json' => wp_json_encode($rewrite)));
+            // Keep each queue request to one model call. The reviewer runs on
+            // the next scheduled tick, avoiding two slow API calls in one PHP request.
+            wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('review', (int) $id, wp_generate_uuid4()));
+            return;
         }
         $review_prompt = 'Act as an independent editor reviewing this proposed Technorapper brief. Check each factual claim against the supplied source. Do not claim independent verification unless evidence is provided. Assess grammar, attribution, unsupported claims, source-branding bleed, usefulness, novelty, groundedness, and similarity risk. Never invent fixes. Return JSON with score (0-100), verdict (pass/revise/reject), issues (array), fact_flags (array), policy_flags (array), pragmatism {is_new, is_useful, is_grounded, similarity_risk (low/medium/high), notes}, suggested_fixes (array), safe_to_publish (boolean). Set safe_to_publish true only if all checks pass and the brief is new, useful, and grounded.';
         if (!empty($s['enable_web_search'])) {
