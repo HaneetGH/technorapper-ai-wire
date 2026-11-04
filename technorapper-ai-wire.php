@@ -98,6 +98,7 @@ final class TechnoRapper_AI_Wire {
             'feeds' => '',
             'cron_frequency' => 'hourly',
             'max_posts_per_day' => 10,
+            'max_items_per_run' => 10,
             'monthly_budget_usd' => 5,
             'monthly_token_limit' => 1000000,
             'max_output_tokens' => 1200,
@@ -170,6 +171,7 @@ final class TechnoRapper_AI_Wire {
         $frequencies = array('hourly', 'every_3_hours', 'every_6_hours', 'every_12_hours', 'daily', 'manual');
         $out['cron_frequency'] = in_array($input['cron_frequency'] ?? '', $frequencies, true) ? $input['cron_frequency'] : $defaults['cron_frequency'];
         $out['max_posts_per_day'] = min(500, max(0, absint($input['max_posts_per_day'] ?? $defaults['max_posts_per_day'])));
+        $out['max_items_per_run'] = min(100, max(1, absint($input['max_items_per_run'] ?? $defaults['max_items_per_run'])));
         $out['monthly_budget_usd'] = min(10000, max(0, (float) ($input['monthly_budget_usd'] ?? $defaults['monthly_budget_usd'])));
         $out['monthly_token_limit'] = min(1000000000, max(0, absint($input['monthly_token_limit'] ?? $defaults['monthly_token_limit'])));
         $out['max_output_tokens'] = min(8000, max(200, absint($input['max_output_tokens'] ?? $defaults['max_output_tokens'])));
@@ -240,7 +242,6 @@ final class TechnoRapper_AI_Wire {
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
             <p>Feed items are rewritten and reviewed, then saved as WordPress drafts when they pass the review gate. Publishing remains a human action.</p>
-undefined
             <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
                 <h2>1. OpenAI API connection</h2>
                 <?php if ($key_ready) : ?>
@@ -268,6 +269,7 @@ undefined
                     <tr><th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th><td><select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]"><?php foreach (array('hourly' => 'Every hour', 'every_3_hours' => 'Every 3 hours', 'every_6_hours' => 'Every 6 hours', 'every_12_hours' => 'Every 12 hours', 'daily' => 'Once per day', 'manual' => 'Manual only (disable scheduled runs)') as $frequency => $label) : ?><option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p></td></tr>
                     <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
                     <tr><th scope="row"><label for="tr-daily">Maximum drafts per day</label></th><td><input id="tr-daily" type="number" min="0" max="500" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts created by this plugin today. Set to 0 to pause creation.</p></td></tr>
+                    <tr><th scope="row"><label for="tr-items-run">Maximum items per run</label></th><td><input id="tr-items-run" type="number" min="1" max="100" name="<?php echo esc_attr(self::OPTION); ?>[max_items_per_run]" value="<?php echo esc_attr($s['max_items_per_run']); ?>"> <p class="description">Caps total queued/retried items processed during each scheduled or manual run (1–100).</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"> <p class="description">Processing stops when tracked usage reaches the cap. Set to 0 to stop AI calls.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-tokens">Monthly token limit</label></th><td><input id="tr-monthly-tokens" type="number" min="0" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[monthly_token_limit]" value="<?php echo esc_attr($s['monthly_token_limit']); ?>"> <p class="description">Combined input + output tokens, based on API usage reports. Also stops at this cap.</p></td></tr>
                     <tr><th scope="row"><label for="tr-output-tokens">Maximum output tokens per AI pass</label></th><td><input id="tr-output-tokens" type="number" min="200" max="8000" step="100" name="<?php echo esc_attr(self::OPTION); ?>[max_output_tokens]" value="<?php echo esc_attr($s['max_output_tokens']); ?>"></td></tr>
@@ -408,16 +410,22 @@ undefined
             return;
         }
         global $wpdb;
-        $waiting_ids = $wpdb->get_col("SELECT id FROM {$this->table} WHERE status = 'waiting_budget' ORDER BY id ASC LIMIT 10");
+        $processed_this_run = 0;
+        $run_limit = (int) $s['max_items_per_run'];
+        $waiting_ids = $wpdb->get_col("SELECT id FROM {$this->table} WHERE status = 'waiting_budget' ORDER BY id ASC LIMIT 100");
         foreach ($waiting_ids as $waiting_id) {
             if ($this->remaining_posts_today($s) <= 0) {
                 return;
             }
+            if ($processed_this_run >= $run_limit) {
+                return;
+            }
             $this->process_item((int) $waiting_id, $s);
+            $processed_this_run++;
         }
         $lines = preg_split('/\r\n|\r|\n/', $s['feeds']);
         foreach ($lines as $line) {
-            if ($this->remaining_posts_today($s) <= 0) {
+            if ($this->remaining_posts_today($s) <= 0 || $processed_this_run >= $run_limit) {
                 break;
             }
             $parts = array_map('trim', explode('|', $line, 2));
@@ -432,7 +440,7 @@ undefined
             }
             $items = $feed->get_items(0, 10);
             foreach ($items as $item) {
-                if ($this->remaining_posts_today($s) <= 0) {
+                if ($this->remaining_posts_today($s) <= 0 || $processed_this_run >= $run_limit) {
                     break 2;
                 }
                 $url = esc_url_raw($item->get_permalink(), array('http', 'https'));
@@ -455,6 +463,7 @@ undefined
                 $id = $this->insert_item($key, $assignment['experiment_id'], $assignment['variant'], $feed_url, $feed_name, $guid, $url, $title, $body);
                 if ($id) {
                     $this->process_item($id, $s);
+                    $processed_this_run++;
                 }
             }
         }
