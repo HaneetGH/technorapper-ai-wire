@@ -122,7 +122,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('retry_wait', $row['status']);
         $this->assertSame('1', (string) $row['attempts']);
         $this->assertNotEmpty($row['next_retry_at']);
-        $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK));
+        $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, array('retry', (int) $id, 1)));
     }
 
     public function test_api_authentication_error_is_not_retried() {
