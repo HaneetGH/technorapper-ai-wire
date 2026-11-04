@@ -7,17 +7,54 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  package:
+  validate:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      WP_TESTS_DIR: /tmp/wordpress-tests-lib
+      WP_CORE_DIR: /tmp/wordpress/
+      WP_TESTS_PHPUNIT_POLYFILLS_PATH: /tmp/phpunit-polyfills
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-
-      - name: Validate PHP syntax
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mysqli, mbstring, xml, zip
+          tools: phpunit:9.6
+      - name: Install WordPress test library
+        run: |
+          git clone --depth=1 https://github.com/wp-cli/scaffold-command.git /tmp/wp-cli-scaffold
+          bash /tmp/wp-cli-scaffold/templates/install-wp-tests.sh wordpress_test root root 127.0.0.1 latest
+          git clone --depth=1 https://github.com/Yoast/PHPUnit-Polyfills.git /tmp/phpunit-polyfills
+      - name: Lint PHP files
         run: find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Run WordPress integration tests
+        run: phpunit --configuration phpunit.xml.dist
+
+  package:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
 
       - name: Build installable plugin ZIP
         run: |

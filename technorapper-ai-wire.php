@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts with daily and API usage limits.
- * Version: 0.1.0
+ * Version: 0.2.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.1.0';
+    const VERSION = '0.2.0';
     const OPTION = 'tr_ai_wire_settings';
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
@@ -24,7 +24,7 @@ final class TechnoRapper_AI_Wire {
     const SEARCH_CALL_USD = 0.01;
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
     const PROCESSING_LOCK_TTL = 2700;
-    const SCHEMA_VERSION = '4';
+    const SCHEMA_VERSION = '5';
     const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
 
     private $table;
@@ -84,6 +84,15 @@ final class TechnoRapper_AI_Wire {
             KEY view_date (view_date)
         ) {$charset};";
         dbDelta($views_sql);
+        $limits_table = $wpdb->prefix . 'tr_ai_wire_view_limits';
+        $limits_sql = "CREATE TABLE {$limits_table} (
+            rate_key char(64) NOT NULL,
+            window_started datetime NOT NULL,
+            requests int(10) unsigned NOT NULL DEFAULT 0,
+            PRIMARY KEY  (rate_key),
+            KEY window_started (window_started)
+        ) {$charset};";
+        dbDelta($limits_sql);
         update_option('tr_ai_wire_schema_version', self::SCHEMA_VERSION, false);
         if (!get_option(self::OPTION)) {
             add_option(self::OPTION, self::defaults());
@@ -306,8 +315,9 @@ final class TechnoRapper_AI_Wire {
             wp_die(esc_html__('You are not allowed to run this task.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_run_now');
-        $this->process_feeds();
-        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&ran=1'));
+        // Run the work in the background; do not hold the admin request open.
+        wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('manual', wp_generate_uuid4()));
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queued=1'));
         exit;
     }
 
@@ -323,6 +333,7 @@ final class TechnoRapper_AI_Wire {
             $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
             $status = is_array($review) ? 'reviewed' : (is_array($rewrite) ? 'rewritten' : 'new');
             $this->update_item($id, array('status' => $status, 'attempts' => 0, 'next_retry_at' => null, 'error_text' => null));
+            wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('retry', $id, wp_generate_uuid4()));
         }
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&retried=1'));
         exit;
@@ -404,8 +415,19 @@ final class TechnoRapper_AI_Wire {
                 return;
             }
 
-            // Recover a lock left behind by a crashed PHP process.
-            delete_option(self::PROCESSING_LOCK_OPTION);
+            // Delete only the exact stale value we inspected. A concurrent
+            // heartbeat changes option_value and makes this conditional delete fail.
+            global $wpdb;
+            $deleted = $wpdb->query($wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                self::PROCESSING_LOCK_OPTION,
+                maybe_serialize($existing)
+            ));
+            if (!$deleted) {
+                return;
+            }
+            wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
+            wp_cache_delete('alloptions', 'options');
             if (!add_option(self::PROCESSING_LOCK_OPTION, $lock, '', false)) {
                 return;
             }
@@ -416,7 +438,16 @@ final class TechnoRapper_AI_Wire {
         } finally {
             $current = get_option(self::PROCESSING_LOCK_OPTION, array());
             if (is_array($current) && !empty($current['token']) && hash_equals($lock['token'], (string) $current['token'])) {
-                delete_option(self::PROCESSING_LOCK_OPTION);
+                global $wpdb;
+                $released = $wpdb->query($wpdb->prepare(
+                    "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                    self::PROCESSING_LOCK_OPTION,
+                    maybe_serialize($current)
+                ));
+                if ($released) {
+                    wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
+                    wp_cache_delete('alloptions', 'options');
+                }
             }
         }
     }
@@ -426,8 +457,32 @@ final class TechnoRapper_AI_Wire {
         if (!is_array($current) || empty($current['token']) || !hash_equals((string) $current['token'], (string) $token)) {
             return false;
         }
-        $current['created_at'] = time();
-        return update_option(self::PROCESSING_LOCK_OPTION, $current, false);
+        // Compare-and-swap the serialized option value. This prevents an old
+        // worker from overwriting a newer owner's lease after stale recovery.
+        $previous = $current;
+        $current['created_at'] = microtime(true);
+        global $wpdb;
+        $updated = $wpdb->update(
+            $wpdb->options,
+            array('option_value' => maybe_serialize($current)),
+            array(
+                'option_name' => self::PROCESSING_LOCK_OPTION,
+                'option_value' => maybe_serialize($previous),
+            ),
+            array('%s'),
+            array('%s', '%s')
+        );
+        if ($updated === 1) {
+            wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
+            wp_cache_delete('alloptions', 'options');
+            return true;
+        }
+        $verified = get_option(self::PROCESSING_LOCK_OPTION, array());
+        return is_array($verified)
+            && !empty($verified['token'])
+            && hash_equals((string) $verified['token'], (string) $token)
+            && isset($verified['created_at'])
+            && (float) $verified['created_at'] >= (float) $current['created_at'];
     }
 
     private function process_feeds_locked($lock_token) {
@@ -435,7 +490,7 @@ final class TechnoRapper_AI_Wire {
             require_once ABSPATH . WPINC . '/feed.php';
         }
         $s = $this->settings();
-        if (!$this->api_key() || empty($s['feeds']) || $this->remaining_posts_today($s) <= 0) {
+        if (!$this->api_key() || $this->remaining_posts_today($s) <= 0) {
             return;
         }
         global $wpdb;
@@ -443,11 +498,11 @@ final class TechnoRapper_AI_Wire {
         $run_limit = (int) $s['max_items_per_run'];
         // Keep both cron and admin requests bounded; continue remaining work in a later cron tick.
         $started_at = microtime(true);
-        $time_budget_seconds = 20;
-        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status IN ('waiting_budget', 'rewritten', 'reviewed') OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
+        $time_budget_seconds = 10;
+        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status IN ('new', 'waiting_budget', 'rewritten', 'reviewed') OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
         foreach ($waiting_ids as $waiting_id) {
             if ((microtime(true) - $started_at) >= $time_budget_seconds) {
-                wp_schedule_single_event(time() + 15, self::CRON_HOOK);
+                wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
                 return;
             }
             if (!$this->refresh_processing_lock($lock_token)) { return; }
@@ -463,7 +518,7 @@ final class TechnoRapper_AI_Wire {
         $lines = preg_split('/\r\n|\r|\n/', $s['feeds']);
         foreach ($lines as $line) {
             if ((microtime(true) - $started_at) >= $time_budget_seconds) {
-                wp_schedule_single_event(time() + 15, self::CRON_HOOK);
+                wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
                 break;
             }
             if (!$this->refresh_processing_lock($lock_token)) { return; }
@@ -483,7 +538,7 @@ final class TechnoRapper_AI_Wire {
             $items = $feed->get_items(0, 10);
             foreach ($items as $item) {
                 if ((microtime(true) - $started_at) >= $time_budget_seconds) {
-                    wp_schedule_single_event(time() + 15, self::CRON_HOOK);
+                    wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
                     break 2;
                 }
                 if (!$this->refresh_processing_lock($lock_token)) { return; }
@@ -565,12 +620,18 @@ final class TechnoRapper_AI_Wire {
             if (is_wp_error($rewrite)) {
                 if ($rewrite->get_error_code() === 'tr_ai_wire_limit') {
                     $this->update_item($id, array('status' => 'waiting_budget', 'error_text' => $rewrite->get_error_message()));
+                } elseif ($rewrite->get_error_code() === 'tr_ai_wire_api_permanent') {
+                    $this->update_item($id, array('status' => 'error', 'error_text' => $rewrite->get_error_message()));
                 } else {
                     $this->schedule_retry($id, $rewrite->get_error_message());
                 }
                 return;
             }
             $this->update_item($id, array('status' => 'rewritten', 'rewrite_json' => wp_json_encode($rewrite)));
+            // Keep each queue request to one model call. The reviewer runs on
+            // the next scheduled tick, avoiding two slow API calls in one PHP request.
+            wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('review', (int) $id, wp_generate_uuid4()));
+            return;
         }
         $review_prompt = 'Act as an independent editor reviewing this proposed Technorapper brief. Check each factual claim against the supplied source. Do not claim independent verification unless evidence is provided. Assess grammar, attribution, unsupported claims, source-branding bleed, usefulness, novelty, groundedness, and similarity risk. Never invent fixes. Return JSON with score (0-100), verdict (pass/revise/reject), issues (array), fact_flags (array), policy_flags (array), pragmatism {is_new, is_useful, is_grounded, similarity_risk (low/medium/high), notes}, suggested_fixes (array), safe_to_publish (boolean). Set safe_to_publish true only if all checks pass and the brief is new, useful, and grounded.';
         if (!empty($s['enable_web_search'])) {
@@ -583,6 +644,8 @@ final class TechnoRapper_AI_Wire {
             if (is_wp_error($review)) {
                 if ($review->get_error_code() === 'tr_ai_wire_limit') {
                     $this->update_item($id, array('status' => 'waiting_budget', 'error_text' => $review->get_error_message()));
+                } elseif ($review->get_error_code() === 'tr_ai_wire_api_permanent') {
+                    $this->update_item($id, array('status' => 'error', 'error_text' => $review->get_error_message()));
                 } else {
                     $this->schedule_retry($id, $review->get_error_message());
                 }
@@ -611,6 +674,7 @@ final class TechnoRapper_AI_Wire {
         $delay = min(3600, 60 * (2 ** ($attempts - 1)));
         $retry_at = gmdate('Y-m-d H:i:s', time() + $delay);
         $this->update_item($id, array('status' => 'retry_wait', 'attempts' => $attempts, 'next_retry_at' => $retry_at, 'error_text' => $message));
+        wp_schedule_single_event(time() + $delay + 5, self::CRON_HOOK, array('retry', (int) $id, $attempts));
     }
 
     private function ai_json($model, $system, $user, $s, $web_search) {
@@ -634,7 +698,7 @@ final class TechnoRapper_AI_Wire {
             $payload['max_tool_calls'] = 1;
         }
         $response = wp_remote_post(self::API_URL, array(
-            'timeout' => 90,
+            'timeout' => 15,
             'headers' => array('Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json'),
             'body' => wp_json_encode($payload),
         ));
@@ -645,7 +709,8 @@ final class TechnoRapper_AI_Wire {
         $data = json_decode(wp_remote_retrieve_body($response), true);
         if ($code < 200 || $code >= 300 || !is_array($data)) {
             $message = isset($data['error']['message']) ? sanitize_text_field($data['error']['message']) : 'Unexpected API response.';
-            return new WP_Error('tr_ai_wire_api', 'AI API error (' . (int) $code . '): ' . $message);
+            $retryable = ($code === 408 || $code === 409 || $code === 429 || $code >= 500 || $code === 0);
+            return new WP_Error($retryable ? 'tr_ai_wire_api' : 'tr_ai_wire_api_permanent', 'AI API error (' . (int) $code . '): ' . $message);
         }
         $search_calls = 0;
         $text = '';
@@ -668,6 +733,20 @@ final class TechnoRapper_AI_Wire {
     }
 
     private function create_draft($id, $item, $rewrite, $review) {
+        // Recover a post created just before a worker crash; never duplicate it.
+        $existing_posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => array('draft', 'pending', 'publish', 'private', 'future'),
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => (int) $id,
+            'no_found_rows' => true,
+        ));
+        if (!empty($existing_posts)) {
+            $this->update_item($id, array('status' => 'draft', 'wp_post_id' => (int) $existing_posts[0], 'error_text' => null));
+            return;
+        }
         $title = sanitize_text_field($rewrite['title'] ?? '');
         $lede = sanitize_text_field($rewrite['lede'] ?? '');
         $body = wp_kses_post($rewrite['body_html'] ?? '');
@@ -736,14 +815,24 @@ final class TechnoRapper_AI_Wire {
         if (!$post_id || get_post_status($post_id) !== 'publish' || !get_post_meta($post_id, '_tr_ai_wire_experiment_id', true) || !hash_equals($expected_token, $provided_token)) {
             return new WP_Error('tr_ai_wire_invalid_view', 'Invalid experiment article view.', array('status' => 404));
         }
-        // Best-effort per-IP/post throttling limits replay and accidental request floods.
+        // Atomic per-IP/post throttling; only a keyed hash is persisted, never the IP.
         $remote_addr = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
-        $rate_key = 'tr_ai_wire_v_' . hash_hmac('sha256', $post_id . '|' . $remote_addr, wp_salt('auth'));
-        $rate_count = (int) get_transient($rate_key);
-        if ($rate_count >= 20) {
+        $rate_key = hash_hmac('sha256', $post_id . '|' . $remote_addr, wp_salt('auth'));
+        $limits_table = $wpdb->prefix . 'tr_ai_wire_view_limits';
+        $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$limits_table} (rate_key, window_started, requests) VALUES (%s, UTC_TIMESTAMP(), 1)
+             ON DUPLICATE KEY UPDATE
+             requests = IF(window_started < (UTC_TIMESTAMP() - INTERVAL 1 MINUTE), 1, requests + 1),
+             window_started = IF(window_started < (UTC_TIMESTAMP() - INTERVAL 1 MINUTE), UTC_TIMESTAMP(), window_started)",
+            $rate_key
+        ));
+        $rate_count = (int) $wpdb->get_var($wpdb->prepare("SELECT requests FROM {$limits_table} WHERE rate_key = %s", $rate_key));
+        if ($rate_count > 20) {
             return new WP_Error('tr_ai_wire_view_rate_limited', 'Too many view events.', array('status' => 429));
         }
-        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
+        if (wp_rand(1, 100) === 1) {
+            $wpdb->query("DELETE FROM {$limits_table} WHERE window_started < (UTC_TIMESTAMP() - INTERVAL 1 DAY)");
+        }
         $table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
         $result = $wpdb->query($wpdb->prepare(
             "INSERT INTO {$table} (post_id, view_date, views) VALUES (%d, %s, 1) ON DUPLICATE KEY UPDATE views = views + 1",
