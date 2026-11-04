@@ -6,7 +6,7 @@ A WordPress plugin that turns configured RSS/Atom items into source-attributed, 
 
 ## End-to-end pipeline
 
-The diagram below shows the normal scheduled/manual path, the editorial gate, and the reader-measurement path.
+The diagram below shows the normal scheduled/manual path, the editorial gate, and the reader-measurement path. The processing interval is selected in the WordPress **AI Wire** dashboard.
 
 ```mermaid
 flowchart TD
@@ -42,7 +42,7 @@ flowchart TD
 
 | Stage | What happens | Guardrail |
 |---|---|---|
-| Trigger | Hourly WP-Cron or an administrator-triggered run | A database-backed lock serializes runs |
+| Trigger | Configurable WP-Cron interval or an administrator-triggered run | A database-backed lock serializes runs |
 | Ingestion | Fetch configured RSS/Atom feeds and inspect up to 10 recent items per feed | HTTP(S) URL validation, source-key deduplication, source-size cap |
 | Assignment | Stable A/B assignment from the source key | Retries keep the same experiment and variant |
 | Generation | Writer produces title, lede, body, category and tags | Source content is treated as untrusted input |
@@ -53,20 +53,32 @@ flowchart TD
 
 ## Install and configure
 
-1. Upload the plugin directory through **Plugins → Add New → Upload Plugin**, or copy it to `wp-content/plugins/technorapper-ai-wire/`.
-2. Add an API key to `wp-config.php`, above the “That's all, stop editing” line:
+1. Upload the plugin ZIP through **Plugins → Add New → Upload Plugin**, or copy the plugin directory to `wp-content/plugins/technorapper-ai-wire/`.
+2. Activate **TechnoRapper AI Wire**. The plugin creates/updates its queue and view tables and schedules its initial processing run.
+3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
+4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
+5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** for a manual run.
+6. Inspect **AI Wire → Queue & usage**, review generated drafts in WordPress, and publish manually only after editorial approval.
 
-   ```php
-   define('OPENAI_API_KEY', 'your-api-key');
-   // Alternative constant supported by the plugin:
-   // define('TR_AI_WIRE_OPENAI_API_KEY', 'your-api-key');
-   ```
+### Dashboard configuration reference
 
-   The key is not saved in the plugin settings. Keep it out of source control, logs, screenshots and support tickets. API usage is billed separately from ChatGPT.
-3. Activate **TechnoRapper AI Wire**. Activation creates/updates the queue and view tables and schedules hourly polling.
-4. Open **AI Wire** in wp-admin. Configure feeds (one URL per line; optional label after `|`), daily draft cap, monthly USD/token limits, model choices, source/output limits and optional web-search corroboration.
-5. Start with one trusted feed, a low daily cap and a conservative monthly budget. Run **Fetch feeds and process queue now** once.
-6. Inspect **AI Wire → Queue & usage**, review each generated draft in WordPress, and publish manually only after editorial approval.
+All day-to-day settings are available in one place under **AI Wire**:
+
+| Setting | What it controls |
+|---|---|
+| OpenAI API key | Credential used for writer and reviewer requests; saved separately from ordinary settings |
+| Automatic processing schedule | Hourly, every 3, 6 or 12 hours, daily, or manual-only |
+| RSS/Atom feeds | One feed URL per line, optionally followed by `| Feed label` |
+| Maximum drafts per day | Daily draft creation cap; `0` pauses processing |
+| Monthly API budget | Local estimated USD spend ceiling; `0` stops AI calls |
+| Monthly token limit | Combined monthly input/output token ceiling; `0` stops AI calls |
+| Maximum output tokens | Per AI pass output ceiling |
+| Maximum source characters | Source text truncation limit before AI processing |
+| Writer and reviewer models | Model selection for the two editorial passes |
+| Independent web search | Optional reviewer corroboration and associated search charges |
+| Editorial A/B experiment | Enables/disables stable A/B writer assignment and sets the experiment ID |
+
+The API-key section has its own save action so the secret is not included in the ordinary WordPress settings payload. The other configuration values are saved together with **Save settings**.
 
 ### Suggested initial production settings
 

@@ -17,6 +17,7 @@ if (!defined('ABSPATH')) {
 final class TechnoRapper_AI_Wire {
     const VERSION = '0.1.0';
     const OPTION = 'tr_ai_wire_settings';
+    const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
     const TABLE_SUFFIX = 'tr_ai_wire_items';
     const API_URL = 'https://api.openai.com/v1/responses';
@@ -33,6 +34,9 @@ final class TechnoRapper_AI_Wire {
         $this->table = $wpdb->prefix . self::TABLE_SUFFIX;
         add_action('admin_menu', array($this, 'admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
+        add_filter('cron_schedules', array($this, 'cron_schedules'));
+        add_action('update_option_' . self::OPTION, array($this, 'settings_updated'), 10, 2);
+        add_action('admin_post_tr_ai_wire_save_api_key', array($this, 'save_api_key'));
         add_action('init', array($this, 'maybe_upgrade_schema'), 5);
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
@@ -81,9 +85,7 @@ final class TechnoRapper_AI_Wire {
         if (!get_option(self::OPTION)) {
             add_option(self::OPTION, self::defaults());
         }
-        if (!wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_event(time() + 300, 'hourly', self::CRON_HOOK);
-        }
+        self::schedule_cron();
     }
 
     public static function deactivate() {
@@ -94,6 +96,7 @@ final class TechnoRapper_AI_Wire {
     public static function defaults() {
         return array(
             'feeds' => '',
+            'cron_frequency' => 'hourly',
             'max_posts_per_day' => 10,
             'monthly_budget_usd' => 5,
             'monthly_token_limit' => 1000000,
@@ -113,6 +116,30 @@ final class TechnoRapper_AI_Wire {
 
     public function register_settings() {
         register_setting('tr_ai_wire', self::OPTION, array($this, 'sanitize_settings'));
+    }
+
+    public function cron_schedules($schedules) {
+        $schedules['every_3_hours'] = array('interval' => 3 * HOUR_IN_SECONDS, 'display' => __('Every 3 hours', 'technorapper-ai-wire'));
+        $schedules['every_6_hours'] = array('interval' => 6 * HOUR_IN_SECONDS, 'display' => __('Every 6 hours', 'technorapper-ai-wire'));
+        $schedules['every_12_hours'] = array('interval' => 12 * HOUR_IN_SECONDS, 'display' => __('Every 12 hours', 'technorapper-ai-wire'));
+        return $schedules;
+    }
+
+    public function settings_updated($old_value, $value) {
+        $old_frequency = $old_value['cron_frequency'] ?? 'hourly';
+        $new_frequency = $value['cron_frequency'] ?? 'hourly';
+        if ($old_frequency !== $new_frequency) {
+            self::schedule_cron();
+        }
+    }
+
+    private static function schedule_cron() {
+        wp_clear_scheduled_hook(self::CRON_HOOK);
+        $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        $frequency = $settings['cron_frequency'];
+        if ($frequency !== 'manual') {
+            wp_schedule_event(time() + 300, $frequency, self::CRON_HOOK);
+        }
     }
 
     public function maybe_upgrade_schema() {
@@ -140,6 +167,8 @@ final class TechnoRapper_AI_Wire {
             $clean_lines[] = $url . ($label !== '' ? ' | ' . $label : '');
         }
         $out['feeds'] = implode("\n", array_unique($clean_lines));
+        $frequencies = array('hourly', 'every_3_hours', 'every_6_hours', 'every_12_hours', 'daily', 'manual');
+        $out['cron_frequency'] = in_array($input['cron_frequency'] ?? '', $frequencies, true) ? $input['cron_frequency'] : $defaults['cron_frequency'];
         $out['max_posts_per_day'] = min(500, max(0, absint($input['max_posts_per_day'] ?? $defaults['max_posts_per_day'])));
         $out['monthly_budget_usd'] = min(10000, max(0, (float) ($input['monthly_budget_usd'] ?? $defaults['monthly_budget_usd'])));
         $out['monthly_token_limit'] = min(1000000000, max(0, absint($input['monthly_token_limit'] ?? $defaults['monthly_token_limit'])));
@@ -162,6 +191,10 @@ final class TechnoRapper_AI_Wire {
     }
 
     private function api_key() {
+        $dashboard_key = get_option(self::API_KEY_OPTION, '');
+        if (is_string($dashboard_key) && $dashboard_key !== '') {
+            return $dashboard_key;
+        }
         if (defined('OPENAI_API_KEY') && OPENAI_API_KEY) {
             return OPENAI_API_KEY;
         }
@@ -171,24 +204,68 @@ final class TechnoRapper_AI_Wire {
         return '';
     }
 
+    public function save_api_key() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to manage API credentials.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_save_api_key');
+        $remove = !empty($_POST['remove_api_key']);
+        $submitted = isset($_POST['api_key']) ? trim((string) wp_unslash($_POST['api_key'])) : '';
+        if ($remove) {
+            delete_option(self::API_KEY_OPTION);
+        } elseif ($submitted !== '') {
+            if (strlen($submitted) > 512 || preg_match('/\\s/', $submitted)) {
+                wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire&api_key_error=1'));
+                exit;
+            }
+            if (get_option(self::API_KEY_OPTION, null) === null) {
+                add_option(self::API_KEY_OPTION, $submitted, '', false);
+            } else {
+                update_option(self::API_KEY_OPTION, $submitted, false);
+            }
+        }
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire&api_key_saved=' . ($remove ? 'removed' : '1')));
+        exit;
+    }
+
     public function settings_page() {
         if (!current_user_can('manage_options')) {
             return;
         }
         $s = $this->settings();
+        $dashboard_key = get_option(self::API_KEY_OPTION, '');
         $key_ready = (bool) $this->api_key();
+        $key_managed_in_dashboard = is_string($dashboard_key) && $dashboard_key !== '';
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
             <p>Feed items are rewritten and reviewed, then saved as WordPress drafts when they pass the review gate. Publishing remains a human action.</p>
-            <?php if (!$key_ready) : ?>
-                <div class="notice notice-warning"><p><strong>OpenAI API key is not configured.</strong> Add <code>define('OPENAI_API_KEY', 'your-key');</code> to <code>wp-config.php</code> (or use <code>TR_AI_WIRE_OPENAI_API_KEY</code>) to enable processing. API billing is separate from ChatGPT.</p></div>
-            <?php else : ?>
-                <div class="notice notice-success"><p>OpenAI API key detected. The key is not displayed or stored in plugin settings.</p></div>
-            <?php endif; ?>
+undefined
+            <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
+                <h2>1. OpenAI API connection</h2>
+                <?php if ($key_ready) : ?>
+                    <p><span class="dashicons dashicons-yes-alt" style="color:#16803c;"></span> <strong>API key configured.</strong> <?php echo $key_managed_in_dashboard ? 'Managed securely from this dashboard.' : 'Using a server-level key from wp-config.php.'; ?> The secret is never displayed.</p>
+                <?php else : ?>
+                    <p><span class="dashicons dashicons-warning" style="color:#b32d2e;"></span> <strong>API key required.</strong> Add your OpenAI API key below to enable processing.</p>
+                <?php endif; ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="tr_ai_wire_save_api_key">
+                    <?php wp_nonce_field('tr_ai_wire_save_api_key'); ?>
+                    <p><label for="tr-ai-wire-api-key"><strong>OpenAI API key</strong></label></p>
+                    <p><input id="tr-ai-wire-api-key" name="api_key" type="password" class="regular-text" autocomplete="new-password" spellcheck="false" placeholder="<?php echo $key_managed_in_dashboard ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Paste your API key'); ?>"></p>
+                    <p class="description">Saved in a dedicated non-autoloaded WordPress option. Existing key is retained when this field is blank. API usage is billed separately from ChatGPT.</p>
+                    <?php submit_button($key_managed_in_dashboard ? 'Save / replace API key' : 'Save API key', 'primary', 'submit', false); ?>
+                    <?php if ($key_managed_in_dashboard) : ?>
+                        <label style="margin-left:12px;"><input type="checkbox" name="remove_api_key" value="1"> Remove saved dashboard key</label>
+                    <?php endif; ?>
+                </form>
+                <p class="description">A server-level constant can still be used as a fallback if no dashboard key is saved.</p>
+            </div>
+            <h2>2. Feed, editorial and processing settings</h2>
             <form method="post" action="options.php">
                 <?php settings_fields('tr_ai_wire'); ?>
                 <table class="form-table" role="presentation">
+                    <tr><th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th><td><select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]"><?php foreach (array('hourly' => 'Every hour', 'every_3_hours' => 'Every 3 hours', 'every_6_hours' => 'Every 6 hours', 'every_12_hours' => 'Every 12 hours', 'daily' => 'Once per day', 'manual' => 'Manual only (disable scheduled runs)') as $frequency => $label) : ?><option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p></td></tr>
                     <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
                     <tr><th scope="row"><label for="tr-daily">Maximum drafts per day</label></th><td><input id="tr-daily" type="number" min="0" max="500" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts created by this plugin today. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"> <p class="description">Processing stops when tracked usage reaches the cap. Set to 0 to stop AI calls.</p></td></tr>
