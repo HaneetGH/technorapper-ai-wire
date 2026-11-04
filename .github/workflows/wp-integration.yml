@@ -27,6 +27,7 @@ jobs:
     env:
       WP_TESTS_DIR: /tmp/wordpress-tests-lib
       WP_CORE_DIR: /tmp/wordpress/
+      WP_TESTS_PHPUNIT_POLYFILLS_PATH: /tmp/phpunit-polyfills
     strategy:
       fail-fast: false
       matrix:
@@ -44,5 +45,6 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/wp-cli/scaffold-command.git /tmp/wp-cli-scaffold
           bash /tmp/wp-cli-scaffold/templates/install-wp-tests.sh wordpress_test root root 127.0.0.1 latest
+          git clone --depth=1 https://github.com/Yoast/PHPUnit-Polyfills.git /tmp/phpunit-polyfills
       - name: Run WordPress integration tests
         run: phpunit --configuration phpunit.xml.dist
