@@ -438,7 +438,16 @@ final class TechnoRapper_AI_Wire {
         } finally {
             $current = get_option(self::PROCESSING_LOCK_OPTION, array());
             if (is_array($current) && !empty($current['token']) && hash_equals($lock['token'], (string) $current['token'])) {
-                delete_option(self::PROCESSING_LOCK_OPTION);
+                global $wpdb;
+                $released = $wpdb->query($wpdb->prepare(
+                    "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                    self::PROCESSING_LOCK_OPTION,
+                    maybe_serialize($current)
+                ));
+                if ($released) {
+                    wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
+                    wp_cache_delete('alloptions', 'options');
+                }
             }
         }
     }
@@ -448,11 +457,24 @@ final class TechnoRapper_AI_Wire {
         if (!is_array($current) || empty($current['token']) || !hash_equals((string) $current['token'], (string) $token)) {
             return false;
         }
-        // Sub-second heartbeat changes avoid update_option() returning false
-        // merely because two queue items started in the same Unix second.
+        // Compare-and-swap the serialized option value. This prevents an old
+        // worker from overwriting a newer owner's lease after stale recovery.
+        $previous = $current;
         $current['created_at'] = microtime(true);
-        $updated = update_option(self::PROCESSING_LOCK_OPTION, $current, false);
-        if ($updated) {
+        global $wpdb;
+        $updated = $wpdb->update(
+            $wpdb->options,
+            array('option_value' => maybe_serialize($current)),
+            array(
+                'option_name' => self::PROCESSING_LOCK_OPTION,
+                'option_value' => maybe_serialize($previous),
+            ),
+            array('%s'),
+            array('%s', '%s')
+        );
+        if ($updated === 1) {
+            wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
+            wp_cache_delete('alloptions', 'options');
             return true;
         }
         $verified = get_option(self::PROCESSING_LOCK_OPTION, array());
