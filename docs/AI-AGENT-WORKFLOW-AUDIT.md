@@ -42,15 +42,15 @@ Even after these changes and passing CI, a live production deployment cannot be 
 
 The WordPress integration workflow boots WordPress against MySQL and tests:
 
-- Required queue, view and rate-limit tables are created.
-- A lock heartbeat succeeds within the same second.
+- Required queue, view and rate-limit tables are created; a simulated v4→v5 migration preserves existing queue rows.
+- A lock heartbeat succeeds within the same second, and an old worker cannot overwrite a replacement lease.
 - Writer and Reviewer are executed as separate queue steps and produce one draft.
 - A draft is not duplicated when the queue update is simulated as interrupted after post creation.
 - Transient errors are moved to retry_wait and a matching retry event is scheduled.
 - An API authentication failure is classified as permanent and uses the configured bounded timeout.
 - The public view endpoint enforces the database-backed per-IP/post rate limit.
 
-The existing PHP lint workflow remains in place for PHP 7.4, 8.1 and 8.3. Integration tests run on PHP 8.2 and 8.3.
+The existing PHP lint workflow remains in place for PHP 7.4, 8.1 and 8.3. Integration tests run on PHP 8.2 and 8.3. Release packaging now depends on a successful WordPress integration validation job.
 
 ## Remaining production gates
 
