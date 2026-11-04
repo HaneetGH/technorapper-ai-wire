@@ -8,7 +8,7 @@
 
 The plugin is a controlled editorial drafting pipeline. It ingests RSS/Atom entries, stores a deduplicated queue item, asks a Writer model for an original brief, sends that brief and the source to a separate Reviewer pass, and creates a WordPress **draft** only when the review gates pass. Publishing remains a human action.
 
-The current mainline implementation before this hardening branch was **not production-ready**. The hardening branch addresses several concrete failure modes: manual runs no longer execute inside the admin request, retries receive their own scheduled events, transient and permanent API failures are separated, draft creation is recoverable after a crash, lock heartbeat handling is corrected, and public-view throttling uses an atomic database upsert.
+The current mainline implementation before this hardening branch was **not production-ready**. The hardening branch addresses several concrete failure modes: manual runs no longer execute inside the admin request, the Writer and Reviewer calls run in separate queue ticks, stranded new queue rows are resumed, retries receive their own scheduled events, transient and permanent API failures are separated, draft creation is recoverable after a crash, lock heartbeat handling is corrected, and public-view throttling uses an atomic database upsert.
 
 Even after these changes and passing CI, a live production deployment cannot be certified from repository tests alone. A staging upgrade against a production-like database, real system-cron verification, host/network validation and controlled canary are still required.
 
@@ -27,6 +27,8 @@ Even after these changes and passing CI, a live production deployment cannot be 
 | Area | Change | Why it matters |
 |---|---|---|
 | Manual execution | Admin action schedules background work and redirects immediately | Avoids keeping an administrator's browser request open through feeds and model calls |
+| AI execution slices | Writer saves its output and yields; Reviewer runs on a later cron tick | Avoids combining two model calls into one long PHP request |
+| Queue recovery | The queue scan now includes stranded new items, even when feed settings have changed | Recovers an item inserted before an interrupted worker could begin processing it |
 | Retry scheduling | Retry events are scheduled at the retry deadline with unique event arguments | Avoids waiting for the next hourly run and avoids WordPress's duplicate-event suppression |
 | API failures | HTTP 408/409/429/5xx and transport failures remain retryable; other HTTP 4xx errors become actionable terminal errors | Prevents wasting retries on invalid credentials, invalid requests or unavailable models |
 | API timeout | Per-request timeout reduced to 15 seconds | Bounds one blocking network request; host-level timeouts still need staging validation |
@@ -42,6 +44,7 @@ The WordPress integration workflow boots WordPress against MySQL and tests:
 
 - Required queue, view and rate-limit tables are created.
 - A lock heartbeat succeeds within the same second.
+- Writer and Reviewer are executed as separate queue steps and produce one draft.
 - A draft is not duplicated when the queue update is simulated as interrupted after post creation.
 - Transient errors are moved to retry_wait and a matching retry event is scheduled.
 - An API authentication failure is classified as permanent and uses the configured bounded timeout.
