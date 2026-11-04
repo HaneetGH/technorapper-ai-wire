@@ -114,6 +114,66 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
     }
 
+    public function test_writer_and_reviewer_run_as_separate_queue_steps() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $id = $this->create_queue_item();
+        $calls = 0;
+        $writer = array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'category' => '',
+            'tags' => array(),
+        );
+        $review = array(
+            'verdict' => 'pass',
+            'safe_to_publish' => true,
+            'fact_flags' => array(),
+            'policy_flags' => array(),
+            'pragmatism' => array(
+                'is_new' => true,
+                'is_useful' => true,
+                'is_grounded' => true,
+                'similarity_risk' => 'low',
+            ),
+        );
+        $callback = function ($preempt, $args, $url) use (&$calls, $writer, $review) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $output = $calls === 1 ? $writer : $review;
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array(
+                    'output' => array(array(
+                        'type' => 'message',
+                        'content' => array(array('type' => 'output_text', 'text' => wp_json_encode($output))),
+                    )),
+                    'usage' => array('input_tokens' => 20, 'output_tokens' => 30),
+                )),
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $settings = TechnoRapper_AI_Wire::defaults();
+
+        $this->invoke_private('process_item', array($id, $settings));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('rewritten', $row['status']);
+        $this->assertSame(1, $calls);
+
+        $this->invoke_private('process_item', array($id, $settings));
+        remove_filter('pre_http_request', $callback, 10);
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('draft', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertSame(2, $calls);
+    }
+
     public function test_transient_failure_is_scheduled_for_retry() {
         $id = $this->create_queue_item();
         $this->invoke_private('schedule_retry', array($id, 'Temporary upstream failure'));
