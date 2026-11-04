@@ -732,6 +732,14 @@ final class TechnoRapper_AI_Wire {
         if (!$post_id || get_post_status($post_id) !== 'publish' || !get_post_meta($post_id, '_tr_ai_wire_experiment_id', true) || !hash_equals($expected_token, $provided_token)) {
             return new WP_Error('tr_ai_wire_invalid_view', 'Invalid experiment article view.', array('status' => 404));
         }
+        // Best-effort per-IP/post throttling limits replay and accidental request floods.
+        $remote_addr = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        $rate_key = 'tr_ai_wire_v_' . hash_hmac('sha256', $post_id . '|' . $remote_addr, wp_salt('auth'));
+        $rate_count = (int) get_transient($rate_key);
+        if ($rate_count >= 20) {
+            return new WP_Error('tr_ai_wire_view_rate_limited', 'Too many view events.', array('status' => 429));
+        }
+        set_transient($rate_key, $rate_count + 1, MINUTE_IN_SECONDS);
         $table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
         $result = $wpdb->query($wpdb->prepare(
             "INSERT INTO {$table} (post_id, view_date, views) VALUES (%d, %s, 1) ON DUPLICATE KEY UPDATE views = views + 1",
@@ -765,7 +773,7 @@ final class TechnoRapper_AI_Wire {
             'view_token' => hash_hmac('sha256', $post_id . '|' . gmdate('Y-m-d'), wp_salt('auth')),
         );
         $tracking_url = esc_url_raw(rest_url('tr-ai-wire/v1/view'));
-        echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";var endpoint=" . wp_json_encode($tracking_url) . ";p.page_location=window.location.href;p.page_title=document.title;var eventData=Object.assign({},p);delete eventData.view_token;var sent=false;function record(){if(sent)return;if(document.visibilityState!=='visible')return;try{var key='tr_ai_wire_view_' + p.article_id;if(window.sessionStorage.getItem(key))return;window.sessionStorage.setItem(key,'1');}catch(e){return;}sent=true;if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',eventData);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},eventData));}if(navigator.sendBeacon){navigator.sendBeacon(endpoint,new Blob([JSON.stringify({post_id:parseInt(p.article_id,10),view_token:p.view_token})],{type:'application/json'}));}else{fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({post_id:parseInt(p.article_id,10),view_token:p.view_token}),keepalive:true,credentials:'same-origin'});}}window.setTimeout(record,3000);})();\n</script>\n";
+        echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";var endpoint=" . wp_json_encode($tracking_url) . ";p.page_location=window.location.href;p.page_title=document.title;var eventData=Object.assign({},p);delete eventData.view_token;var elapsed=0;var visibleSince=null;var sent=false;function startVisible(){if(document.visibilityState==='visible'&&visibleSince===null){visibleSince=Date.now();}}function pauseVisible(){if(visibleSince!==null){elapsed+=Date.now()-visibleSince;visibleSince=null;}}function emit(){if(sent||document.visibilityState!=='visible')return;sent=true;var gaAllowed=true;try{var gaKey='tr_ai_wire_ga_' + p.article_id;if(window.sessionStorage.getItem(gaKey)){gaAllowed=false;}else{window.sessionStorage.setItem(gaKey,'1');}}catch(e){}if(gaAllowed){if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',eventData);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},eventData));}}var firstPartyAllowed=true;try{var viewKey='tr_ai_wire_view_' + p.article_id;if(window.sessionStorage.getItem(viewKey)){firstPartyAllowed=false;}else{window.sessionStorage.setItem(viewKey,'1');}}catch(e){}if(firstPartyAllowed){var body=JSON.stringify({post_id:parseInt(p.article_id,10),view_token:p.view_token});if(navigator.sendBeacon){navigator.sendBeacon(endpoint,new Blob([body],{type:'application/json'}));}else{fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:body,keepalive:true,credentials:'same-origin'});}}}function tick(){if(sent)return;startVisible();var total=elapsed+(visibleSince===null?0:Date.now()-visibleSince);if(total>=3000){emit();}}document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'){startVisible();tick();}else{pauseVisible();}});startVisible();var timer=window.setInterval(tick,250);window.setTimeout(function(){window.clearInterval(timer);},30000);})();\n</script>\n";
     }
 
     public function experiments_page() {
