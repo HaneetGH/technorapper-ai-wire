@@ -42,6 +42,7 @@ final class TechnoRapper_AI_Wire {
         add_action('rest_api_init', array($this, 'register_tracking_route'));
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
         add_action('admin_post_tr_ai_wire_run_now', array($this, 'run_now'));
+        add_action('admin_post_tr_ai_wire_retry_item', array($this, 'retry_item'));
     }
 
     public static function activate() {
@@ -310,6 +311,23 @@ final class TechnoRapper_AI_Wire {
         exit;
     }
 
+    public function retry_item() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to retry queue items.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_GET['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_retry_item_' . $id);
+        $item = $this->get_item($id);
+        if ($item && in_array($item['status'], array('error', 'retry_wait'), true)) {
+            $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
+            $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
+            $status = is_array($review) ? 'reviewed' : (is_array($rewrite) ? 'rewritten' : 'new');
+            $this->update_item($id, array('status' => $status, 'attempts' => 0, 'next_retry_at' => null, 'error_text' => null));
+        }
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&retried=1'));
+        exit;
+    }
+
     private function usage_key() {
         return 'tr_ai_wire_usage_' . gmdate('Ym');
     }
@@ -394,7 +412,7 @@ final class TechnoRapper_AI_Wire {
         }
 
         try {
-            $this->process_feeds_locked();
+            $this->process_feeds_locked($lock['token']);
         } finally {
             $current = get_option(self::PROCESSING_LOCK_OPTION, array());
             if (is_array($current) && !empty($current['token']) && hash_equals($lock['token'], (string) $current['token'])) {
@@ -403,7 +421,16 @@ final class TechnoRapper_AI_Wire {
         }
     }
 
-    private function process_feeds_locked() {
+    private function refresh_processing_lock($token) {
+        $current = get_option(self::PROCESSING_LOCK_OPTION, array());
+        if (!is_array($current) || empty($current['token']) || !hash_equals((string) $current['token'], (string) $token)) {
+            return false;
+        }
+        $current['created_at'] = time();
+        return update_option(self::PROCESSING_LOCK_OPTION, $current, false);
+    }
+
+    private function process_feeds_locked($lock_token) {
         if (!function_exists('fetch_feed')) {
             require_once ABSPATH . WPINC . '/feed.php';
         }
@@ -414,8 +441,9 @@ final class TechnoRapper_AI_Wire {
         global $wpdb;
         $processed_this_run = 0;
         $run_limit = (int) $s['max_items_per_run'];
-        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status = 'waiting_budget' OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
+        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status IN ('waiting_budget', 'rewritten', 'reviewed') OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
         foreach ($waiting_ids as $waiting_id) {
+            if (!$this->refresh_processing_lock($lock_token)) { return; }
             if ($this->remaining_posts_today($s) <= 0) {
                 return;
             }
@@ -442,6 +470,7 @@ final class TechnoRapper_AI_Wire {
             }
             $items = $feed->get_items(0, 10);
             foreach ($items as $item) {
+                if (!$this->refresh_processing_lock($lock_token)) { return; }
                 if ($this->remaining_posts_today($s) <= 0 || $processed_this_run >= $run_limit) {
                     break 2;
                 }
@@ -783,7 +812,7 @@ final class TechnoRapper_AI_Wire {
         <p><strong>Daily draft cap:</strong> <?php echo esc_html((int) $s['max_posts_per_day']); ?> · Posts still available today: <?php echo esc_html($this->remaining_posts_today($s)); ?></p>
         <table class="widefat striped"><thead><tr><th>Added (UTC)</th><th>Feed</th><th>Source item</th><th>Status</th><th>Post / details</th></tr></thead><tbody>
         <?php if (empty($rows)) : ?><tr><td colspan="5">No items processed yet.</td></tr><?php else : foreach ($rows as $row) : ?>
-            <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>">Edit draft</a><?php endif; ?><?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?></td></tr>
+            <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>">Edit draft</a><?php endif; ?><?php if (in_array($row['status'], array('error', 'retry_wait'), true)) : ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_retry_item&item_id=' . (int) $row['id']), 'tr_ai_wire_retry_item_' . (int) $row['id'])); ?>">Retry</a><?php endif; ?><?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?></td></tr>
         <?php endforeach; endif; ?>
         </tbody></table></div>
         <?php
