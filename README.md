@@ -4,6 +4,8 @@ A WordPress plugin that turns configured RSS/Atom items into source-attributed, 
 
 > **Safety default:** this plugin does not auto-publish. AI review is a quality gate, not a guarantee of factual accuracy or legal clearance.
 
+For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md).
+
 ## End-to-end pipeline
 
 The diagram below shows the normal scheduled/manual path, the editorial gate, and the reader-measurement path. The processing interval and per-run workload cap are selected in the WordPress **AI Wire** dashboard.
