@@ -392,6 +392,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('tr_ai_wire_invalid_view', $invalid->get_error_code());
     }
 
+    public function test_fresh_install_is_paused_without_an_api_key() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $this->assertSame('manual', $settings['cron_frequency']);
+        $this->assertSame(0, $settings['max_posts_per_day']);
+        $this->assertSame('', $settings['feeds']);
+        $this->assertSame('', $this->invoke_private('api_key'));
+        $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK));
+    }
+
     public function test_zero_budget_blocks_api_spend() {
         $settings = TechnoRapper_AI_Wire::defaults();
         $settings['monthly_budget_usd'] = 0;

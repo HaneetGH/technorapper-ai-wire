@@ -111,6 +111,7 @@ The API-key section has its own save action so the secret is not included in the
 
 ### Suggested initial production settings
 
+- First install is paused: no API key, no feeds, schedule Manual only, daily cap `0`. Add a key and raise the cap only when you are ready to process.
 - Start with 1–3 trusted feeds and a daily cap of 1–3 drafts.
 - Set a low monthly API budget and token ceiling; raise only after observing real usage.
 - Leave optional web search disabled until you have validated its cost and review output.
