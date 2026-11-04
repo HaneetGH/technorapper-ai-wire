@@ -415,8 +415,19 @@ final class TechnoRapper_AI_Wire {
                 return;
             }
 
-            // Recover a lock left behind by a crashed PHP process.
-            delete_option(self::PROCESSING_LOCK_OPTION);
+            // Delete only the exact stale value we inspected. A concurrent
+            // heartbeat changes option_value and makes this conditional delete fail.
+            global $wpdb;
+            $deleted = $wpdb->query($wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+                self::PROCESSING_LOCK_OPTION,
+                maybe_serialize($existing)
+            ));
+            if (!$deleted) {
+                return;
+            }
+            wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
+            wp_cache_delete('alloptions', 'options');
             if (!add_option(self::PROCESSING_LOCK_OPTION, $lock, '', false)) {
                 return;
             }
@@ -437,8 +448,19 @@ final class TechnoRapper_AI_Wire {
         if (!is_array($current) || empty($current['token']) || !hash_equals((string) $current['token'], (string) $token)) {
             return false;
         }
-        $current['created_at'] = time();
-        return update_option(self::PROCESSING_LOCK_OPTION, $current, false);
+        // Sub-second heartbeat changes avoid update_option() returning false
+        // merely because two queue items started in the same Unix second.
+        $current['created_at'] = microtime(true);
+        $updated = update_option(self::PROCESSING_LOCK_OPTION, $current, false);
+        if ($updated) {
+            return true;
+        }
+        $verified = get_option(self::PROCESSING_LOCK_OPTION, array());
+        return is_array($verified)
+            && !empty($verified['token'])
+            && hash_equals((string) $verified['token'], (string) $token)
+            && isset($verified['created_at'])
+            && (float) $verified['created_at'] >= (float) $current['created_at'];
     }
 
     private function process_feeds_locked($lock_token) {
