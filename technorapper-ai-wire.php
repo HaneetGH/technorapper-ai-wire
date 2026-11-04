@@ -441,8 +441,15 @@ final class TechnoRapper_AI_Wire {
         global $wpdb;
         $processed_this_run = 0;
         $run_limit = (int) $s['max_items_per_run'];
+        // Keep both cron and admin requests bounded; continue remaining work in a later cron tick.
+        $started_at = microtime(true);
+        $time_budget_seconds = 20;
         $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE status IN ('waiting_budget', 'rewritten', 'reviewed') OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
         foreach ($waiting_ids as $waiting_id) {
+            if ((microtime(true) - $started_at) >= $time_budget_seconds) {
+                wp_schedule_single_event(time() + 15, self::CRON_HOOK);
+                return;
+            }
             if (!$this->refresh_processing_lock($lock_token)) { return; }
             if ($this->remaining_posts_today($s) <= 0) {
                 return;
@@ -455,6 +462,11 @@ final class TechnoRapper_AI_Wire {
         }
         $lines = preg_split('/\r\n|\r|\n/', $s['feeds']);
         foreach ($lines as $line) {
+            if ((microtime(true) - $started_at) >= $time_budget_seconds) {
+                wp_schedule_single_event(time() + 15, self::CRON_HOOK);
+                break;
+            }
+            if (!$this->refresh_processing_lock($lock_token)) { return; }
             if ($this->remaining_posts_today($s) <= 0 || $processed_this_run >= $run_limit) {
                 break;
             }
@@ -805,16 +817,29 @@ final class TechnoRapper_AI_Wire {
         global $wpdb;
         $usage = $this->usage();
         $s = $this->settings();
-        $rows = $wpdb->get_results("SELECT id, feed_name, source_title, source_url, status, wp_post_id, created_at, error_text, review_json FROM {$this->table} ORDER BY id DESC LIMIT 100", ARRAY_A);
+        $page = max(1, absint($_GET['paged'] ?? 1));
+        $per_page = 50;
+        $status_filter = sanitize_key(wp_unslash($_GET['status'] ?? ''));
+        $allowed_statuses = array('new', 'waiting_budget', 'retry_wait', 'rewritten', 'reviewed', 'draft', 'quarantined', 'error');
+        if (!in_array($status_filter, $allowed_statuses, true)) { $status_filter = ''; }
+        $where = $status_filter ? $wpdb->prepare(' WHERE status = %s', $status_filter) : '';
+        $total_rows = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->table}{$where}");
+        $offset = ($page - 1) * $per_page;
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT id, feed_name, source_title, source_url, status, wp_post_id, created_at, error_text, review_json FROM {$this->table}{$where} ORDER BY id DESC LIMIT %d OFFSET %d", $per_page, $offset), ARRAY_A);
         ?>
         <div class="wrap"><h1>AI Wire — Queue & usage</h1>
         <p><strong>This month:</strong> $<?php echo esc_html(number_format_i18n((float) $usage['cost_usd'], 4)); ?> / $<?php echo esc_html(number_format_i18n((float) $s['monthly_budget_usd'], 2)); ?> · <?php echo esc_html(number_format_i18n((int) $usage['input_tokens'] + (int) $usage['output_tokens'])); ?> / <?php echo esc_html(number_format_i18n((int) $s['monthly_token_limit'])); ?> tokens · <?php echo esc_html((int) $usage['search_calls']); ?> web searches</p>
         <p><strong>Daily draft cap:</strong> <?php echo esc_html((int) $s['max_posts_per_day']); ?> · Posts still available today: <?php echo esc_html($this->remaining_posts_today($s)); ?></p>
+        <form method="get" style="margin:12px 0;"><input type="hidden" name="page" value="tr-ai-wire-queue"><label for="tr-ai-wire-status">Filter status </label><select id="tr-ai-wire-status" name="status"><option value="">All statuses</option><?php foreach ($allowed_statuses as $option_status) : ?><option value="<?php echo esc_attr($option_status); ?>" <?php selected($status_filter, $option_status); ?>><?php echo esc_html($option_status); ?></option><?php endforeach; ?></select> <button class="button">Apply</button></form>
         <table class="widefat striped"><thead><tr><th>Added (UTC)</th><th>Feed</th><th>Source item</th><th>Status</th><th>Post / details</th></tr></thead><tbody>
         <?php if (empty($rows)) : ?><tr><td colspan="5">No items processed yet.</td></tr><?php else : foreach ($rows as $row) : ?>
             <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>">Edit draft</a><?php endif; ?><?php if (in_array($row['status'], array('error', 'retry_wait'), true)) : ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_retry_item&item_id=' . (int) $row['id']), 'tr_ai_wire_retry_item_' . (int) $row['id'])); ?>">Retry</a><?php endif; ?><?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?></td></tr>
         <?php endforeach; endif; ?>
-        </tbody></table></div>
+        </tbody></table>
+        <?php $pages = (int) ceil($total_rows / $per_page); if ($pages > 1) : ?>
+        <div class="tablenav"><div class="tablenav-pages"><span class="displaying-num"><?php echo esc_html(number_format_i18n($total_rows)); ?> items</span> <?php for ($p = 1; $p <= $pages; $p++) : ?><a class="button <?php echo $p === $page ? 'button-primary' : ''; ?>" href="<?php echo esc_url(add_query_arg(array('page' => 'tr-ai-wire-queue', 'status' => $status_filter, 'paged' => $p), admin_url('admin.php'))); ?>"><?php echo esc_html((string) $p); ?></a> <?php endfor; ?></div></div>
+        <?php endif; ?>
+        </div>
         <?php
     }
 }
