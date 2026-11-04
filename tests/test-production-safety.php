@@ -102,6 +102,45 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame((string) $posts[0], (string) $row['wp_post_id']);
     }
 
+    public function test_schema_upgrade_from_v4_preserves_existing_queue_rows() {
+        $id = $this->create_queue_item();
+        update_option('tr_ai_wire_schema_version', '4');
+        $this->plugin->maybe_upgrade_schema();
+
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT id, source_title FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame((string) $id, (string) $row['id']);
+        $this->assertSame('Source title', $row['source_title']);
+        $this->assertSame('5', get_option('tr_ai_wire_schema_version'));
+        $limits_table = $wpdb->prefix . 'tr_ai_wire_view_limits';
+        $this->assertSame($limits_table, $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $limits_table)));
+    }
+
+    public function test_old_worker_cannot_overwrite_a_replacement_lease() {
+        global $wpdb;
+        $old_token = wp_generate_uuid4();
+        $new_token = wp_generate_uuid4();
+        update_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION, array(
+            'created_at' => time(),
+            'token' => $old_token,
+        ), false);
+        $replacement = array('created_at' => microtime(true), 'token' => $new_token);
+        $wpdb->update(
+            $wpdb->options,
+            array('option_value' => maybe_serialize($replacement)),
+            array('option_name' => TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION),
+            array('%s'),
+            array('%s')
+        );
+        wp_cache_delete(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION, 'options');
+        wp_cache_delete('alloptions', 'options');
+
+        $this->assertFalse($this->invoke_private('refresh_processing_lock', array($old_token)));
+        $current = get_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
+        $this->assertSame($new_token, $current['token']);
+        delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
+    }
+
     public function test_lock_heartbeat_succeeds_within_the_same_second() {
         $token = wp_generate_uuid4();
         update_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION, array(
