@@ -117,8 +117,8 @@ final class TechnoRapper_AI_Wire {
     public static function defaults() {
         return array(
             'feeds' => '',
-            'cron_frequency' => 'hourly',
-            'max_posts_per_day' => 10,
+            'cron_frequency' => 'manual',
+            'max_posts_per_day' => 0,
             'max_items_per_run' => 10,
             'monthly_budget_usd' => 5,
             'monthly_token_limit' => 1000000,
