@@ -251,7 +251,154 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_filter('pre_http_request', $callback, 10);
         $this->assertWPError($result);
         $this->assertSame('tr_ai_wire_api_permanent', $result->get_error_code());
-        $this->assertSame(15, $captured_timeout);
+        $this->assertSame(TechnoRapper_AI_Wire::API_TIMEOUT, $captured_timeout);
+        $this->assertSame(45, $captured_timeout);
+    }
+
+    public function test_schema_upgrade_does_not_clear_scheduled_retry_events() {
+        $args = array('retry', 123, 1);
+        wp_schedule_single_event(time() + 600, TechnoRapper_AI_Wire::CRON_HOOK, $args);
+        $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
+        update_option('tr_ai_wire_schema_version', '4');
+        $this->plugin->maybe_upgrade_schema();
+        $this->assertSame('5', get_option('tr_ai_wire_schema_version'));
+        $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
+        wp_unschedule_event(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args), TechnoRapper_AI_Wire::CRON_HOOK, $args);
+    }
+
+    public function test_consecutive_lock_heartbeats_keep_ownership() {
+        $token = wp_generate_uuid4();
+        update_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION, array(
+            'created_at' => time(),
+            'token' => $token,
+        ), false);
+        $this->assertTrue($this->invoke_private('refresh_processing_lock', array($token)));
+        $this->assertTrue($this->invoke_private('refresh_processing_lock', array($token)));
+        $current = get_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
+        $this->assertSame($token, $current['token']);
+        delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
+    }
+
+    public function test_incomplete_api_response_is_retryable() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $callback = function ($preempt, $args, $url) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $payload = json_decode($args['body'], true);
+            $this->assertSame('none', $payload['reasoning']['effort'] ?? null);
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array(
+                    'status' => 'incomplete',
+                    'output' => array(),
+                    'usage' => array('input_tokens' => 10, 'output_tokens' => 5),
+                )),
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $result = $this->invoke_private('ai_json', array(
+            'gpt-6-luna',
+            'Return JSON.',
+            'Test input.',
+            TechnoRapper_AI_Wire::defaults(),
+            false,
+        ));
+        remove_filter('pre_http_request', $callback, 10);
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_api', $result->get_error_code());
+    }
+
+    public function test_rate_limited_api_error_is_retryable() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $callback = function ($preempt, $args, $url) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array('error' => array('message' => 'Rate limited'))),
+                'response' => array('code' => 429, 'message' => 'Too Many Requests'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $result = $this->invoke_private('ai_json', array(
+            'gpt-6-luna',
+            'Return JSON.',
+            'Test input.',
+            TechnoRapper_AI_Wire::defaults(),
+            false,
+        ));
+        remove_filter('pre_http_request', $callback, 10);
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_api', $result->get_error_code());
+    }
+
+    public function test_create_draft_never_publishes_and_quarantines_empty_rewrite() {
+        $id = $this->create_queue_item();
+        $item = array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-empty',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        );
+        $this->invoke_private('create_draft', array($id, $item, array('title' => '', 'body_html' => ''), array('verdict' => 'pass')));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+
+        $rewrite = array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        );
+        $this->invoke_private('create_draft', array($id, $item, $rewrite, array('verdict' => 'pass')));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => -1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assertSame('draft', $posts[0]->post_status);
+        $this->assertNotSame('publish', $posts[0]->post_status);
+    }
+
+    public function test_invalid_or_unpublished_view_is_rejected() {
+        $draft_id = self::factory()->post->create(array('post_status' => 'draft'));
+        update_post_meta($draft_id, '_tr_ai_wire_experiment_id', 'test-experiment');
+        $token = hash_hmac('sha256', $draft_id . '|' . gmdate('Y-m-d'), wp_salt('auth'));
+        $request = new WP_REST_Request('POST', '/tr-ai-wire/v1/view');
+        $request->set_param('post_id', $draft_id);
+        $request->set_param('view_token', $token);
+        $draft_result = $this->plugin->record_article_view($request);
+        $this->assertWPError($draft_result);
+        $this->assertSame(404, $draft_result->get_error_data()['status']);
+
+        $post_id = self::factory()->post->create(array('post_status' => 'publish'));
+        update_post_meta($post_id, '_tr_ai_wire_experiment_id', 'test-experiment');
+        $request->set_param('post_id', $post_id);
+        $request->set_param('view_token', 'not-a-valid-token');
+        $invalid = $this->plugin->record_article_view($request);
+        $this->assertWPError($invalid);
+        $this->assertSame('tr_ai_wire_invalid_view', $invalid->get_error_code());
+    }
+
+    public function test_zero_budget_blocks_api_spend() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['monthly_budget_usd'] = 0;
+        $this->assertFalse($this->invoke_private('can_spend', array('gpt-6-luna', 100, $settings, false)));
+        $settings['monthly_budget_usd'] = 5;
+        $settings['monthly_token_limit'] = 0;
+        $this->assertFalse($this->invoke_private('can_spend', array('gpt-6-luna', 100, $settings, false)));
     }
 
     public function test_public_view_endpoint_enforces_atomic_rate_limit() {

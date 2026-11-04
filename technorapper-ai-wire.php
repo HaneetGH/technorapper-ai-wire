@@ -21,6 +21,7 @@ final class TechnoRapper_AI_Wire {
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
     const TABLE_SUFFIX = 'tr_ai_wire_items';
     const API_URL = 'https://api.openai.com/v1/responses';
+    const API_TIMEOUT = 45;
     const SEARCH_CALL_USD = 0.01;
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
     const PROCESSING_LOCK_TTL = 2700;
@@ -46,6 +47,18 @@ final class TechnoRapper_AI_Wire {
     }
 
     public static function activate() {
+        self::ensure_schema();
+        if (!get_option(self::OPTION)) {
+            add_option(self::OPTION, self::defaults());
+        }
+        self::schedule_cron();
+    }
+
+    /**
+     * Create or upgrade plugin tables without touching cron events.
+     * Schema upgrades must not clear retry/continue/manual single events.
+     */
+    public static function ensure_schema() {
         global $wpdb;
         $table = $wpdb->prefix . self::TABLE_SUFFIX;
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -94,10 +107,6 @@ final class TechnoRapper_AI_Wire {
         ) {$charset};";
         dbDelta($limits_sql);
         update_option('tr_ai_wire_schema_version', self::SCHEMA_VERSION, false);
-        if (!get_option(self::OPTION)) {
-            add_option(self::OPTION, self::defaults());
-        }
-        self::schedule_cron();
     }
 
     public static function deactivate() {
@@ -157,7 +166,7 @@ final class TechnoRapper_AI_Wire {
 
     public function maybe_upgrade_schema() {
         if (get_option('tr_ai_wire_schema_version') !== self::SCHEMA_VERSION) {
-            self::activate();
+            self::ensure_schema();
         }
     }
 
@@ -691,6 +700,9 @@ final class TechnoRapper_AI_Wire {
             ),
             'max_output_tokens' => (int) $s['max_output_tokens'],
             'text' => array('format' => array('type' => 'json_object')),
+            // Luna/Terra default to medium reasoning, which consumes max_output_tokens
+            // and routinely exceeds a short HTTP timeout for JSON drafting.
+            'reasoning' => array('effort' => 'none'),
         );
         if ($web_search) {
             $payload['tools'] = array(array('type' => 'web_search', 'search_context_size' => 'low'));
@@ -698,7 +710,7 @@ final class TechnoRapper_AI_Wire {
             $payload['max_tool_calls'] = 1;
         }
         $response = wp_remote_post(self::API_URL, array(
-            'timeout' => 15,
+            'timeout' => self::API_TIMEOUT,
             'headers' => array('Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json'),
             'body' => wp_json_encode($payload),
         ));
@@ -725,6 +737,10 @@ final class TechnoRapper_AI_Wire {
             }
         }
         $this->record_usage($model, $data, $search_calls);
+        $status = (string) ($data['status'] ?? 'completed');
+        if (in_array($status, array('failed', 'incomplete', 'cancelled'), true)) {
+            return new WP_Error('tr_ai_wire_api', 'AI response was ' . $status . '.');
+        }
         $parsed = json_decode($text, true);
         if (!is_array($parsed)) {
             return new WP_Error('tr_ai_wire_json', 'AI returned invalid JSON.');

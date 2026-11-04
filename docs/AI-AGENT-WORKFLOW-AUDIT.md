@@ -31,12 +31,15 @@ Even after these changes and passing CI, a live production deployment cannot be 
 | Queue recovery | The queue scan now includes stranded new items, even when feed settings have changed | Recovers an item inserted before an interrupted worker could begin processing it |
 | Retry scheduling | Retry events are scheduled at the retry deadline with unique event arguments | Avoids waiting for the next hourly run and avoids WordPress's duplicate-event suppression |
 | API failures | HTTP 408/409/429/5xx and transport failures remain retryable; other HTTP 4xx errors become actionable terminal errors | Prevents wasting retries on invalid credentials, invalid requests or unavailable models |
-| API timeout | Per-request timeout reduced to 15 seconds | Bounds one blocking network request; host-level timeouts still need staging validation |
+| API timeout | Per-request timeout is 45 seconds with `reasoning.effort` set to `none` | GPT-6 Luna/Terra default to medium reasoning, which would consume `max_output_tokens` and miss a short HTTP timeout; host-level timeouts still need staging validation |
 | Draft recovery | Before creating a post, the plugin looks for a post carrying the queue item's queue ID metadata | Prevents duplicate drafts if PHP dies after post insertion but before the queue row is updated |
 | Lock heartbeat | Sub-second heartbeat avoids false failure when multiple items begin in the same Unix second | Prevents valid runs from stopping because update_option() reported no change |
 | Stale-lock recovery | Deletes the exact serialized stale option value conditionally | A concurrent heartbeat changes the value and prevents deletion of a live lock |
 | View throttling | New schema-v5 table and atomic SQL upsert; only an HMAC of IP + post is persisted | Removes the transient read/modify/write race and avoids storing raw IP addresses |
 | Release version | Plugin header and internal version are aligned at 0.2.0 | Makes installed version visible and consistent |
+| Schema upgrades | `maybe_upgrade_schema()` now calls `ensure_schema()` instead of `activate()` | Prevents an upgrade from wiping retry/continue/manual cron events |
+| GPT-6 reasoning | Writer/reviewer requests set `reasoning.effort` to `none` | Stops medium-reasoning token use from starving `max_output_tokens` and timing out |
+| Incomplete responses | HTTP 200 with `failed`/`incomplete`/`cancelled` status is retryable | Avoids treating truncated model output as valid JSON |
 
 ## Automated validation added
 
@@ -48,6 +51,8 @@ The WordPress integration workflow boots WordPress against MySQL and tests:
 - A draft is not duplicated when the queue update is simulated as interrupted after post creation.
 - Transient errors are moved to retry_wait and a matching retry event is scheduled.
 - An API authentication failure is classified as permanent and uses the configured bounded timeout.
+- Incomplete API responses are retryable; 429s remain retryable; drafts are never published; invalid/unpublished view tokens are rejected.
+- Schema upgrades preserve scheduled retry events; consecutive lock heartbeats keep ownership.
 - The public view endpoint enforces the database-backed per-IP/post rate limit.
 
 The existing PHP lint workflow remains in place for PHP 7.4, 8.1 and 8.3. Integration tests run on PHP 8.2 and 8.3. Release packaging now depends on a successful WordPress integration validation job.
@@ -58,7 +63,7 @@ These are intentionally not described as solved by the code changes above:
 
 1. **Staging migration:** install/upgrade version 0.2.0 against a copy of the current production database; verify dbDelta adds the new rate-limit table without changing queue/view history.
 2. **Cron reliability:** configure a real host cron to invoke WordPress cron. WP-Cron remains traffic-triggered and a scheduled event is not a durable external queue.
-3. **Host execution limits:** verify the 15-second API timeout, feed-fetch behavior, PHP max_execution_time, reverse-proxy timeout and loopback cron execution on the actual host.
+3. **Host execution limits:** verify the 45-second API timeout, feed-fetch behavior, PHP max_execution_time, reverse-proxy timeout and loopback cron execution on the actual host.
 4. **Concurrency/load:** run overlapping cron/manual triggers and parallel view requests on staging; verify lock ownership, retry behavior, queue uniqueness and rate-limit behavior.
 5. **Feed diagnostics:** feed fetch failures are still skipped rather than surfaced through a proper health/error dashboard.
 6. **Operational observability:** no alerting integration, durable external worker, or complete last-run/next-run health panel exists.
