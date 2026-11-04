@@ -1,149 +1,89 @@
-# AI Agent Workflow and Feature Audit
+# TechnoRapper AI Wire — Production Readiness Audit
 
 **Audit date:** 4 November 2026  
-**Scope:** Current `main` implementation of `technorapper-ai-wire.php`, README, PHP lint workflow and release workflow.  
-**Architecture note:** This is a two-role, sequential AI pipeline orchestrated by WordPress/PHP. It is not currently an autonomous multi-agent framework.
+**Audited baseline:** merged PR #7 plus the production-hardening branch changes for version 0.2.0.  
+**Architecture:** WordPress/PHP orchestration with two sequential AI roles (Writer → Reviewer). This is not an autonomous multi-agent framework.
 
-## 1. How the AI roles work
+## Executive assessment
 
-### PHP orchestrator (not an AI agent)
-WordPress owns the workflow. It schedules or manually starts a run, obtains a database-backed lock, loads settings, enforces local limits, fetches RSS/Atom feeds, deduplicates source items, assigns an experiment variant, persists queue records, calls the two AI roles, and creates a WordPress draft only after the review gate passes.
+The plugin is a controlled editorial drafting pipeline. It ingests RSS/Atom entries, stores a deduplicated queue item, asks a Writer model for an original brief, sends that brief and the source to a separate Reviewer pass, and creates a WordPress **draft** only when the review gates pass. Publishing remains a human action.
 
-### Writer role
-The Writer receives the feed name, source title, source URL and truncated source text. It is instructed to treat source text as untrusted data and return JSON containing:
+The current mainline implementation before this hardening branch was **not production-ready**. The hardening branch addresses several concrete failure modes: manual runs no longer execute inside the admin request, retries receive their own scheduled events, transient and permanent API failures are separated, draft creation is recoverable after a crash, lock heartbeat handling is corrected, and public-view throttling uses an atomic database upsert.
 
-- Title, lede and body HTML
-- Editorial angle, category and tags
-- Source attribution
-- Factual claims and novelty notes
+Even after these changes and passing CI, a live production deployment cannot be certified from repository tests alone. A staging upgrade against a production-like database, real system-cron verification, host/network validation and controlled canary are still required.
 
-Variant A uses the baseline writing prompt. Variant B uses the more detailed original-editorial-desk prompt. The variant is assigned deterministically from the source key; it is not a visitor-level experiment. Both variants use the configured Writer model.
+## What the system does
 
-### Reviewer role
-The Reviewer receives the original source and the Writer's JSON. It checks factual claims against the supplied source, attribution, unsupported claims, usefulness, novelty, groundedness, policy flags and similarity risk. Optional web search is enabled in this call only, with at most one required search-tool call.
+1. WordPress schedules a run or an administrator enqueues one from the dashboard.
+2. PHP obtains a database-backed run lock and loads feed, token and spend limits.
+3. Configured RSS/Atom feeds are fetched; source URLs are validated, source text is bounded, and a SHA-256 source key prevents duplicate queue records.
+4. A stable experiment ID and A/B writer variant are assigned to each source item.
+5. The Writer returns structured article JSON. The Reviewer independently evaluates source grounding, novelty, usefulness, attribution, similarity risk and policy flags.
+6. Only a passing review creates a sanitized WordPress **draft**. The plugin has no auto-publish path.
+7. Published experiment articles emit a GA4/GTM event and a first-party engaged-read event after three visible seconds.
 
-The plugin accepts a draft only when the review explicitly returns a passing verdict and safe-to-publish flag, all three positive pragmatism flags are true, similarity risk is not high, and fact/policy flags are empty. This is a model-generated editorial gate, not independent human fact-checking or a plagiarism detector. The Reviewer may use the same model ID as the Writer.
+## Changes in the production-hardening branch
 
-### Human editor
-A passing item becomes a WordPress **draft**. A person must inspect, edit if necessary and publish it. There is no automatic publishing path.
-
-## 2. Agent execution graph
-
-```mermaid
-flowchart TD
-    A["WP-Cron schedule or Admin: Run now"] --> B["PHP orchestrator"]
-    B --> C{"Acquire database lock?"}
-    C -- "No" --> C1["Exit: another run owns the lock"]
-    C -- "Yes" --> D["Load dashboard settings and usage"]
-    D --> E{"API key, feeds and daily capacity available?"}
-    E -- "No" --> E1["Stop this run"]
-    E -- "Yes" --> F["Retry waiting_budget items first"]
-    F --> G["Fetch up to 10 recent entries per feed"]
-    G --> H["Validate URL, clean and truncate source"]
-    H --> I{"Source key already queued?"}
-    I -- "Yes" --> G
-    I -- "No" --> J["Assign stable experiment ID + A/B prompt"]
-    J --> K["Persist queue item: new"]
-    K --> W["WRITER ROLE"]
-    W --> W1["Generate original article JSON"]
-    W1 --> W2{"Valid JSON response?"}
-    W2 -- "No / API error" --> X["status = error"]
-    W2 -- "Budget cap" --> Y["status = waiting_budget"]
-    W2 -- "Yes" --> W3["Persist rewrite JSON: rewritten"]
-    W3 --> R["REVIEWER ROLE"]
-    R --> R1["Compare draft with source and assess editorial gates"]
-    R1 --> R2{"Optional web search enabled?"}
-    R2 -- "Yes" --> R3["One web-search tool call"]
-    R2 -- "No" --> R4["Review using supplied source"]
-    R3 --> R5["Return review JSON"]
-    R4 --> R5
-    R5 --> R6{"Review API/JSON succeeded?"}
-    R6 -- "No / API error" --> X
-    R6 -- "Budget cap" --> Y
-    R6 -- "Yes" --> R7{"All publish gates pass?"}
-    R7 -- "No" --> Z["status = quarantined"]
-    R7 -- "Yes" --> P["Sanitize and create WordPress draft"]
-    P --> H1["HUMAN EDITOR reviews"]
-    H1 --> H2["Human publishes article"]
-    H2 --> M["GA4 event + first-party reader tracker"]
-    M --> M1["Signed REST request"]
-    M1 --> M2["Daily aggregate view counter"]
-    B --> L["Release lock in finally block"]
-    X --> L
-    Y --> L
-    Z --> L
-    P --> L
-```
-
-## 3. Queue state and retry behavior
-
-| State | Meaning | Current behavior |
+| Area | Change | Why it matters |
 |---|---|---|
-| `new` | Source item stored; writer not completed | Eligible for processing |
-| `waiting_budget` | Local monthly spend/token check blocked an AI call | Automatically retried by later runs |
-| `rewritten` | Writer output stored | Not currently resumed by the run processor |
-| `reviewed` | Reviewer output stored | Not currently resumed by the run processor |
-| `draft` | WordPress draft created | Terminal for the pipeline |
-| `quarantined` | Review gate failed or required output was missing | Not automatically retried |
-| `error` | API, transport, JSON or post-creation failure | Not automatically retried |
+| Manual execution | Admin action schedules background work and redirects immediately | Avoids keeping an administrator's browser request open through feeds and model calls |
+| Retry scheduling | Retry events are scheduled at the retry deadline with unique event arguments | Avoids waiting for the next hourly run and avoids WordPress's duplicate-event suppression |
+| API failures | HTTP 408/409/429/5xx and transport failures remain retryable; other HTTP 4xx errors become actionable terminal errors | Prevents wasting retries on invalid credentials, invalid requests or unavailable models |
+| API timeout | Per-request timeout reduced to 15 seconds | Bounds one blocking network request; host-level timeouts still need staging validation |
+| Draft recovery | Before creating a post, the plugin looks for a post carrying the queue item's queue ID metadata | Prevents duplicate drafts if PHP dies after post insertion but before the queue row is updated |
+| Lock heartbeat | Sub-second heartbeat avoids false failure when multiple items begin in the same Unix second | Prevents valid runs from stopping because update_option() reported no change |
+| Stale-lock recovery | Deletes the exact serialized stale option value conditionally | A concurrent heartbeat changes the value and prevents deletion of a live lock |
+| View throttling | New schema-v5 table and atomic SQL upsert; only an HMAC of IP + post is persisted | Removes the transient read/modify/write race and avoids storing raw IP addresses |
+| Release version | Plugin header and internal version are aligned at 0.2.0 | Makes installed version visible and consistent |
 
-**Important reliability gap:** `process_item()` only accepts `new` and `waiting_budget`. A transient Writer/Reviewer error is marked `error`; an interrupted run after saving `rewritten` or `reviewed` also leaves an item that future runs do not resume. There is no dashboard retry/reset action. Budget-blocked items are the only automatic retry path.
+## Automated validation added
 
-## 4. Implemented feature inventory
+The WordPress integration workflow boots WordPress against MySQL and tests:
 
-| Area | Implemented |
-|---|---|
-| WordPress admin | Central AI Wire settings page; API key, feeds, schedule, caps, model selection, web search and experiment controls |
-| Credential handling | Separate write-only API-key form; non-autoloaded option; server constants supported as fallback |
-| Feed ingestion | RSS/Atom feeds, HTTP(S) URL validation, up to 10 recent entries per feed per run |
-| Deduplication | SHA-256 source key with a database unique key |
-| Run safety | Database option lock; stale-lock recovery; lock release in `finally` |
-| Workload limits | Daily draft cap and maximum items per run |
-| Spend limits | Monthly local token and USD estimates; records returned API usage |
-| Writer | Two prompt variants, JSON output, source attribution and editorial metadata |
-| Reviewer | Separate review call, factual-grounding checks, novelty/usefulness/policy flags, optional web search |
-| Draft workflow | Sanitized WordPress drafts; category/tag assignment; source and review metadata |
-| Queue visibility | Latest 100 queue items, status, errors and review verdict |
-| A/B reporting | Queue outcomes by variant and first-party reads over the last 30 days |
-| Reader measurement | GA4/GTM event plus a first-party daily aggregate counter |
-| CI/release | PHP syntax lint matrix for PHP 7.4/8.1/8.3; ZIP + SHA-256 release workflow |
+- Required queue, view and rate-limit tables are created.
+- A lock heartbeat succeeds within the same second.
+- A draft is not duplicated when the queue update is simulated as interrupted after post creation.
+- Transient errors are moved to retry_wait and a matching retry event is scheduled.
+- An API authentication failure is classified as permanent and uses the configured bounded timeout.
+- The public view endpoint enforces the database-backed per-IP/post rate limit.
 
-## 5. Audit findings and recommended priorities
+The existing PHP lint workflow remains in place for PHP 7.4, 8.1 and 8.3. Integration tests run on PHP 8.2 and 8.3.
 
-### High priority
+## Remaining production gates
 
-1. **Add reliable retry/resume transitions.** Retry transient HTTP/API failures (especially 429 and 5xx) with bounded exponential backoff. Resume from `rewritten` at the Reviewer step and from `reviewed` at draft creation. Add an administrator retry action for terminal errors and a maximum-attempt count.
-2. **Make the run lock a renewable lease.** The lock TTL is 45 minutes. With a configurable run cap as high as 100 and two sequential API calls per item, a run can outlive that TTL. A second run could then recover the lock while the first is still active. Add heartbeat/lease renewal and ownership checks.
-3. **Make manual runs asynchronous or bounded by time.** The admin action processes the queue inside the request. At high run caps, sequential 90-second API timeouts can exceed PHP/web-server request limits. Prefer Action Scheduler or a background worker, or enforce a conservative time budget per request.
-4. **Add real WordPress integration tests.** Current CI only runs `php -l`; it does not test API payloads, state transitions, schema upgrades, cron rescheduling, concurrent runs, draft creation or tracking. Add mocked Responses API tests and WordPress integration tests.
+These are intentionally not described as solved by the code changes above:
 
-### Medium priority
+1. **Staging migration:** install/upgrade version 0.2.0 against a copy of the current production database; verify dbDelta adds the new rate-limit table without changing queue/view history.
+2. **Cron reliability:** configure a real host cron to invoke WordPress cron. WP-Cron remains traffic-triggered and a scheduled event is not a durable external queue.
+3. **Host execution limits:** verify the 15-second API timeout, feed-fetch behavior, PHP max_execution_time, reverse-proxy timeout and loopback cron execution on the actual host.
+4. **Concurrency/load:** run overlapping cron/manual triggers and parallel view requests on staging; verify lock ownership, retry behavior, queue uniqueness and rate-limit behavior.
+5. **Feed diagnostics:** feed fetch failures are still skipped rather than surfaced through a proper health/error dashboard.
+6. **Operational observability:** no alerting integration, durable external worker, or complete last-run/next-run health panel exists.
+7. **Privacy and abuse:** the daily HMAC token is public in article HTML. Atomic IP/post throttling reduces replay floods but does not prove a human read, and proxy configurations can make many visitors share one REMOTE_ADDR.
+8. **Analytics validity:** first-party counts are directional only. They are not impressions, unique people, sessions, revenue or a statistically valid A/B result.
+9. **Retention:** queue source/rewrite/review payloads and operational records still need an explicit retention policy.
+10. **Editorial quality:** the model Reviewer is not a substitute for a human fact-checker, legal review, rights review or editorial approval.
 
-5. **Improve reader tracking accuracy.** The current tracker waits three seconds, then checks visibility once; it does not accumulate three visible seconds or retry after a hidden-tab callback. Use the Page Visibility API with an accumulated visible-time timer.
-6. **Protect the public view counter against replay/inflation.** The HMAC token is embedded in the public article HTML and remains valid for that post/day. Browser session storage prevents ordinary duplicate events but is client-side only; the REST endpoint has no server-side deduplication or rate limit. Add server-side throttling or signed, short-lived, one-time event tokens.
-7. **Decouple GA4 emission from session storage.** If session storage throws, the current script returns before emitting the GA4 event as well as the first-party counter. GA4 event emission should not depend on first-party deduplication storage.
-8. **Make A/B reporting more statistically useful.** Current reporting is aggregate engaged reads per article, not impressions, sessions, CTR or age/topic-adjusted performance. Keep it labelled as a directional proxy; add GA4/Search Console imports or exportable per-article results before declaring a winner.
-9. **Add queue management.** The admin table is limited to the latest 100 items and has no filters, pagination, retry or bulk actions.
+## Required staging acceptance
 
-### Lower priority / operational
+Before enabling automatic feed processing on production:
 
-10. **Expose cron health.** WP-Cron is traffic-triggered. Show last-run time, next scheduled run and last failure; document/verify a real system cron for low-traffic sites.
-11. **Add feed diagnostics.** Record feed fetch failures and parse errors in an admin-visible log; distinguish empty feed, invalid URL, timeout and upstream failure.
-12. **Add retention controls.** Queue source text, rewrite JSON, review JSON and errors currently have no automated retention/cleanup policy.
-13. **Add a model/pricing maintenance check.** Model IDs and token rates are hard-coded. Verify them against the provider catalogue and pricing before changing models. The currently configured IDs `gpt-6-luna` and `gpt-6.1-terra`, and their configured standard input/output rates, match the current OpenAI model directory; this should still be reviewed periodically.
-14. **Version releases consistently.** The plugin header and internal version constant remain `0.1.0`; align them with tagged releases and any future migration.
+- [ ] Take a database and files backup; verify a restore path.
+- [ ] Upgrade a staging clone with existing queue rows and view counters.
+- [ ] Confirm all three plugin tables exist and old records remain intact.
+- [ ] Configure one trusted feed and a low daily/monthly budget.
+- [ ] Enqueue a manual run and confirm the admin request returns promptly.
+- [ ] Verify Writer → Reviewer → WordPress draft, including rejected and malformed outputs.
+- [ ] Force a 429/5xx and confirm a scheduled retry; force a 401 and confirm a terminal actionable error.
+- [ ] Simulate interruption after post insertion and confirm retry/recovery does not create a second post.
+- [ ] Trigger overlapping cron/manual runs and verify one active processor.
+- [ ] Verify public-view token rejection and rate limiting behind the actual CDN/proxy.
+- [ ] Confirm GA4/GTM event behavior with session storage enabled and disabled.
+- [ ] Verify real system cron runs reliably when the site has no visitor traffic.
+- [ ] Observe a small canary feed set for several days before increasing volume.
 
-## 6. Boundaries: what this product is not yet doing
+## Final verdict
 
-- No autonomous agent delegation, agent-to-agent messaging or shared agent memory.
-- No multi-round Writer ↔ Reviewer revision loop; the Reviewer accepts or rejects the generated draft.
-- No full-article crawler or source-image import; the Writer receives RSS title and feed content/description, truncated to the configured character limit.
-- No automatic publishing.
-- No native import of GA4, Search Console or AdSense data into WordPress.
-- No server-side guarantee that a first-party tracked read represents a human visitor.
-
-## 7. Overall assessment
-
-The current implementation is a useful controlled editorial automation: feed ingestion → Writer → Reviewer → human-approved WordPress draft, with local usage limits and basic experiment measurement.
-
-Its strongest safeguards are source attribution, duplicate prevention, budget holds, a separate review call, fail-closed review conditions and drafts-only publishing. The most important engineering gaps are retry/resume handling, long-running job execution/lock renewal, and automated integration coverage. Reader analytics are useful for directional monitoring but should not be treated as fraud-resistant or statistically conclusive.
+**Code status:** the hardening branch materially improves reliability and adds automated WordPress integration coverage.  
+**Production status:** not certified until the branch is merged, CI passes, and the staging acceptance checklist is completed on the target host.  
+**Publishing safety:** remains drafts-only; human review is required.
