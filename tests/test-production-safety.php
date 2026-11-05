@@ -397,6 +397,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $settings = TechnoRapper_AI_Wire::defaults();
         $this->assertSame('manual', $settings['cron_frequency']);
         $this->assertSame(0, $settings['max_posts_per_day']);
+        $this->assertSame(0, $settings['auto_publish']);
         $this->assertSame('', $settings['feeds']);
         $this->assertSame('', $this->invoke_private('api_key'));
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
@@ -634,5 +635,93 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('Visibility: Good!', $rewrite['seo']['visibility_label']);
         $this->assertSame('Focus Keyphrase: useful technology update', $rewrite['seo']['keyphrase_label']);
         $this->assertSame('Social: Social markup ready!', $rewrite['seo']['social_label']);
+    }
+
+    public function test_auto_publish_creates_a_live_post() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['auto_publish'] = 1;
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
+    }
+
+    public function test_auto_publish_promotes_an_existing_draft() {
+        $id = $this->create_queue_item();
+        $item = array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-promote',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        );
+        $rewrite = array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        );
+        $this->invoke_private('create_draft', array($id, $item, $rewrite, array('verdict' => 'pass')));
+        $post_id = (int) get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ))[0];
+        $this->assertSame('draft', get_post_status($post_id));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['auto_publish'] = 1;
+        $this->invoke_private('create_draft', array($id, $item, $rewrite, array('verdict' => 'pass'), $settings));
+        $this->assertSame('publish', get_post_status($post_id));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertSame((string) $post_id, (string) $row['wp_post_id']);
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+    }
+
+    public function test_daily_cap_counts_auto_published_posts() {
+        $id = $this->create_queue_item();
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['max_posts_per_day'] = 1;
+        $settings['auto_publish'] = 1;
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-cap',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        ), array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        ), array('verdict' => 'pass'), $settings));
+        $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
     }
 }
