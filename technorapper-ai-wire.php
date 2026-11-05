@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.10
+ * Version: 0.2.11
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.10';
+    const VERSION = '0.2.11';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -309,6 +309,7 @@ final class TechnoRapper_AI_Wire {
     public function admin_menu() {
         add_menu_page('TechnoRapper AI Wire', 'AI Wire', 'manage_options', 'tr-ai-wire', array($this, 'settings_page'), 'dashicons-rss', 58);
         add_submenu_page('tr-ai-wire', 'Queue & usage', 'Queue & usage', 'manage_options', 'tr-ai-wire-queue', array($this, 'queue_page'));
+        add_submenu_page('tr-ai-wire', 'Scores', 'Scores', 'manage_options', 'tr-ai-wire-scores', array($this, 'scores_page'));
         add_submenu_page('tr-ai-wire', 'A/B experiments', 'A/B experiments', 'manage_options', 'tr-ai-wire-experiments', array($this, 'experiments_page'));
     }
 
@@ -2238,6 +2239,379 @@ final class TechnoRapper_AI_Wire {
         echo "\n<script>\n(function(){var p=" . wp_json_encode($payload) . ";var endpoint=" . wp_json_encode($tracking_url) . ";p.page_location=window.location.href;p.page_title=document.title;var eventData=Object.assign({},p);delete eventData.view_token;var elapsed=0;var visibleSince=null;var sent=false;function startVisible(){if(document.visibilityState==='visible'&&visibleSince===null){visibleSince=Date.now();}}function pauseVisible(){if(visibleSince!==null){elapsed+=Date.now()-visibleSince;visibleSince=null;}}function emit(){if(sent||document.visibilityState!=='visible')return;sent=true;var gaAllowed=true;try{var gaKey='tr_ai_wire_ga_' + p.article_id;if(window.sessionStorage.getItem(gaKey)){gaAllowed=false;}else{window.sessionStorage.setItem(gaKey,'1');}}catch(e){}if(gaAllowed){if(typeof window.gtag==='function'){window.gtag('event','tr_ai_wire_article_view',eventData);}else{window.dataLayer=window.dataLayer||[];window.dataLayer.push(Object.assign({event:'tr_ai_wire_article_view'},eventData));}}var firstPartyAllowed=true;try{var viewKey='tr_ai_wire_view_' + p.article_id;if(window.sessionStorage.getItem(viewKey)){firstPartyAllowed=false;}else{window.sessionStorage.setItem(viewKey,'1');}}catch(e){}if(firstPartyAllowed){var body=JSON.stringify({post_id:parseInt(p.article_id,10),view_token:p.view_token});if(navigator.sendBeacon){navigator.sendBeacon(endpoint,new Blob([body],{type:'application/json'}));}else{fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:body,keepalive:true,credentials:'same-origin'});}}}function tick(){if(sent)return;startVisible();var total=elapsed+(visibleSince===null?0:Date.now()-visibleSince);if(total>=3000){emit();}}document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'){startVisible();tick();}else{pauseVisible();}});startVisible();var timer=window.setInterval(tick,250);window.setTimeout(function(){window.clearInterval(timer);},30000);})();\n</script>\n";
     }
 
+    private function score_filters($filters = array()) {
+        $ranges = array('7d', '30d', '90d', 'month', 'year', 'all');
+        $groups = array('day', 'week', 'month');
+        $scopes = array('posts', 'published', 'reviewed', 'quarantined');
+        $filters = is_array($filters) ? $filters : array();
+        $range = sanitize_key($filters['range'] ?? '30d');
+        $group = sanitize_key($filters['group'] ?? 'day');
+        $scope = sanitize_key($filters['scope'] ?? 'posts');
+        return array(
+            'range' => in_array($range, $ranges, true) ? $range : '30d',
+            'group' => in_array($group, $groups, true) ? $group : 'day',
+            'scope' => in_array($scope, $scopes, true) ? $scope : 'posts',
+            'now' => isset($filters['now']) ? (string) $filters['now'] : '',
+        );
+    }
+
+    private function score_window($filters) {
+        $now = $filters['now'] !== '' ? strtotime($filters['now'] . ' UTC') : time();
+        if ($now === false) {
+            $now = time();
+        }
+        $end = gmdate('Y-m-d 23:59:59', $now);
+        $range = $filters['range'];
+        if ($range === 'all') {
+            return array('', $end, $now);
+        }
+        if ($range === 'month') {
+            return array(gmdate('Y-m-01 00:00:00', $now), $end, $now);
+        }
+        if ($range === 'year') {
+            return array(gmdate('Y-01-01 00:00:00', $now), $end, $now);
+        }
+        $days = $range === '7d' ? 6 : ($range === '90d' ? 89 : 29);
+        return array(gmdate('Y-m-d 00:00:00', $now - ($days * DAY_IN_SECONDS)), $end, $now);
+    }
+
+    private function score_bucket_key($datetime, $group) {
+        $ts = strtotime((string) $datetime . ' UTC');
+        if ($ts === false) {
+            return '';
+        }
+        if ($group === 'month') {
+            return gmdate('Y-m', $ts);
+        }
+        if ($group === 'week') {
+            return gmdate('o-\WW', $ts);
+        }
+        return gmdate('Y-m-d', $ts);
+    }
+
+    private function score_bucket_keys($start, $end, $group, $now) {
+        if ($start === '') {
+            $start = gmdate('Y-m-d 00:00:00', $now - (89 * DAY_IN_SECONDS));
+        }
+        $keys = array();
+        $ts = strtotime(substr($start, 0, 10) . ' 00:00:00 UTC');
+        $end_ts = strtotime(substr($end, 0, 10) . ' 00:00:00 UTC');
+        if ($ts === false || $end_ts === false) {
+            return $keys;
+        }
+        while ($ts <= $end_ts) {
+            $keys[] = $this->score_bucket_key(gmdate('Y-m-d H:i:s', $ts), $group);
+            if ($group === 'month') {
+                $ts = strtotime('+1 month', $ts);
+            } elseif ($group === 'week') {
+                $ts = strtotime('+1 week', $ts);
+            } else {
+                $ts = strtotime('+1 day', $ts);
+            }
+            if (count($keys) > 366) {
+                break;
+            }
+        }
+        return array_values(array_unique($keys));
+    }
+
+    private function extract_review_score($json) {
+        $review = is_string($json) ? json_decode($json, true) : $json;
+        if (!is_array($review) || !isset($review['score']) || !is_numeric($review['score'])) {
+            return null;
+        }
+        return max(0, min(100, (int) $review['score']));
+    }
+
+    private function extract_seo_score($json) {
+        $rewrite = is_string($json) ? json_decode($json, true) : $json;
+        if (!is_array($rewrite) || !is_array($rewrite['seo'] ?? null) || !isset($rewrite['seo']['seo_score']) || !is_numeric($rewrite['seo']['seo_score'])) {
+            return null;
+        }
+        return max(0, min(100, (int) $rewrite['seo']['seo_score']));
+    }
+
+    private function score_report($filters = array()) {
+        global $wpdb;
+        $filters = $this->score_filters($filters);
+        $s = $this->settings();
+        list($start, $end, $now) = $this->score_window($filters);
+        $where = array('review_json IS NOT NULL', "review_json <> ''");
+        $args = array();
+        if ($start !== '') {
+            $where[] = 'created_at BETWEEN %s AND %s';
+            $args[] = $start;
+            $args[] = $end;
+        } else {
+            $where[] = 'created_at <= %s';
+            $args[] = $end;
+        }
+        if ($filters['scope'] === 'posts') {
+            $where[] = "status IN ('draft', 'published')";
+        } elseif ($filters['scope'] === 'published') {
+            $where[] = "status = 'published'";
+        } elseif ($filters['scope'] === 'quarantined') {
+            $where[] = "status = 'quarantined'";
+        }
+        $sql = "SELECT id, status, created_at, source_title, wp_post_id, review_json, rewrite_json FROM {$this->table} WHERE " . implode(' AND ', $where) . ' ORDER BY created_at ASC LIMIT 5000';
+        $rows = $wpdb->get_results($wpdb->prepare($sql, ...$args), ARRAY_A);
+        $min = (int) $s['draft_min_score'];
+        $review_sum = 0;
+        $seo_sum = 0;
+        $seo_count = 0;
+        $above = 0;
+        $low = null;
+        $high = null;
+        $distribution = array(
+            '0-49' => 0,
+            '50-69' => 0,
+            '70-84' => 0,
+            '85-100' => 0,
+        );
+        $buckets = array();
+        $items = array();
+        foreach ((array) $rows as $row) {
+            $score = $this->extract_review_score($row['review_json'] ?? '');
+            if ($score === null) {
+                continue;
+            }
+            $seo = $this->extract_seo_score($row['rewrite_json'] ?? '');
+            $review_sum += $score;
+            $above += $score >= $min ? 1 : 0;
+            $low = $low === null ? $score : min($low, $score);
+            $high = $high === null ? $score : max($high, $score);
+            if ($seo !== null) {
+                $seo_sum += $seo;
+                $seo_count++;
+            }
+            if ($score < 50) {
+                $distribution['0-49']++;
+            } elseif ($score < 70) {
+                $distribution['50-69']++;
+            } elseif ($score < 85) {
+                $distribution['70-84']++;
+            } else {
+                $distribution['85-100']++;
+            }
+            $key = $this->score_bucket_key($row['created_at'], $filters['group']);
+            if (!isset($buckets[$key])) {
+                $buckets[$key] = array('count' => 0, 'review_sum' => 0, 'seo_sum' => 0, 'seo_count' => 0, 'above' => 0);
+            }
+            $buckets[$key]['count']++;
+            $buckets[$key]['review_sum'] += $score;
+            $buckets[$key]['above'] += $score >= $min ? 1 : 0;
+            if ($seo !== null) {
+                $buckets[$key]['seo_sum'] += $seo;
+                $buckets[$key]['seo_count']++;
+            }
+            $items[] = array(
+                'id' => (int) $row['id'],
+                'title' => (string) $row['source_title'],
+                'status' => (string) $row['status'],
+                'created_at' => (string) $row['created_at'],
+                'score' => $score,
+                'seo_score' => $seo,
+                'wp_post_id' => (int) ($row['wp_post_id'] ?? 0),
+            );
+        }
+        $count = count($items);
+        $series = array();
+        foreach ($this->score_bucket_keys($start, $end, $filters['group'], $now) as $key) {
+            $bucket = $buckets[$key] ?? array('count' => 0, 'review_sum' => 0, 'seo_sum' => 0, 'seo_count' => 0, 'above' => 0);
+            $series[] = array(
+                'label' => $key,
+                'count' => (int) $bucket['count'],
+                'average' => $bucket['count'] ? round($bucket['review_sum'] / $bucket['count'], 1) : null,
+                'seo_average' => $bucket['seo_count'] ? round($bucket['seo_sum'] / $bucket['seo_count'], 1) : null,
+                'above_min' => (int) $bucket['above'],
+            );
+        }
+        return array(
+            'filters' => $filters,
+            'min_score' => $min,
+            'count' => $count,
+            'average' => $count ? round($review_sum / $count, 1) : 0.0,
+            'seo_average' => $seo_count ? round($seo_sum / $seo_count, 1) : null,
+            'above_min' => $above,
+            'above_min_rate' => $count ? round(($above / $count) * 100, 1) : 0.0,
+            'low' => $low,
+            'high' => $high,
+            'distribution' => $distribution,
+            'series' => $series,
+            'recent' => array_slice(array_reverse($items), 0, 15),
+        );
+    }
+
+    private function render_score_chart($report) {
+        $series = $report['series'];
+        $width = 920;
+        $height = 280;
+        $left = 44;
+        $right = 16;
+        $top = 18;
+        $bottom = 42;
+        $inner_w = $width - $left - $right;
+        $inner_h = $height - $top - $bottom;
+        $n = count($series);
+        $max_count = 1;
+        foreach ($series as $point) {
+            $max_count = max($max_count, (int) $point['count']);
+        }
+        $svg = '<svg viewBox="0 0 ' . (int) $width . ' ' . (int) $height . '" role="img" aria-label="Average review score chart" style="width:100%;height:auto;background:#fff;border:1px solid #dcdcde;border-radius:4px;">';
+        foreach (array(0, 25, 50, 75, 100) as $tick) {
+            $y = $top + $inner_h * (1 - ($tick / 100));
+            $svg .= '<line x1="' . $left . '" y1="' . $y . '" x2="' . ($width - $right) . '" y2="' . $y . '" stroke="#dcdcde" />';
+            $svg .= '<text x="8" y="' . ($y + 4) . '" font-size="11" fill="#646970">' . (int) $tick . '</text>';
+        }
+        $threshold = max(0, min(100, (int) $report['min_score']));
+        $threshold_y = $top + $inner_h * (1 - ($threshold / 100));
+        $svg .= '<line x1="' . $left . '" y1="' . $threshold_y . '" x2="' . ($width - $right) . '" y2="' . $threshold_y . '" stroke="#dba617" stroke-dasharray="5 4" />';
+        $svg .= '<text x="' . ($width - $right - 4) . '" y="' . ($threshold_y - 6) . '" font-size="11" fill="#996800" text-anchor="end">min ' . (int) $threshold . '</text>';
+        if ($n === 0) {
+            $svg .= '<text x="' . ($width / 2) . '" y="' . ($height / 2) . '" text-anchor="middle" fill="#646970">No scored items in this range.</text></svg>';
+            return $svg;
+        }
+        $x_at = function ($i) use ($n, $left, $inner_w) {
+            return $n === 1 ? $left + ($inner_w / 2) : $left + ($i * $inner_w / ($n - 1));
+        };
+        foreach ($series as $i => $point) {
+            $bar_h = ((int) $point['count'] / $max_count) * ($inner_h * 0.28);
+            $bar_w = max(4, ($inner_w / max(1, $n)) * 0.45);
+            $x = $x_at($i) - ($bar_w / 2);
+            $y = $top + $inner_h - $bar_h;
+            $svg .= '<rect x="' . $x . '" y="' . $y . '" width="' . $bar_w . '" height="' . $bar_h . '" fill="#c3c4c7" opacity="0.55"><title>' . esc_attr($point['label'] . ': ' . (int) $point['count'] . ' items') . '</title></rect>';
+        }
+        $review_points = array();
+        $seo_points = array();
+        foreach ($series as $i => $point) {
+            $x = $x_at($i);
+            if ($point['average'] !== null) {
+                $y = $top + $inner_h * (1 - ($point['average'] / 100));
+                $review_points[] = $x . ',' . $y;
+                $svg .= '<circle cx="' . $x . '" cy="' . $y . '" r="3.5" fill="#2271b1"><title>' . esc_attr($point['label'] . ' review avg ' . $point['average']) . '</title></circle>';
+            }
+            if ($point['seo_average'] !== null) {
+                $y = $top + $inner_h * (1 - ($point['seo_average'] / 100));
+                $seo_points[] = $x . ',' . $y;
+                $svg .= '<circle cx="' . $x . '" cy="' . $y . '" r="3" fill="#00a32a"><title>' . esc_attr($point['label'] . ' SEO avg ' . $point['seo_average']) . '</title></circle>';
+            }
+            if ($i === 0 || $i === $n - 1 || ($n <= 14) || $i % max(1, (int) ceil($n / 8)) === 0) {
+                $svg .= '<text x="' . $x . '" y="' . ($height - 12) . '" font-size="10" fill="#646970" text-anchor="middle">' . esc_html($point['label']) . '</text>';
+            }
+        }
+        if (count($review_points) > 1) {
+            $svg .= '<polyline fill="none" stroke="#2271b1" stroke-width="2.5" points="' . esc_attr(implode(' ', $review_points)) . '" />';
+        }
+        if (count($seo_points) > 1) {
+            $svg .= '<polyline fill="none" stroke="#00a32a" stroke-width="2" points="' . esc_attr(implode(' ', $seo_points)) . '" />';
+        }
+        $svg .= '</svg>';
+        return $svg;
+    }
+
+    public function scores_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        $filters = $this->score_filters(array(
+            'range' => wp_unslash($_GET['range'] ?? '30d'),
+            'group' => wp_unslash($_GET['group'] ?? 'day'),
+            'scope' => wp_unslash($_GET['scope'] ?? 'posts'),
+        ));
+        $report = $this->score_report($filters);
+        $range_labels = array(
+            '7d' => 'Last 7 days',
+            '30d' => 'Last 30 days',
+            '90d' => 'Last 90 days',
+            'month' => 'This month',
+            'year' => 'This year',
+            'all' => 'All time',
+        );
+        $group_labels = array('day' => 'Day', 'week' => 'Week', 'month' => 'Month');
+        $scope_labels = array(
+            'posts' => 'Drafts + published',
+            'published' => 'Published only',
+            'reviewed' => 'Every reviewed item',
+            'quarantined' => 'Quarantined only',
+        );
+        ?>
+        <div class="wrap">
+            <h1>AI Wire — Scores</h1>
+            <p>Average reviewer score for items in the selected range. The yellow line is your minimum review score. Grey bars are how many items landed in that day, week, or month.</p>
+            <form method="get" style="margin:16px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
+                <input type="hidden" name="page" value="tr-ai-wire-scores">
+                <p><label for="tr-score-range"><strong>Range</strong></label><br>
+                    <select id="tr-score-range" name="range"><?php foreach ($range_labels as $value => $label) : ?>
+                        <option value="<?php echo esc_attr($value); ?>" <?php selected($filters['range'], $value); ?>><?php echo esc_html($label); ?></option>
+                    <?php endforeach; ?></select></p>
+                <p><label for="tr-score-group"><strong>Group by</strong></label><br>
+                    <select id="tr-score-group" name="group"><?php foreach ($group_labels as $value => $label) : ?>
+                        <option value="<?php echo esc_attr($value); ?>" <?php selected($filters['group'], $value); ?>><?php echo esc_html($label); ?></option>
+                    <?php endforeach; ?></select></p>
+                <p><label for="tr-score-scope"><strong>Items</strong></label><br>
+                    <select id="tr-score-scope" name="scope"><?php foreach ($scope_labels as $value => $label) : ?>
+                        <option value="<?php echo esc_attr($value); ?>" <?php selected($filters['scope'], $value); ?>><?php echo esc_html($label); ?></option>
+                    <?php endforeach; ?></select></p>
+                <p><?php submit_button('Update graph', 'secondary', 'submit', false); ?></p>
+            </form>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;max-width:960px;margin:12px 0 20px;">
+                <div class="card" style="margin:0;padding:14px 16px;"><p class="description" style="margin:0;">Average review score</p><p style="font-size:28px;margin:4px 0 0;"><strong><?php echo esc_html($report['count'] ? number_format_i18n($report['average'], 1) : '—'); ?></strong></p></div>
+                <div class="card" style="margin:0;padding:14px 16px;"><p class="description" style="margin:0;">Average SEO score</p><p style="font-size:28px;margin:4px 0 0;"><strong><?php echo esc_html($report['seo_average'] !== null ? number_format_i18n($report['seo_average'], 1) : '—'); ?></strong></p></div>
+                <div class="card" style="margin:0;padding:14px 16px;"><p class="description" style="margin:0;">Scored items</p><p style="font-size:28px;margin:4px 0 0;"><strong><?php echo esc_html(number_format_i18n($report['count'])); ?></strong></p></div>
+                <div class="card" style="margin:0;padding:14px 16px;"><p class="description" style="margin:0;">At or above minimum (<?php echo esc_html((string) $report['min_score']); ?>)</p><p style="font-size:28px;margin:4px 0 0;"><strong><?php echo esc_html($report['count'] ? number_format_i18n($report['above_min_rate'], 1) . '%' : '—'); ?></strong></p></div>
+            </div>
+            <p><span style="display:inline-block;width:12px;height:12px;background:#2271b1;margin-right:6px;"></span> Review score
+                <span style="display:inline-block;width:12px;height:12px;background:#00a32a;margin:0 6px 0 16px;"></span> SEO score
+                <span style="display:inline-block;width:12px;height:12px;background:#c3c4c7;margin:0 6px 0 16px;"></span> Item count
+                <span style="display:inline-block;width:16px;border-top:2px dashed #dba617;margin:0 6px 0 16px;"></span> Minimum review score</p>
+            <div style="max-width:960px;"><?php echo $this->render_score_chart($report); ?></div>
+            <h2>Score bands</h2>
+            <table class="widefat striped" style="max-width:480px;">
+                <thead><tr><th>Band</th><th>Items</th></tr></thead>
+                <tbody>
+                <?php foreach ($report['distribution'] as $band => $total) : ?>
+                    <tr><td><?php echo esc_html($band); ?></td><td><?php echo esc_html(number_format_i18n($total)); ?></td></tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <h2>Average by <?php echo esc_html(strtolower($group_labels[$filters['group']])); ?></h2>
+            <table class="widefat striped" style="max-width:960px;">
+                <thead><tr><th>Period</th><th>Items</th><th>Avg review</th><th>Avg SEO</th><th>At or above min</th></tr></thead>
+                <tbody>
+                <?php $has_row = false; foreach ($report['series'] as $point) : if (!$point['count']) { continue; } $has_row = true; ?>
+                    <tr>
+                        <td><?php echo esc_html($point['label']); ?></td>
+                        <td><?php echo esc_html(number_format_i18n($point['count'])); ?></td>
+                        <td><?php echo esc_html(number_format_i18n($point['average'], 1)); ?></td>
+                        <td><?php echo esc_html($point['seo_average'] !== null ? number_format_i18n($point['seo_average'], 1) : '—'); ?></td>
+                        <td><?php echo esc_html(number_format_i18n($point['above_min'])); ?></td>
+                    </tr>
+                <?php endforeach; if (!$has_row) : ?>
+                    <tr><td colspan="5">No scored items in this range.</td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+            <h2>Latest scored items</h2>
+            <table class="widefat striped" style="max-width:960px;">
+                <thead><tr><th>When (UTC)</th><th>Source</th><th>Status</th><th>Review</th><th>SEO</th></tr></thead>
+                <tbody>
+                <?php if (empty($report['recent'])) : ?>
+                    <tr><td colspan="5">No scored items yet. Run the queue after the reviewer has scored an item.</td></tr>
+                <?php else : foreach ($report['recent'] as $item) : ?>
+                    <tr>
+                        <td><?php echo esc_html($item['created_at']); ?></td>
+                        <td><?php if ($item['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link($item['wp_post_id'])); ?>"><?php echo esc_html($item['title']); ?></a><?php else : echo esc_html($item['title']); endif; ?></td>
+                        <td><?php echo esc_html($item['status']); ?></td>
+                        <td><?php echo esc_html((string) $item['score']); ?></td>
+                        <td><?php echo esc_html($item['seo_score'] !== null ? (string) $item['seo_score'] : '—'); ?></td>
+                    </tr>
+                <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php
+    }
+
     public function experiments_page() {
         if (!current_user_can('manage_options')) { return; }
         global $wpdb;
@@ -2323,7 +2697,7 @@ final class TechnoRapper_AI_Wire {
         </p></div>
         <?php endif; ?>
         <p><strong>This month:</strong> $<?php echo esc_html(number_format_i18n((float) $usage['cost_usd'], 4)); ?> / $<?php echo esc_html(number_format_i18n((float) $s['monthly_budget_usd'], 2)); ?> · <?php echo esc_html(number_format_i18n((int) $usage['input_tokens'] + (int) $usage['output_tokens'])); ?> / <?php echo esc_html(number_format_i18n((int) $s['monthly_token_limit'])); ?> tokens · <?php echo esc_html((int) $usage['search_calls']); ?> web searches</p>
-        <p><strong>Daily post cap:</strong> <?php echo esc_html((int) $s['max_posts_per_day']); ?> · Posts still available today: <?php echo esc_html($this->remaining_posts_today($s)); ?><?php if (!empty($s['auto_publish'])) : ?> · Auto-publish is on<?php endif; ?></p>
+        <p><strong>Daily post cap:</strong> <?php echo esc_html((int) $s['max_posts_per_day']); ?> · Posts still available today: <?php echo esc_html($this->remaining_posts_today($s)); ?><?php if (!empty($s['auto_publish'])) : ?> · Auto-publish is on<?php endif; ?> · <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-scores')); ?>">View score graph</a></p>
         <form method="get" style="margin:12px 0;"><input type="hidden" name="page" value="tr-ai-wire-queue"><label for="tr-ai-wire-status">Filter status </label><select id="tr-ai-wire-status" name="status"><option value="">All statuses</option><?php foreach ($allowed_statuses as $option_status) : ?><option value="<?php echo esc_attr($option_status); ?>" <?php selected($status_filter, $option_status); ?>><?php echo esc_html($option_status); ?></option><?php endforeach; ?></select> <button class="button">Apply</button></form>
         <table class="widefat striped"><thead><tr><th>Added (UTC)</th><th>Feed</th><th>Source item</th><th>Status</th><th>Post / details</th></tr></thead><tbody>
         <?php if (empty($rows)) : ?><tr><td colspan="5">No items processed yet.</td></tr><?php else : foreach ($rows as $row) : ?>
