@@ -858,8 +858,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertGreaterThan(0, (int) $row['wp_post_id']);
     }
 
-    public function test_retry_publishes_a_low_review_score() {
-        $id = $this->create_queue_item();
+    public function test_retry_does_not_publish_below_min_review_score() {
         $item = array(
             'status' => 'quarantined',
             'source_url' => 'https://example.com/story',
@@ -881,15 +880,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         );
         $settings = TechnoRapper_AI_Wire::defaults();
         $settings['draft_min_score'] = 70;
-        $this->assertTrue($this->invoke_private('should_force_publish_retry', array($item, $rewrite, $review, $settings)));
-        $this->invoke_private('force_publish_item', array($id, $item, $rewrite, $review, $settings));
-        global $wpdb;
-        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
-        $this->assertSame('published', $row['status']);
-        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertFalse($this->invoke_private('should_force_publish_retry', array($item, $rewrite, $review, $settings)));
     }
 
-    public function test_run_publishes_a_quarantined_score_hold() {
+    public function test_run_keeps_a_quarantined_score_hold() {
         $id = $this->create_queue_item();
         global $wpdb;
         $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
@@ -911,8 +905,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $settings['draft_min_score'] = 70;
         $this->invoke_private('process_item', array($id, $settings));
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
-        $this->assertSame('published', $row['status']);
-        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
     }
 
     public function test_auto_publish_creates_a_live_post() {
