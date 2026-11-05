@@ -106,6 +106,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Writer and reviewer models | Model selection for the two editorial passes |
 | Independent web search | Optional reviewer corroboration and associated search charges |
 | Editorial A/B experiment | Enables/disables stable A/B writer assignment and sets the experiment ID |
+| When to create a draft | Minimum review score, pass vs pass+revise, similarity cap, and grounded/useful/new/flag gates |
 
 The API-key section has its own save action so the secret is not included in the ordinary WordPress settings payload. The other configuration values are saved together with **Save settings**.
 

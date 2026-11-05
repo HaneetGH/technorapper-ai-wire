@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts with daily and API usage limits.
- * Version: 0.2.1
+ * Version: 0.2.2
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.1';
+    const VERSION = '0.2.2';
     const OPTION = 'tr_ai_wire_settings';
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
@@ -129,6 +129,14 @@ final class TechnoRapper_AI_Wire {
             'enable_web_search' => 0,
             'enable_experiment' => 1,
             'experiment_id' => 'editorial-v1',
+            'draft_min_score' => 50,
+            'draft_allow_revise' => 1,
+            'draft_require_grounded' => 1,
+            'draft_require_useful' => 0,
+            'draft_require_new' => 0,
+            'draft_max_similarity' => 'high',
+            'draft_block_policy_flags' => 1,
+            'draft_block_fact_flags' => 0,
         );
     }
 
@@ -204,6 +212,15 @@ final class TechnoRapper_AI_Wire {
         $out['enable_experiment'] = empty($input['enable_experiment']) ? 0 : 1;
         $experiment_id = sanitize_key($input['experiment_id'] ?? $defaults['experiment_id']);
         $out['experiment_id'] = $experiment_id !== '' ? substr($experiment_id, 0, 64) : $defaults['experiment_id'];
+        $out['draft_min_score'] = min(100, max(0, absint($input['draft_min_score'] ?? $defaults['draft_min_score'])));
+        $out['draft_allow_revise'] = empty($input['draft_allow_revise']) ? 0 : 1;
+        $out['draft_require_grounded'] = empty($input['draft_require_grounded']) ? 0 : 1;
+        $out['draft_require_useful'] = empty($input['draft_require_useful']) ? 0 : 1;
+        $out['draft_require_new'] = empty($input['draft_require_new']) ? 0 : 1;
+        $similarities = array('low', 'medium', 'high');
+        $out['draft_max_similarity'] = in_array($input['draft_max_similarity'] ?? '', $similarities, true) ? $input['draft_max_similarity'] : $defaults['draft_max_similarity'];
+        $out['draft_block_policy_flags'] = empty($input['draft_block_policy_flags']) ? 0 : 1;
+        $out['draft_block_fact_flags'] = empty($input['draft_block_fact_flags']) ? 0 : 1;
         return $out;
     }
 
@@ -298,6 +315,17 @@ final class TechnoRapper_AI_Wire {
                     <tr><th scope="row">AI models</th><td>Writer: <?php $this->model_select('writer_model', $s['writer_model']); ?><br>Reviewer: <?php $this->model_select('reviewer_model', $s['reviewer_model']); ?><p class="description">Usage estimates use published standard rates for these models. Recheck provider pricing before changing models.</p></td></tr>
                     <tr><th scope="row">Independent web search</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_web_search]" value="1" <?php checked($s['enable_web_search'], 1); ?>> Enable up to one web-search call during each review</label><p class="description">Adds search-tool charges (currently $0.01 per call, plus tokens). Search is corroboration, not a guarantee. Leave off to check claims against the supplied feed only.</p></td></tr>
                     <tr><th scope="row">Editorial A/B experiment</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_experiment]" value="1" <?php checked($s['enable_experiment'], 1); ?>> Enable 50/50 writer experiment</label><p class="description">A = current writer. B = original editorial writer. Assignment is stable per source item. Disable to use A for new items.</p><label for="tr-experiment-id">Experiment ID</label> <input id="tr-experiment-id" type="text" maxlength="64" name="<?php echo esc_attr(self::OPTION); ?>[experiment_id]" value="<?php echo esc_attr($s['experiment_id']); ?>"></td></tr>
+                    <tr><th scope="row">When to create a draft</th><td>
+                        <p><label for="tr-draft-min-score"><strong>Minimum review score</strong></label> <input id="tr-draft-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[draft_min_score]" value="<?php echo esc_attr($s['draft_min_score']); ?>"> <span class="description">0–100. Items below this stay quarantined.</span></p>
+                        <p><label>Accept reviewer verdict </label><select name="<?php echo esc_attr(self::OPTION); ?>[draft_allow_revise]"><option value="1" <?php selected($s['draft_allow_revise'], 1); ?>>pass or revise</option><option value="0" <?php selected($s['draft_allow_revise'], 0); ?>>pass only</option></select></p>
+                        <p><label>Maximum similarity risk </label><select name="<?php echo esc_attr(self::OPTION); ?>[draft_max_similarity]"><?php foreach (array('high' => 'Allow high (most drafts)', 'medium' => 'Medium or lower', 'low' => 'Low only (strictest)') as $value => $label) : ?><option value="<?php echo esc_attr($value); ?>" <?php selected($s['draft_max_similarity'], $value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></p>
+                        <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_grounded]" value="1" <?php checked($s['draft_require_grounded'], 1); ?>> Require grounded in the source</label></p>
+                        <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_useful]" value="1" <?php checked($s['draft_require_useful'], 1); ?>> Require useful</label></p>
+                        <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_new]" value="1" <?php checked($s['draft_require_new'], 1); ?>> Require original writing vs the source</label></p>
+                        <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_policy_flags]" value="1" <?php checked($s['draft_block_policy_flags'], 1); ?>> Block if policy flags are present</label></p>
+                        <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_fact_flags]" value="1" <?php checked($s['draft_block_fact_flags'], 1); ?>> Block if fact flags are present</label></p>
+                        <p class="description">Reject always stays quarantined. These rules only decide whether a WordPress draft is created. Publishing remains a human action. After changing rules, run the queue again to re-check existing quarantined items.</p>
+                    </td></tr>
                 </table>
                 <?php submit_button('Save settings'); ?>
             </form>
@@ -662,7 +690,7 @@ final class TechnoRapper_AI_Wire {
             }
             $this->update_item($id, array('status' => 'reviewed', 'review_json' => wp_json_encode($review)));
         }
-        $blockers = $this->review_draft_blockers($review);
+        $blockers = $this->review_draft_blockers($review, $s);
         if ($blockers) {
             $this->update_item($id, array(
                 'status' => 'quarantined',
@@ -674,23 +702,50 @@ final class TechnoRapper_AI_Wire {
     }
 
     /**
-     * Drafts stay human-published. Only reject, policy flags, or ungrounded
-     * copy are hard stops. "revise" and missing is_new must not hide a usable draft.
+     * Drafts stay human-published. Dashboard settings decide score, verdict,
+     * similarity and flag gates. Reject is always a hard stop.
      */
-    private function review_draft_blockers($review) {
+    private function review_draft_blockers($review, $s) {
+        $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
         $reasons = array();
         $verdict = strtolower(trim((string) ($review['verdict'] ?? '')));
         if ($verdict === 'reject') {
             $reasons[] = 'verdict=reject';
+        } elseif ($verdict !== 'pass' && (empty($s['draft_allow_revise']) || $verdict !== 'revise')) {
+            $reasons[] = 'verdict=' . ($verdict !== '' ? $verdict : 'missing');
         }
-        if (!$this->flag_list_is_empty($review['policy_flags'] ?? null)) {
-            $reasons[] = 'policy flags';
+        $score = isset($review['score']) ? (int) $review['score'] : 0;
+        $min_score = (int) $s['draft_min_score'];
+        if ($score < $min_score) {
+            $reasons[] = 'score ' . $score . ' < ' . $min_score;
         }
-        $grounded = $review['pragmatism']['is_grounded'] ?? null;
-        if ($grounded === false || $grounded === 0 || $grounded === '0' || $grounded === 'false') {
+        $risk = strtolower((string) ($review['pragmatism']['similarity_risk'] ?? 'high'));
+        $risk_rank = array('low' => 1, 'medium' => 2, 'high' => 3);
+        $item_rank = $risk_rank[$risk] ?? 3;
+        $allowed_rank = $risk_rank[$s['draft_max_similarity']] ?? 3;
+        if ($item_rank > $allowed_rank) {
+            $reasons[] = 'similarity_risk=' . $risk;
+        }
+        if (!empty($s['draft_require_grounded']) && $this->is_explicitly_false($review['pragmatism']['is_grounded'] ?? null)) {
             $reasons[] = 'not grounded in the source';
         }
+        if (!empty($s['draft_require_useful']) && empty($review['pragmatism']['is_useful'])) {
+            $reasons[] = 'not useful';
+        }
+        if (!empty($s['draft_require_new']) && empty($review['pragmatism']['is_new'])) {
+            $reasons[] = 'not original vs source';
+        }
+        if (!empty($s['draft_block_policy_flags']) && !$this->flag_list_is_empty($review['policy_flags'] ?? null)) {
+            $reasons[] = 'policy flags';
+        }
+        if (!empty($s['draft_block_fact_flags']) && !$this->flag_list_is_empty($review['fact_flags'] ?? null)) {
+            $reasons[] = 'fact flags';
+        }
         return $reasons;
+    }
+
+    private function is_explicitly_false($value) {
+        return $value === false || $value === 0 || $value === '0' || $value === 'false';
     }
 
     private function flag_list_is_empty($flags) {
