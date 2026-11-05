@@ -10,21 +10,36 @@ trait TechnoRapper_AI_Wire_Queue {
         }
         $id = absint($_GET['item_id'] ?? 0);
         check_admin_referer('tr_ai_wire_retry_item_' . $id);
-        $item = $this->get_item($id);
-        if ($item && in_array($item['status'], array('error', 'retry_wait', 'quarantined'), true)) {
-            $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
-            $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
-            $s = $this->settings_for_item($item, $this->settings());
-            if ($this->should_force_publish_retry($item, $rewrite, $review, $s)) {
-                $this->force_publish_item($id, $item, $rewrite, $review, $s);
-            } else {
-                $status = is_array($review) ? 'reviewed' : (is_array($rewrite) ? 'rewritten' : 'new');
-                $this->update_item($id, array('status' => $status, 'attempts' => 0, 'next_retry_at' => null, 'error_text' => null));
-                $this->process_item($id, $s, true);
-            }
-        }
+        $this->retry_queue_item($id);
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&retried=1'));
         exit;
+    }
+
+    public function retry_queue_item($id) {
+        $id = absint($id);
+        $item = $this->get_item($id);
+        if (!$item) {
+            return new WP_Error('tr_ai_wire_not_found', 'Queue item not found.', array('status' => 404));
+        }
+        if (!in_array($item['status'], array('error', 'retry_wait', 'quarantined'), true)) {
+            return new WP_Error('tr_ai_wire_invalid_status', 'Only error, retry_wait, or quarantined items can be retried.', array('status' => 400));
+        }
+        $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
+        $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
+        $s = $this->settings_for_item($item, $this->settings());
+        if ($this->should_force_publish_retry($item, $rewrite, $review, $s)) {
+            $this->force_publish_item($id, $item, $rewrite, $review, $s);
+        } else {
+            $status = is_array($review) ? 'reviewed' : (is_array($rewrite) ? 'rewritten' : 'new');
+            $this->update_item($id, array('status' => $status, 'attempts' => 0, 'next_retry_at' => null, 'error_text' => null));
+            $this->process_item($id, $s, true);
+        }
+        $fresh = $this->get_item($id);
+        return array(
+            'retried' => true,
+            'id' => $id,
+            'status' => (string) ($fresh['status'] ?? ''),
+        );
     }
 
     public function is_run_in_progress() {

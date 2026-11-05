@@ -24,6 +24,7 @@ trait TechnoRapper_AI_Wire_Admin {
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
             <p>Feed items are rewritten, reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead.</p>
+            <?php $this->render_mcp_panel(); ?>
             <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
                 <h2>1. OpenAI API connection</h2>
                 <?php if ($key_ready) : ?>
@@ -137,6 +138,90 @@ trait TechnoRapper_AI_Wire_Admin {
                 <?php submit_button('Repair existing posts for homepage', 'secondary'); ?>
             </form>
         </div>
+        <?php
+    }
+
+    private function render_mcp_panel() {
+        $mcp_url = $this->mcp_endpoint_url();
+        $easy_mcp_active = $this->easy_mcp_is_active();
+        $links = $this->mcp_connect_links();
+        $abilities_ready = function_exists('wp_register_ability') && class_exists('WP_Ability');
+        $install_url = wp_nonce_url(self_admin_url('update.php?action=install-plugin&plugin=easy-mcp-ai'), 'install-plugin_easy-mcp-ai');
+        $search_url = admin_url('plugin-install.php?s=Easy+MCP+AI&tab=search&type=term');
+        $file = $this->easy_mcp_plugin_file();
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        $plugins = get_plugins();
+        $installed = isset($plugins[$file]);
+        if ($easy_mcp_active) {
+            $primary_url = $links['easy_mcp'];
+            $primary_label = 'Open Easy MCP dashboard';
+        } elseif ($installed) {
+            $primary_url = wp_nonce_url(admin_url('plugins.php?action=activate&plugin=' . $file), 'activate-plugin_' . $file);
+            $primary_label = 'Activate Easy MCP';
+        } else {
+            $primary_url = current_user_can('install_plugins') ? $install_url : $search_url;
+            $primary_label = 'Install and activate Easy MCP';
+        }
+        $prompts = array(
+            'Set up an AI Wire tenant that rewrites new articles from https://example.com/feed into my News category as drafts.',
+            'Find the tenants that have stopped bringing in posts and pause them.',
+            'Run my News tenant now.',
+        );
+        ?>
+        <div class="card" id="tr-ai-wire-mcp" style="max-width:900px;margin:20px 0;padding:20px 24px;">
+            <p style="margin:0 0 8px;color:#1d2327;"><span class="dashicons dashicons-star-filled" style="color:#d63638;font-size:16px;width:16px;height:16px;"></span> <?php echo esc_html__('Works with Claude, ChatGPT, Cursor and any MCP agent', 'technorapper-ai-wire'); ?></p>
+            <h2 style="margin:0 0 8px;"><?php echo esc_html__('Use AI Wire from your AI agent', 'technorapper-ai-wire'); ?></h2>
+            <p><?php echo esc_html__('Activate your site’s MCP URL, connect the agent you already use, and AI Wire becomes something you can simply ask for.', 'technorapper-ai-wire'); ?></p>
+            <p>
+                <a class="button button-primary" href="<?php echo esc_url($primary_url); ?>"><?php echo esc_html($primary_label); ?></a>
+            </p>
+            <p class="description"><?php echo $easy_mcp_active
+                ? esc_html__('Easy MCP is active. It exposes this site as an MCP server and turns AI Wire abilities into tools.', 'technorapper-ai-wire')
+                : esc_html__('Easy MCP is free. It enables your site’s MCP URL so Claude, ChatGPT, Cursor and other agents can call AI Wire.', 'technorapper-ai-wire'); ?></p>
+            <p><label for="tr-ai-wire-mcp-url"><strong><?php echo esc_html__('Your site’s MCP URL', 'technorapper-ai-wire'); ?></strong></label></p>
+            <p style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <input id="tr-ai-wire-mcp-url" class="large-text code" type="text" readonly value="<?php echo esc_attr($mcp_url); ?>" style="max-width:520px;">
+                <button type="button" class="button" id="tr-ai-wire-copy-mcp"><?php echo esc_html__('Copy', 'technorapper-ai-wire'); ?></button>
+            </p>
+            <p><strong><?php echo esc_html__('Connect your agent', 'technorapper-ai-wire'); ?></strong></p>
+            <p style="display:flex;gap:8px;flex-wrap:wrap;">
+                <a class="button" href="<?php echo esc_url($easy_mcp_active ? $links['easy_mcp'] : $links['claude']); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Connect to Claude', 'technorapper-ai-wire'); ?></a>
+                <a class="button" href="<?php echo esc_url($easy_mcp_active ? $links['easy_mcp'] : $links['chatgpt']); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Connect to ChatGPT', 'technorapper-ai-wire'); ?></a>
+                <a class="button" href="<?php echo esc_url($easy_mcp_active ? $links['easy_mcp'] : $links['cursor']); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Add to Cursor', 'technorapper-ai-wire'); ?></a>
+            </p>
+            <p class="description"><?php echo $easy_mcp_active
+                ? esc_html__('Your agents can connect now. Enable the TechnoRapper AI Wire abilities under Easy MCP AI → Tools → Abilities.', 'technorapper-ai-wire')
+                : esc_html__('Your agents can connect once Easy MCP is active.', 'technorapper-ai-wire'); ?>
+                <a href="<?php echo esc_url($links['docs']); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Using another agent? See how to connect it.', 'technorapper-ai-wire'); ?></a></p>
+            <?php if (!$abilities_ready) : ?>
+                <p class="description"><?php echo esc_html__('AI Wire tools register through the WordPress Abilities API (WordPress 6.9 or later). Easy MCP can still connect for core WordPress tools on older versions.', 'technorapper-ai-wire'); ?></p>
+            <?php endif; ?>
+            <p><strong><?php echo esc_html__('Once Easy MCP is active, you can ask your AI agent things like', 'technorapper-ai-wire'); ?></strong></p>
+            <?php foreach ($prompts as $prompt) : ?>
+                <blockquote style="margin:8px 0;padding:10px 14px;border-left:4px solid #2271b1;background:#f6f7f7;"><?php echo esc_html($prompt); ?></blockquote>
+            <?php endforeach; ?>
+        </div>
+        <script>
+        (function () {
+            var button = document.getElementById('tr-ai-wire-copy-mcp');
+            var field = document.getElementById('tr-ai-wire-mcp-url');
+            if (!button || !field) { return; }
+            button.addEventListener('click', function () {
+                field.select();
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(field.value);
+                } else if (document.execCommand) {
+                    document.execCommand('copy');
+                }
+                button.textContent = <?php echo wp_json_encode(__('Copied', 'technorapper-ai-wire')); ?>;
+                setTimeout(function () {
+                    button.textContent = <?php echo wp_json_encode(__('Copy', 'technorapper-ai-wire')); ?>;
+                }, 1600);
+            });
+        })();
+        </script>
         <?php
     }
 

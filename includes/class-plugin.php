@@ -14,8 +14,11 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_SEO;
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
+    use TechnoRapper_AI_Wire_Abilities;
 
-    const VERSION = '0.2.25';
+    const VERSION = '0.2.26';
+    const ABILITY_CATEGORY = 'tr-ai-wire';
+    const EASY_MCP_SLUG = 'easy-mcp-ai';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -35,6 +38,8 @@ final class TechnoRapper_AI_Wire {
     public function __construct() {
         global $wpdb;
         $this->table = $wpdb->prefix . self::TABLE_SUFFIX;
+        add_action('wp_abilities_api_categories_init', array($this, 'register_ability_category'));
+        add_action('wp_abilities_api_init', array($this, 'register_abilities'));
         add_action('admin_menu', array($this, 'admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
         add_filter('cron_schedules', array($this, 'cron_schedules'));
