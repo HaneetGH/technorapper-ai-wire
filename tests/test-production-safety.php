@@ -619,7 +619,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $seo = $prepared['seo'];
         $this->assertSame('Visibility: Good!', $seo['visibility_label']);
         $this->assertMatchesRegularExpression('/^SEO Analysis: \d+\/100$/', $seo['seo_analysis_label']);
-        $this->assertGreaterThanOrEqual(70, (int) $seo['seo_score']);
+        $this->assertGreaterThanOrEqual(85, (int) $seo['seo_score']);
         $this->assertLessThanOrEqual(3, count($seo['readability_errors']));
         $this->assertStringContainsString('Readability:', $seo['readability_label']);
         $this->assertNotSame('Focus Keyphrase: No focus keyphrase!', $seo['keyphrase_label']);
@@ -725,6 +725,22 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('featured snippet', $writer);
         $this->assertStringContainsString('editorial desk', $writer);
         $this->assertStringContainsString('FAQ', $reviewer);
+        $this->assertStringContainsString('82-89', $reviewer);
+        $this->assertStringContainsString('Do not deduct below 80', $reviewer);
+        $this->assertStringContainsString('none were supplied', $reviewer);
+        $this->assertStringContainsString('that is not a failure', $writer);
+    }
+
+    public function test_review_input_does_not_punish_missing_internal_links() {
+        $input = $this->invoke_private('build_review_input', array(
+            array(
+                'source_title' => 'A useful technology update',
+                'source_url' => 'https://example.com/story',
+                'source_body' => 'Source body',
+            ),
+            array('title' => 'A useful technology update'),
+        ));
+        $this->assertStringContainsString('none supplied. Do not lower the score', $input);
     }
 
     public function test_writer_input_and_draft_include_internal_links() {
