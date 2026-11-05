@@ -1293,4 +1293,56 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(80.0, $week['average']);
         $this->assertSame(0, $week['distribution']['0-49']);
     }
+
+    public function test_stop_running_jobs_releases_the_lock() {
+        $token = wp_generate_uuid4();
+        update_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION, array(
+            'created_at' => time(),
+            'token' => $token,
+        ), false);
+        $this->assertTrue($this->plugin->is_run_in_progress());
+        $this->assertTrue($this->plugin->stop_running_jobs());
+        $this->assertFalse($this->plugin->is_run_in_progress());
+        $this->assertFalse($this->invoke_private('refresh_processing_lock', array($token)));
+        $last = get_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
+        $this->assertSame('stopped', $last['reason']);
+        $this->assertSame('Stopped by administrator.', $last['skipped']);
+    }
+
+    public function test_delete_queue_item_removes_only_that_row() {
+        $keep = $this->create_queue_item();
+        $gone = $this->create_queue_item();
+        $this->assertTrue($this->plugin->delete_queue_item($gone));
+        $this->assertEmpty($this->invoke_private('get_item', array($gone)));
+        $this->assertNotEmpty($this->invoke_private('get_item', array($keep)));
+    }
+
+    public function test_clean_unfinished_keeps_published_queue_rows() {
+        $open = $this->create_queue_item();
+        $done = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'published'), array('id' => $done));
+        $deleted = $this->plugin->clean_queue('unfinished');
+        $this->assertSame(1, $deleted);
+        $this->assertEmpty($this->invoke_private('get_item', array($open)));
+        $kept = $this->invoke_private('get_item', array($done));
+        $this->assertSame('published', $kept['status']);
+    }
+
+    public function test_clean_board_empties_the_queue() {
+        $this->create_queue_item();
+        $this->create_queue_item();
+        update_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION, array(
+            'created_at' => time(),
+            'token' => wp_generate_uuid4(),
+        ), false);
+        $deleted = $this->plugin->clean_queue('all');
+        $this->assertSame(2, $deleted);
+        $this->assertFalse($this->plugin->is_run_in_progress());
+        global $wpdb;
+        $count = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_items");
+        $this->assertSame(0, $count);
+        $last = get_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
+        $this->assertSame('cleaned', $last['reason']);
+    }
 }
