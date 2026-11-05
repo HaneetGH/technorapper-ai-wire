@@ -362,7 +362,7 @@ final class TechnoRapper_AI_Wire {
                         <p><label for="tr-seo-readability"><strong>Maximum readability errors</strong></label> <input id="tr-seo-readability" type="number" min="0" max="20" name="<?php echo esc_attr(self::OPTION); ?>[seo_max_readability_errors]" value="<?php echo esc_attr($s['seo_max_readability_errors']); ?>"></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[seo_require_keyphrase]" value="1" <?php checked($s['seo_require_keyphrase'], 1); ?>> Require a focus keyphrase</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[seo_require_social]" value="1" <?php checked($s['seo_require_social'], 1); ?>> Require social title and description</label></p>
-                        <p class="description">The plugin fills keyphrase, meta description and social tags after rewrite, then writes them to Rank Math, Yoast and AIOSEO fields on the draft.</p>
+                        <p class="description">These scores are shown on the queue. Missing keyphrase, missing social markup, or a score below the minimum can hold an item. Readability errors are listed but do not block auto-publish.</p>
                     </td></tr>
                 </table>
                 <?php submit_button('Save settings'); ?>
@@ -412,12 +412,37 @@ final class TechnoRapper_AI_Wire {
         if ($item && in_array($item['status'], array('error', 'retry_wait', 'quarantined'), true)) {
             $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
             $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
-            $status = is_array($review) ? 'reviewed' : (is_array($rewrite) ? 'rewritten' : 'new');
-            $this->update_item($id, array('status' => $status, 'attempts' => 0, 'next_retry_at' => null, 'error_text' => null));
-            $this->process_item($id, $this->settings(), true);
+            $s = $this->settings();
+            if ($this->should_force_publish_retry($item, $rewrite, $review, $s)) {
+                $this->force_publish_item($id, $item, $rewrite, $review, $s);
+            } else {
+                $status = is_array($review) ? 'reviewed' : (is_array($rewrite) ? 'rewritten' : 'new');
+                $this->update_item($id, array('status' => $status, 'attempts' => 0, 'next_retry_at' => null, 'error_text' => null));
+                $this->process_item($id, $s, true);
+            }
         }
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&retried=1'));
         exit;
+    }
+
+    private function should_force_publish_retry($item, $rewrite, $review, $s) {
+        $verdict = is_array($review) ? strtolower(trim((string) ($review['verdict'] ?? ''))) : '';
+        return ($item['status'] ?? '') === 'quarantined'
+            && is_array($rewrite)
+            && !empty($s['auto_publish'])
+            && $verdict !== 'reject';
+    }
+
+    private function force_publish_item($id, $item, $rewrite, $review, $s) {
+        if (!is_array($review)) {
+            $review = array(
+                'verdict' => 'revise',
+                'score' => 80,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            );
+        }
+        $this->create_draft($id, $item, $rewrite, $review, $s);
     }
 
     private function usage_key() {
@@ -1302,10 +1327,6 @@ final class TechnoRapper_AI_Wire {
         $min_score = (int) $s['seo_min_score'];
         if ($score < $min_score) {
             $reasons[] = 'SEO score ' . $score . ' < ' . $min_score;
-        }
-        $error_count = is_array($seo['readability_errors'] ?? null) ? count($seo['readability_errors']) : 0;
-        if ($error_count > (int) $s['seo_max_readability_errors']) {
-            $reasons[] = 'readability ' . $error_count . ' errors';
         }
         if (!empty($s['seo_require_keyphrase']) && empty($seo['has_keyphrase'])) {
             $reasons[] = 'no focus keyphrase';

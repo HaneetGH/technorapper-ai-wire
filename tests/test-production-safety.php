@@ -648,17 +648,70 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             )),
         ), array('id' => $id));
         $settings = TechnoRapper_AI_Wire::defaults();
-        $settings['seo_max_readability_errors'] = 0;
+        $settings['seo_min_score'] = 101;
         $this->invoke_private('process_item', array($id, $settings));
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text, rewrite_json FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame('quarantined', $row['status']);
         $this->assertEmpty($row['wp_post_id']);
         $this->assertStringContainsString('Held after rewrite SEO tests', (string) $row['error_text']);
-        $this->assertStringContainsString('readability', (string) $row['error_text']);
+        $this->assertStringContainsString('SEO score', (string) $row['error_text']);
         $rewrite = json_decode($row['rewrite_json'], true);
         $this->assertSame('Visibility: Good!', $rewrite['seo']['visibility_label']);
         $this->assertSame('Focus Keyphrase: useful technology update', $rewrite['seo']['keyphrase_label']);
         $this->assertSame('Social: Social markup ready!', $rewrite['seo']['social_label']);
+    }
+
+    public function test_readability_errors_do_not_block_auto_publish() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'rewritten',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+                'seo' => array(
+                    'seo_score' => 90,
+                    'visibility' => 'Good',
+                    'has_keyphrase' => true,
+                    'has_social' => true,
+                    'readability_errors' => array('a', 'b', 'c', 'd'),
+                ),
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults()));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+    }
+
+    public function test_retry_publishes_a_quarantined_seo_hold_when_auto_publish_is_on() {
+        $id = $this->create_queue_item();
+        $item = array(
+            'status' => 'quarantined',
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-force',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        );
+        $rewrite = array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        );
+        $this->assertTrue($this->invoke_private('should_force_publish_retry', array($item, $rewrite, null, TechnoRapper_AI_Wire::defaults())));
+        $this->invoke_private('force_publish_item', array($id, $item, $rewrite, null, TechnoRapper_AI_Wire::defaults()));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
     }
 
     public function test_auto_publish_creates_a_live_post() {
