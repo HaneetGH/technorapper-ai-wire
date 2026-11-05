@@ -166,6 +166,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         );
         $review = array(
             'verdict' => 'pass',
+            'score' => 90,
             'safe_to_publish' => true,
             'fact_flags' => array(),
             'policy_flags' => array(),
@@ -414,6 +415,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             )),
             'review_json' => wp_json_encode(array(
                 'verdict' => 'revise',
+                'score' => 82,
                 'safe_to_publish' => false,
                 'fact_flags' => array(),
                 'policy_flags' => array(),
@@ -454,6 +456,56 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('quarantined', $row['status']);
         $this->assertEmpty($row['wp_post_id']);
         $this->assertStringContainsString('verdict=reject', (string) $row['error_text']);
+    }
+
+    public function test_min_score_setting_can_hold_a_revise_item() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'revise',
+                'score' => 49,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_min_score'] = 70;
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertStringContainsString('score 49 < 70', (string) $row['error_text']);
+    }
+
+    public function test_pass_only_setting_blocks_revise() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'revise',
+                'score' => 88,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_allow_revise'] = 0;
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertStringContainsString('verdict=revise', (string) $row['error_text']);
     }
 
     public function test_zero_budget_blocks_api_spend() {
