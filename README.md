@@ -96,7 +96,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 |---|---|
 | OpenAI API key | Credential used for writer and reviewer requests; saved separately from ordinary settings |
 | Automatic processing schedule | Hourly, every 3, 6 or 12 hours, daily, or manual-only |
-| RSS/Atom feeds | One feed URL per line, optionally followed by `| Feed label` |
+| Feed tenants | Each RSS/Atom feed is onboarded as its own tenant, with its own name, homepage On/Off, and content mapping |
 | Maximum posts per day | Daily draft and auto-published post cap; `0` pauses creation |
 | Maximum items per run | Caps the number of queued retries and new feed items processed in one scheduled/manual run (1–100) |
 | Monthly API budget | Local estimated USD spend ceiling; `0` stops AI calls |

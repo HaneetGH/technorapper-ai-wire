@@ -415,6 +415,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('rewrite', $settings['map_content']);
         $this->assertSame(4000, $settings['max_output_tokens']);
         $this->assertSame('', $settings['feeds']);
+        $this->assertSame(array(), $settings['tenants']);
         $this->assertSame('', $this->invoke_private('api_key'));
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK));
@@ -888,6 +889,99 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('source', $clean['map_title']);
         $this->assertSame('source', $clean['map_date']);
         $this->assertSame('source', $clean['map_content']);
+        $this->assertSame(array(), $clean['tenants']);
+    }
+
+    public function test_each_feed_onboards_as_its_own_tenant() {
+        $android = self::factory()->category->create_and_get(array(
+            'name' => 'Android',
+            'slug' => 'android',
+        ));
+        $apple = self::factory()->category->create_and_get(array(
+            'name' => 'Apple',
+            'slug' => 'apple',
+        ));
+        $clean = $this->plugin->sanitize_settings(array(
+            'feeds' => "https://example.com/android.xml | Android desk\nhttps://example.com/apple.xml | Apple desk",
+            'pin_to_homepage' => 1,
+        ));
+        $this->assertCount(2, $clean['tenants']);
+        $this->assertSame('https://example.com/android.xml', $clean['tenants'][0]['url']);
+        $this->assertSame('Android desk', $clean['tenants'][0]['name']);
+        $this->assertSame(1, $clean['tenants'][0]['enabled']);
+        $this->assertSame('https://example.com/apple.xml', $clean['tenants'][1]['url']);
+        $this->assertStringContainsString('Android desk', $clean['feeds']);
+
+        $saved = $this->plugin->sanitize_settings(array(
+            'tenants' => array(
+                array(
+                    'url' => 'https://example.com/android.xml',
+                    'name' => 'Android desk',
+                    'enabled' => 1,
+                    'pin_to_homepage' => 1,
+                    'map_terms' => array((int) $android->term_id),
+                    'map_auto_desk' => 0,
+                ),
+                array(
+                    'url' => 'https://example.com/apple.xml',
+                    'name' => 'Apple desk',
+                    'enabled' => 1,
+                    'pin_to_homepage' => 0,
+                    'map_terms' => array((int) $apple->term_id),
+                    'map_auto_desk' => 0,
+                ),
+                array(
+                    'url' => 'https://example.com/off.xml',
+                    'name' => 'Paused',
+                    'enabled' => 0,
+                ),
+            ),
+        ));
+        $this->assertCount(3, $saved['tenants']);
+        $enabled = $this->invoke_private('enabled_tenants', array($saved));
+        $this->assertCount(2, $enabled);
+        $android_s = $this->invoke_private('settings_for_item', array(array('feed_url' => 'https://example.com/android.xml'), $saved));
+        $apple_s = $this->invoke_private('settings_for_item', array(array('feed_url' => 'https://example.com/apple.xml'), $saved));
+        $this->assertSame(1, $android_s['pin_to_homepage']);
+        $this->assertSame(array((int) $android->term_id), $android_s['map_terms']);
+        $this->assertSame(0, $apple_s['pin_to_homepage']);
+        $this->assertSame(array((int) $apple->term_id), $apple_s['map_terms']);
+    }
+
+    public function test_disabled_tenant_is_not_ingested() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['max_posts_per_day'] = 5;
+        $settings['tenants'] = array(
+            array(
+                'id' => 'offtenant',
+                'url' => 'https://example.com/off-feed.xml',
+                'name' => 'Off tenant',
+                'enabled' => 0,
+                'pin_to_homepage' => 1,
+                'map_post_type' => 'post',
+                'map_taxonomy' => 'category',
+                'map_terms' => array(),
+                'map_auto_desk' => 1,
+                'map_post_status' => 'auto',
+                'map_title' => 'rewrite',
+                'map_date' => 'now',
+                'map_content' => 'rewrite',
+            ),
+        );
+        $settings['feeds'] = 'https://example.com/off-feed.xml | Off tenant';
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $fetched = false;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$fetched) {
+            if (strpos($url, 'off-feed.xml') !== false) {
+                $fetched = true;
+            }
+            return $preempt;
+        }, 10, 3);
+        $summary = $this->plugin->process_feeds(array('foreground' => true, 'reason' => 'manual'));
+        $this->assertFalse($fetched);
+        $this->assertSame(0, (int) $summary['feeds_checked']);
+        $this->assertSame(0, (int) $summary['new_items']);
     }
 
     public function test_writer_and_reviewer_prompts_include_google_ranking_steps() {
