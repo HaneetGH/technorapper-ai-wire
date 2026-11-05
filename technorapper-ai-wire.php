@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.9
+ * Version: 0.2.10
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.9';
+    const VERSION = '0.2.10';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -399,7 +399,7 @@ final class TechnoRapper_AI_Wire {
                     <tr><th scope="row">Independent web search</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_web_search]" value="1" <?php checked($s['enable_web_search'], 1); ?>> Enable up to one web-search call during each review</label><p class="description">Adds search-tool charges (currently $0.01 per call, plus tokens). Search is corroboration, not a guarantee. Leave off to check claims against the supplied feed only.</p></td></tr>
                     <tr><th scope="row">Editorial A/B experiment</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_experiment]" value="1" <?php checked($s['enable_experiment'], 1); ?>> Enable 50/50 writer experiment</label><p class="description">A = current writer. B = original editorial writer. Assignment is stable per source item. Disable to use A for new items.</p><label for="tr-experiment-id">Experiment ID</label> <input id="tr-experiment-id" type="text" maxlength="64" name="<?php echo esc_attr(self::OPTION); ?>[experiment_id]" value="<?php echo esc_attr($s['experiment_id']); ?>"></td></tr>
                     <tr><th scope="row">When to create a draft</th><td>
-                        <p><label for="tr-draft-min-score"><strong>Minimum review score</strong></label> <input id="tr-draft-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[draft_min_score]" value="<?php echo esc_attr($s['draft_min_score']); ?>"> <span class="description">0–100. First pass below this stays quarantined. Retry still publishes a usable article.</span></p>
+                        <p><label for="tr-draft-min-score"><strong>Minimum review score</strong></label> <input id="tr-draft-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[draft_min_score]" value="<?php echo esc_attr($s['draft_min_score']); ?>"> <span class="description">0–100. Below this stays quarantined. Retry will not publish it.</span></p>
                         <p><label>Accept reviewer verdict </label><select name="<?php echo esc_attr(self::OPTION); ?>[draft_allow_revise]"><option value="1" <?php selected($s['draft_allow_revise'], 1); ?>>pass or revise</option><option value="0" <?php selected($s['draft_allow_revise'], 0); ?>>pass only</option></select></p>
                         <p><label>Maximum similarity risk </label><select name="<?php echo esc_attr(self::OPTION); ?>[draft_max_similarity]"><?php foreach (array('high' => 'Allow high (most drafts)', 'medium' => 'Medium or lower', 'low' => 'Low only (strictest)') as $value => $label) : ?><option value="<?php echo esc_attr($value); ?>" <?php selected($s['draft_max_similarity'], $value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_grounded]" value="1" <?php checked($s['draft_require_grounded'], 1); ?>> Require grounded in the source</label></p>
@@ -407,7 +407,7 @@ final class TechnoRapper_AI_Wire {
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_new]" value="1" <?php checked($s['draft_require_new'], 1); ?>> Require original writing vs the source</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_policy_flags]" value="1" <?php checked($s['draft_block_policy_flags'], 1); ?>> Block if policy flags are present</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_fact_flags]" value="1" <?php checked($s['draft_block_fact_flags'], 1); ?>> Block if fact flags are present</label></p>
-                        <p class="description">Reject stays quarantined on the first pass. Retry (or a later run of a score-only hold) still publishes if the article has a title and body. Auto-publish is at the top of this form.</p>
+                        <p class="description">Reject and a score below the minimum never publish — including Retry. Auto-publish is at the top of this form.</p>
                     </td></tr>
                     <tr><th scope="row">After rewrite: SEO tests</th><td>
                         <p><label for="tr-seo-min-score"><strong>Minimum SEO score</strong></label> <input id="tr-seo-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[seo_min_score]" value="<?php echo esc_attr($s['seo_min_score']); ?>"> <span class="description">Visibility, keyphrase, readability and social markup. 0–100.</span></p>
@@ -483,21 +483,21 @@ final class TechnoRapper_AI_Wire {
             && trim((string) ($rewrite['body_html'] ?? '')) !== '';
     }
 
-    private function blockers_are_only_low_score($blockers) {
-        if (!is_array($blockers) || !$blockers) {
-            return false;
+    private function review_meets_score($review, $s) {
+        $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
+        $min = (int) $s['draft_min_score'];
+        if ($min <= 0 || !is_array($review)) {
+            return true;
         }
-        foreach ($blockers as $blocker) {
-            if (strpos((string) $blocker, 'score ') !== 0) {
-                return false;
-            }
-        }
-        return true;
+        return (int) ($review['score'] ?? 0) >= $min;
     }
 
     private function should_force_publish_retry($item, $rewrite, $review, $s) {
+        $verdict = is_array($review) ? strtolower(trim((string) ($review['verdict'] ?? ''))) : '';
         return in_array(($item['status'] ?? ''), array('quarantined', 'error', 'retry_wait'), true)
-            && $this->has_usable_rewrite($rewrite);
+            && $this->has_usable_rewrite($rewrite)
+            && $verdict !== 'reject'
+            && $this->review_meets_score($review, $s);
     }
 
     private function force_publish_item($id, $item, $rewrite, $review, $s) {
@@ -1502,10 +1502,6 @@ final class TechnoRapper_AI_Wire {
         }
         $blockers = $this->review_draft_blockers($review, $s);
         if ($blockers) {
-            if (($item['status'] ?? '') === 'quarantined' && $this->blockers_are_only_low_score($blockers) && $this->has_usable_rewrite($rewrite)) {
-                $this->create_draft($id, $item, $rewrite, $review, $s);
-                return;
-            }
             $this->update_item($id, array(
                 'status' => 'quarantined',
                 'error_text' => 'Held for editorial review: ' . implode(', ', $blockers),
