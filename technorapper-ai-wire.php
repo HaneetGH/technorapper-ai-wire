@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.13
+ * Version: 0.2.14
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.13';
+    const VERSION = '0.2.14';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -53,6 +53,7 @@ final class TechnoRapper_AI_Wire {
         add_action('admin_post_tr_ai_wire_stop_run', array($this, 'stop_run'));
         add_action('admin_post_tr_ai_wire_delete_item', array($this, 'delete_item'));
         add_action('admin_post_tr_ai_wire_clean_queue', array($this, 'clean_queue_request'));
+        add_action('admin_post_tr_ai_wire_repair_home', array($this, 'repair_home_request'));
     }
 
     public static function activate() {
@@ -154,6 +155,7 @@ final class TechnoRapper_AI_Wire {
             'seo_max_readability_errors' => 3,
             'seo_require_keyphrase' => 1,
             'seo_require_social' => 1,
+            'pin_to_homepage' => 1,
         );
     }
 
@@ -306,6 +308,7 @@ final class TechnoRapper_AI_Wire {
         $out['seo_max_readability_errors'] = min(20, max(0, absint($input['seo_max_readability_errors'] ?? $defaults['seo_max_readability_errors'])));
         $out['seo_require_keyphrase'] = empty($input['seo_require_keyphrase']) ? 0 : 1;
         $out['seo_require_social'] = empty($input['seo_require_social']) ? 0 : 1;
+        $out['pin_to_homepage'] = empty($input['pin_to_homepage']) ? 0 : 1;
         return $out;
     }
 
@@ -394,6 +397,7 @@ final class TechnoRapper_AI_Wire {
                     <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
                     <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="2000" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. 350 is the daily target. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row">Auto-publish</th><td><label><input id="tr-auto-publish" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]" value="1" <?php checked($s['auto_publish'], 1); ?>> <strong>Publish posts automatically</strong> — no draft and no Publish button. Passing items go live. Rejected items stay quarantined.</label></td></tr>
+                    <tr><th scope="row">Homepage</th><td><label><input id="tr-pin-home" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[pin_to_homepage]" value="1" <?php checked(!empty($s['pin_to_homepage']), true); ?>> <strong>Pin new posts to the homepage</strong> — assign a real desk (Android, Apple, AI, Guides…) and a featured image, and mark the post sticky so the home board can show it. Writer “News” no longer wins over a better desk.</label></td></tr>
                     <tr><th scope="row"><label for="tr-items-run">Maximum items per run</label></th><td><input id="tr-items-run" type="number" min="1" max="350" name="<?php echo esc_attr(self::OPTION); ?>[max_items_per_run]" value="<?php echo esc_attr($s['max_items_per_run']); ?>"> <p class="description">Caps queued items touched in one run (1–350). Long days continue on WP-Cron after the time budget.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"> <p class="description">Processing stops when tracked usage reaches the cap. Set to 0 to stop AI calls.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-tokens">Monthly token limit</label></th><td><input id="tr-monthly-tokens" type="number" min="0" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[monthly_token_limit]" value="<?php echo esc_attr($s['monthly_token_limit']); ?>"> <p class="description">Combined input + output tokens, based on API usage reports. Also stops at this cap.</p></td></tr>
@@ -434,6 +438,12 @@ final class TechnoRapper_AI_Wire {
                 <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
                 <p class="description">Stops the current run after the item already in flight. Scheduled runs still start again on the next interval unless the schedule is Manual only.</p>
                 <?php submit_button('Stop current run', 'delete'); ?>
+            </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
+                <input type="hidden" name="action" value="tr_ai_wire_repair_home">
+                <?php wp_nonce_field('tr_ai_wire_repair_home'); ?>
+                <p class="description">Re-assign desks and featured images on already published AI Wire posts so they can appear on the home board, not only at their own URL.</p>
+                <?php submit_button('Repair existing posts for homepage', 'secondary'); ?>
             </form>
         </div>
         <?php
@@ -586,6 +596,69 @@ final class TechnoRapper_AI_Wire {
         $this->clean_queue($mode);
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=' . ($mode === 'unfinished' ? 'cleared' : 'cleaned')));
         exit;
+    }
+
+    public function repair_home_request() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to repair homepage posts.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_repair_home');
+        $this->repair_home_posts();
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=repaired'));
+        exit;
+    }
+
+    public function repair_home_posts($limit = 80) {
+        $s = $this->settings();
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => array('publish', 'draft'),
+            'posts_per_page' => max(1, (int) $limit),
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'no_found_rows' => true,
+        ));
+        $count = 0;
+        foreach ($posts as $post) {
+            $qid = (int) get_post_meta($post->ID, '_tr_ai_wire_queue_id', true);
+            $item = $qid > 0 ? $this->get_item($qid) : null;
+            $rewrite = array();
+            if (is_array($item) && !empty($item['rewrite_json'])) {
+                $decoded = json_decode($item['rewrite_json'], true);
+                if (is_array($decoded)) {
+                    $rewrite = $decoded;
+                }
+            }
+            if (!$rewrite) {
+                $rewrite = array(
+                    'title' => $post->post_title,
+                    'category' => '',
+                    'tags' => wp_get_post_tags($post->ID, array('fields' => 'names')),
+                );
+            }
+            $this->prepare_homepage_visibility((int) $post->ID, is_array($item) ? $item : array(), $rewrite, $s);
+            $count++;
+        }
+        return $count;
+    }
+
+    private function prepare_homepage_visibility($post_id, $item, $rewrite, $s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $post_id = (int) $post_id;
+        if ($post_id <= 0) {
+            return;
+        }
+        wp_update_post(array(
+            'ID' => $post_id,
+            'post_author' => $this->publishing_author_id(),
+        ));
+        $this->assign_home_categories($post_id, $rewrite);
+        $this->maybe_set_featured_image($post_id, is_array($item) ? $item : array(), $rewrite);
+        if (!empty($s['pin_to_homepage']) && get_post_status($post_id) === 'publish') {
+            stick_post($post_id);
+        }
+        $this->refresh_front_page($post_id);
     }
 
     private function has_usable_rewrite($rewrite) {
@@ -1116,7 +1189,7 @@ final class TechnoRapper_AI_Wire {
             . '11) Write as the TechnoRapper editorial desk. Include one sentence on how the source was used. No first-person “I tested”, no source-brand voice, no invented quotes, tests, or experience. '
             . '12) Return official_links as 0–2 http(s) URLs that already appear in the source text (company, regulator, or docs). Never invent URLs. '
             . '13) Return featured_image_alt as a factual caption for a suitable editorial still. Do not claim you created or saw a photo. '
-            . '14) Use 3–6 specific tags and one niche category. Attribute the source once. Label uncertainty. '
+            . '14) Use 3–6 specific tags and one homepage desk category: Android, Apple, AI, Auto, PC Hardware, Reviews, Guides, or Tech. Never use News or Technology when a desk fits. Attribute the source once. Label uncertainty. '
             . '15) Return search_intent as the reader job-to-be-done in one sentence. '
             . 'Return only JSON with keys title, lede, body_html, angle, category, tags (array), source_attribution, claims (array of factual claims), novelty_notes, focus_keyphrase, seo_title, meta_description, social_title, social_description, slug, search_intent, featured_image_alt, key_takeaways (array of 3 strings), faq (array of {question, answer}), official_links (array of {url, anchor}), internal_links (array of {url, anchor}).';
     }
@@ -1372,8 +1445,16 @@ final class TechnoRapper_AI_Wire {
     }
 
     private function source_image_url($html) {
-        if (preg_match('/<img[^>]+src=["\'](https?:\/\/[^"\']+)/i', (string) $html, $match)) {
-            return esc_url_raw($match[1]);
+        $html = (string) $html;
+        foreach (array(
+            '/<img[^>]+src=["\'](https?:\/\/[^"\']+)/i',
+            '/<img[^>]+data-src=["\'](https?:\/\/[^"\']+)/i',
+            '/property=["\']og:image["\'][^>]+content=["\'](https?:\/\/[^"\']+)/i',
+            '/content=["\'](https?:\/\/[^"\']+)["\'][^>]+property=["\']og:image["\']/i',
+        ) as $pattern) {
+            if (preg_match($pattern, $html, $match)) {
+                return esc_url_raw($match[1]);
+            }
         }
         return '';
     }
@@ -1479,15 +1560,27 @@ final class TechnoRapper_AI_Wire {
         return pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
     }
 
+    private function home_desk_needles() {
+        return array(
+            'android' => array('android', 'samsung', 'pixel', 'one ui', 'galaxy', 'motorola'),
+            'apple' => array('apple', 'iphone', 'ipad', 'ios', 'macbook', 'icloud', 'macos', 'airpods'),
+            'ai' => array(' openai', 'chatgpt', 'gemini', ' llm', 'artificial intelligence', ' ai '),
+            'auto' => array(' tesla', ' ev ', 'electric vehicle', 'automotive'),
+            'pc-hardware' => array('nvidia', 'intel', 'amd', 'gpu', 'laptop', 'graphics card', 'pc hardware'),
+            'reviews' => array('review', 'hands-on'),
+            'guides' => array('guide', 'how to', 'deal', 'best '),
+        );
+    }
+
     private function resolve_post_categories($rewrite) {
         $ids = array();
-        $default = (int) get_option('default_category');
-        if ($default > 0 && term_exists($default, 'category')) {
-            $ids[] = $default;
-        }
         $matched = $this->match_existing_category($rewrite);
-        if ($matched > 0 && !in_array($matched, $ids, true)) {
+        if ($matched > 0) {
             $ids[] = $matched;
+        }
+        $default = (int) get_option('default_category');
+        if ($default > 0 && term_exists($default, 'category') && !in_array($default, $ids, true)) {
+            $ids[] = $default;
         }
         return $ids;
     }
@@ -1501,39 +1594,56 @@ final class TechnoRapper_AI_Wire {
 
     private function match_existing_category($rewrite) {
         $wanted = trim(sanitize_text_field($rewrite['category'] ?? ''));
-        if ($wanted !== '') {
-            $term = get_term_by('name', $wanted, 'category');
-            if (!$term) {
-                $term = get_term_by('slug', sanitize_title($wanted), 'category');
-            }
-            if ($term && !is_wp_error($term)) {
-                return (int) $term->term_id;
-            }
-        }
-        $hay = strtolower($wanted . ' ' . ($rewrite['title'] ?? '') . ' ' . implode(' ', (array) ($rewrite['tags'] ?? array())));
-        $needles = array(
-            'android' => array('android', 'samsung', 'pixel', 'one ui', 'galaxy'),
-            'apple' => array('apple', 'iphone', 'ipad', 'ios', 'macbook'),
-            'guides' => array('guide', 'how to', 'deal', 'best '),
-        );
-        foreach (get_categories(array('hide_empty' => false, 'number' => 80)) as $cat) {
-            $slug = strtolower($cat->slug);
-            $name = strtolower($cat->name);
-            if ($wanted !== '' && (strpos($name, strtolower($wanted)) !== false || strpos(strtolower($wanted), $name) !== false)) {
-                return (int) $cat->term_id;
-            }
-            foreach ($needles as $desk => $words) {
-                if ($slug !== $desk && $name !== $desk) {
+        $hay = ' ' . strtolower(trim($wanted . ' ' . ($rewrite['title'] ?? '') . ' ' . implode(' ', (array) ($rewrite['tags'] ?? array())))) . ' ';
+        $best = 0;
+        $best_hits = 0;
+        foreach (get_categories(array('hide_empty' => false, 'number' => 200)) as $cat) {
+            $slug = strtolower((string) $cat->slug);
+            $name = strtolower((string) $cat->name);
+            foreach ($this->home_desk_needles() as $desk => $words) {
+                if ($slug !== $desk && $name !== $desk && $slug !== str_replace('-', '', $desk)) {
                     continue;
                 }
+                $hits = 0;
                 foreach ($words as $word) {
                     if (strpos($hay, $word) !== false) {
-                        return (int) $cat->term_id;
+                        $hits++;
                     }
+                }
+                if ($hits > $best_hits) {
+                    $best_hits = $hits;
+                    $best = (int) $cat->term_id;
                 }
             }
         }
+        if ($best > 0) {
+            return $best;
+        }
+        if ($wanted === '') {
+            return 0;
+        }
+        $term = get_term_by('name', $wanted, 'category');
+        if (!$term) {
+            $term = get_term_by('slug', sanitize_title($wanted), 'category');
+        }
+        if ($term && !is_wp_error($term)) {
+            return (int) $term->term_id;
+        }
         return 0;
+    }
+
+    private function publishing_author_id() {
+        $users = get_users(array(
+            'role' => 'administrator',
+            'number' => 1,
+            'orderby' => 'ID',
+            'order' => 'ASC',
+            'fields' => 'ID',
+        ));
+        if (!empty($users[0])) {
+            return (int) $users[0];
+        }
+        return max(1, (int) get_current_user_id());
     }
 
     private function refresh_front_page($post_id) {
@@ -2171,9 +2281,7 @@ final class TechnoRapper_AI_Wire {
                 ));
             }
             $this->apply_seo_meta($existing_id, $rewrite);
-            $this->assign_home_categories($existing_id, $rewrite);
-            $this->maybe_set_featured_image($existing_id, $item, $rewrite);
-            $this->refresh_front_page($existing_id);
+            $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => null, 'rewrite_json' => wp_json_encode($rewrite)));
             return;
         }
@@ -2193,6 +2301,7 @@ final class TechnoRapper_AI_Wire {
         $post_id = wp_insert_post(array(
             'post_type' => 'post',
             'post_status' => $publish ? 'publish' : 'draft',
+            'post_author' => $this->publishing_author_id(),
             'post_title' => $title,
             'post_name' => $slug,
             'post_date' => $now,
@@ -2214,7 +2323,6 @@ final class TechnoRapper_AI_Wire {
             $this->update_item($id, array('status' => 'error', 'error_text' => $error));
             return;
         }
-        $this->assign_home_categories((int) $post_id, $rewrite);
         if (!empty($rewrite['tags']) && is_array($rewrite['tags'])) {
             $tags = array_slice(array_filter(array_map('sanitize_text_field', $rewrite['tags'])), 0, 10);
             if ($tags) {
@@ -2222,8 +2330,7 @@ final class TechnoRapper_AI_Wire {
             }
         }
         $this->apply_seo_meta((int) $post_id, $rewrite);
-        $this->maybe_set_featured_image((int) $post_id, $item, $rewrite);
-        $this->refresh_front_page((int) $post_id);
+        $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);
         $this->update_item($id, array(
             'status' => $this->queue_status_for_post((int) $post_id, $publish),
             'wp_post_id' => (int) $post_id,
@@ -2813,6 +2920,7 @@ final class TechnoRapper_AI_Wire {
             'deleted' => 'Queue item deleted. WordPress posts created from it were left in place.',
             'cleared' => 'Unfinished queue items were removed. Drafts, published posts, and WordPress posts were kept.',
             'cleaned' => 'The queue board is clean. WordPress posts were kept. The same feeds can be ingested again.',
+            'repaired' => 'Existing AI Wire posts were reassigned to homepage desks and given featured images so they can appear on the home board.',
         );
         if (isset($notices[$notice])) :
             ?><div class="notice notice-success is-dismissible"><p><?php echo esc_html($notices[$notice]); ?></p></div><?php
@@ -2838,6 +2946,11 @@ final class TechnoRapper_AI_Wire {
                 <input type="hidden" name="mode" value="all">
                 <?php wp_nonce_field('tr_ai_wire_clean_queue'); ?>
                 <?php submit_button('Clean board', 'delete', 'submit', false); ?>
+            </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <input type="hidden" name="action" value="tr_ai_wire_repair_home">
+                <?php wp_nonce_field('tr_ai_wire_repair_home'); ?>
+                <?php submit_button('Repair homepage posts', 'secondary', 'submit', false); ?>
             </form>
         </div>
         <?php $last_run = get_option(self::LAST_RUN_OPTION, array()); if (is_array($last_run) && !empty($last_run['at'])) : ?>
