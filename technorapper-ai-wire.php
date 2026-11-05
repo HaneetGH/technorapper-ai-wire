@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.6
+ * Version: 0.2.7
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,8 +15,9 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.6';
+    const VERSION = '0.2.7';
     const API_TIMEOUT = 75;
+    const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
     const OPTION = 'tr_ai_wire_settings';
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
@@ -42,6 +43,7 @@ final class TechnoRapper_AI_Wire {
         add_action('init', array($this, 'maybe_upgrade_schema'), 5);
         add_action('init', array($this, 'maybe_enable_auto_publish'), 6);
         add_action('init', array($this, 'maybe_enable_detailed_output'), 7);
+        add_action('init', array($this, 'maybe_enable_daily_volume'), 8);
         add_action('wp_head', array($this, 'print_article_schema'), 5);
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
@@ -58,6 +60,7 @@ final class TechnoRapper_AI_Wire {
         self::schedule_cron();
         self::enable_auto_publish_once();
         self::enable_detailed_output_once();
+        self::enable_daily_volume_once();
     }
 
     /**
@@ -225,6 +228,33 @@ final class TechnoRapper_AI_Wire {
         update_option('tr_ai_wire_detailed_output_on', '1', false);
     }
 
+    public function maybe_enable_daily_volume() {
+        self::enable_daily_volume_once();
+    }
+
+    public static function enable_daily_volume_once() {
+        if (get_option('tr_ai_wire_daily_350_on') === '1') {
+            return;
+        }
+        $opt = get_option(self::OPTION, array());
+        if (!is_array($opt)) {
+            $opt = array();
+        }
+        $changed = false;
+        if (absint($opt['max_posts_per_day'] ?? 0) < self::DAILY_POST_CAP) {
+            $opt['max_posts_per_day'] = self::DAILY_POST_CAP;
+            $changed = true;
+        }
+        if (absint($opt['max_items_per_run'] ?? 0) < self::DAILY_POST_CAP) {
+            $opt['max_items_per_run'] = self::DAILY_POST_CAP;
+            $changed = true;
+        }
+        if ($changed) {
+            update_option(self::OPTION, $opt, false);
+        }
+        update_option('tr_ai_wire_daily_350_on', '1', false);
+    }
+
     public function sanitize_settings($input) {
         $defaults = self::defaults();
         $out = array();
@@ -246,8 +276,8 @@ final class TechnoRapper_AI_Wire {
         $out['feeds'] = implode("\n", array_unique($clean_lines));
         $frequencies = array('hourly', 'every_3_hours', 'every_6_hours', 'every_12_hours', 'daily', 'manual');
         $out['cron_frequency'] = in_array($input['cron_frequency'] ?? '', $frequencies, true) ? $input['cron_frequency'] : $defaults['cron_frequency'];
-        $out['max_posts_per_day'] = min(500, max(0, absint($input['max_posts_per_day'] ?? $defaults['max_posts_per_day'])));
-        $out['max_items_per_run'] = min(100, max(1, absint($input['max_items_per_run'] ?? $defaults['max_items_per_run'])));
+        $out['max_posts_per_day'] = min(2000, max(0, absint($input['max_posts_per_day'] ?? $defaults['max_posts_per_day'])));
+        $out['max_items_per_run'] = min(self::DAILY_POST_CAP, max(1, absint($input['max_items_per_run'] ?? $defaults['max_items_per_run'])));
         $out['monthly_budget_usd'] = min(10000, max(0, (float) ($input['monthly_budget_usd'] ?? $defaults['monthly_budget_usd'])));
         $out['monthly_token_limit'] = min(1000000000, max(0, absint($input['monthly_token_limit'] ?? $defaults['monthly_token_limit'])));
         $out['max_output_tokens'] = min(8000, max(200, absint($input['max_output_tokens'] ?? $defaults['max_output_tokens'])));
@@ -358,9 +388,9 @@ final class TechnoRapper_AI_Wire {
                 <table class="form-table" role="presentation">
                     <tr><th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th><td><select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]"><?php foreach (array('hourly' => 'Every hour', 'every_3_hours' => 'Every 3 hours', 'every_6_hours' => 'Every 6 hours', 'every_12_hours' => 'Every 12 hours', 'daily' => 'Once per day', 'manual' => 'Manual only (disable scheduled runs)') as $frequency => $label) : ?><option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p></td></tr>
                     <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
-                    <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="500" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. Set to 0 to pause creation.</p></td></tr>
+                    <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="2000" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. 350 is the daily target. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row">Auto-publish</th><td><label><input id="tr-auto-publish" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]" value="1" <?php checked($s['auto_publish'], 1); ?>> <strong>Publish posts automatically</strong> — no draft and no Publish button. Passing items go live. Rejected items stay quarantined.</label></td></tr>
-                    <tr><th scope="row"><label for="tr-items-run">Maximum items per run</label></th><td><input id="tr-items-run" type="number" min="1" max="100" name="<?php echo esc_attr(self::OPTION); ?>[max_items_per_run]" value="<?php echo esc_attr($s['max_items_per_run']); ?>"> <p class="description">Caps total queued/retried items processed during each scheduled or manual run (1–100).</p></td></tr>
+                    <tr><th scope="row"><label for="tr-items-run">Maximum items per run</label></th><td><input id="tr-items-run" type="number" min="1" max="350" name="<?php echo esc_attr(self::OPTION); ?>[max_items_per_run]" value="<?php echo esc_attr($s['max_items_per_run']); ?>"> <p class="description">Caps queued items touched in one run (1–350). Long days continue on WP-Cron after the time budget.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"> <p class="description">Processing stops when tracked usage reaches the cap. Set to 0 to stop AI calls.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-tokens">Monthly token limit</label></th><td><input id="tr-monthly-tokens" type="number" min="0" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[monthly_token_limit]" value="<?php echo esc_attr($s['monthly_token_limit']); ?>"> <p class="description">Combined input + output tokens, based on API usage reports. Also stops at this cap.</p></td></tr>
                     <tr><th scope="row"><label for="tr-output-tokens">Maximum output tokens per AI pass</label></th><td><input id="tr-output-tokens" type="number" min="200" max="8000" step="100" name="<?php echo esc_attr(self::OPTION); ?>[max_output_tokens]" value="<?php echo esc_attr($s['max_output_tokens']); ?>"> <p class="description">Use 3500–4000 so the writer can return a detailed article, not a short brief.</p></td></tr>
@@ -677,7 +707,7 @@ final class TechnoRapper_AI_Wire {
         $started_at = microtime(true);
         $time_budget_seconds = $foreground ? 90 : 25;
         $new_ids = $this->ingest_new_feed_items($s, $summary);
-        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE (status IN ('new', 'waiting_budget', 'rewritten', 'reviewed', 'quarantined') AND wp_post_id IS NULL) OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id DESC LIMIT 100", current_time('mysql', true)));
+        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE (status IN ('new', 'waiting_budget', 'rewritten', 'reviewed', 'quarantined') AND wp_post_id IS NULL) OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id DESC LIMIT %d", current_time('mysql', true), max(1, $run_limit)));
         $ids = array_values(array_unique(array_merge($new_ids, array_map('intval', $waiting_ids))));
         foreach ($ids as $waiting_id) {
             if ((microtime(true) - $started_at) >= $time_budget_seconds) {
@@ -810,7 +840,7 @@ final class TechnoRapper_AI_Wire {
         }
         $parsed = $raw !== '' ? $this->parse_feed_xml($raw) : array();
         $entries = count($parsed) >= count($simplepie_entries) ? $parsed : $simplepie_entries;
-        return array_slice($entries, 0, 20);
+        return array_slice($entries, 0, 50);
     }
 
     private function parse_feed_xml($xml) {

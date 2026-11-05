@@ -443,6 +443,26 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(2500, (int) get_option(TechnoRapper_AI_Wire::OPTION)['max_output_tokens']);
     }
 
+    public function test_existing_installs_raise_daily_volume_to_350_once() {
+        delete_option('tr_ai_wire_daily_350_on');
+        update_option(TechnoRapper_AI_Wire::OPTION, array(
+            'max_posts_per_day' => 10,
+            'max_items_per_run' => 10,
+            'feeds' => 'https://example.com/feed.xml',
+        ), false);
+        TechnoRapper_AI_Wire::enable_daily_volume_once();
+        $saved = get_option(TechnoRapper_AI_Wire::OPTION);
+        $this->assertSame(350, (int) $saved['max_posts_per_day']);
+        $this->assertSame(350, (int) $saved['max_items_per_run']);
+        $saved['max_posts_per_day'] = 25;
+        $saved['max_items_per_run'] = 5;
+        update_option(TechnoRapper_AI_Wire::OPTION, $saved, false);
+        TechnoRapper_AI_Wire::enable_daily_volume_once();
+        $again = get_option(TechnoRapper_AI_Wire::OPTION);
+        $this->assertSame(25, (int) $again['max_posts_per_day']);
+        $this->assertSame(5, (int) $again['max_items_per_run']);
+    }
+
     public function test_revise_review_creates_a_draft_for_human_editing() {
         $id = $this->create_queue_item();
         global $wpdb;
