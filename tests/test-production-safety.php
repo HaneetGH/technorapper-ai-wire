@@ -59,7 +59,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $found = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
             $this->assertSame($table, $found, 'Missing plugin table: ' . $table);
         }
-        $this->assertSame('5', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('6', get_option('tr_ai_wire_schema_version'));
+        $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_items LIKE 'source_published_at'"));
     }
 
     public function test_draft_creation_recovers_existing_post_after_interrupted_queue_update() {
@@ -119,7 +120,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $row = $wpdb->get_row($wpdb->prepare("SELECT id, source_title FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame((string) $id, (string) $row['id']);
         $this->assertSame('Source title', $row['source_title']);
-        $this->assertSame('5', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('6', get_option('tr_ai_wire_schema_version'));
         $limits_table = $wpdb->prefix . 'tr_ai_wire_view_limits';
         $this->assertSame($limits_table, $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $limits_table)));
     }
@@ -269,7 +270,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         update_option('tr_ai_wire_schema_version', '4');
         $this->plugin->maybe_upgrade_schema();
-        $this->assertSame('5', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('6', get_option('tr_ai_wire_schema_version'));
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         wp_unschedule_event(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args), TechnoRapper_AI_Wire::CRON_HOOK, $args);
     }
@@ -406,6 +407,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $settings['max_posts_per_day']);
         $this->assertSame(1, $settings['auto_publish']);
         $this->assertSame(1, $settings['pin_to_homepage']);
+        $this->assertSame('post', $settings['map_post_type']);
+        $this->assertSame('category', $settings['map_taxonomy']);
+        $this->assertSame('auto', $settings['map_post_status']);
+        $this->assertSame('rewrite', $settings['map_title']);
+        $this->assertSame('now', $settings['map_date']);
+        $this->assertSame('rewrite', $settings['map_content']);
         $this->assertSame(4000, $settings['max_output_tokens']);
         $this->assertSame('', $settings['feeds']);
         $this->assertSame('', $this->invoke_private('api_key'));
@@ -741,6 +748,104 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertTrue(has_post_thumbnail($post_id));
         $this->assertTrue(is_sticky($post_id));
         $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);
+    }
+
+    public function test_map_content_uses_forced_terms_source_title_and_source_date() {
+        $guides = self::factory()->category->create_and_get(array(
+            'name' => 'Guides',
+            'slug' => 'guides',
+        ));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['map_terms'] = array((int) $guides->term_id);
+        $settings['map_auto_desk'] = 0;
+        $settings['map_title'] = 'source';
+        $settings['map_date'] = 'source';
+        $settings['map_content'] = 'source';
+        $settings['map_post_status'] = 'publish';
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-map',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_title' => 'Feed item title',
+            'source_body' => 'Plain source body from the feed.',
+            'source_published_at' => '2026-01-15 09:30:00',
+        ), array(
+            'title' => 'Rewritten AI headline',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'category' => 'News',
+            'tags' => array('Android'),
+        ), array('verdict' => 'pass'), $settings));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assertSame('Feed item title', $posts[0]->post_title);
+        $this->assertStringContainsString('Plain source body from the feed.', $posts[0]->post_content);
+        $this->assertStringNotContainsString('Grounded article body', $posts[0]->post_content);
+        $this->assertSame('2026-01-15 09:30:00', $posts[0]->post_date);
+        $this->assertContains((int) $guides->term_id, wp_get_post_categories((int) $posts[0]->ID));
+        $this->assertNotContains('android', wp_get_post_categories((int) $posts[0]->ID, array('fields' => 'slugs')));
+    }
+
+    public function test_map_content_can_force_draft_status() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['auto_publish'] = 1;
+        $settings['map_post_status'] = 'draft';
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-map-draft',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        ), array(
+            'title' => 'Mapped draft article',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        ), array('verdict' => 'pass'), $settings));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'draft',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assertSame('draft', get_post_status($posts[0]));
+    }
+
+    public function test_sanitize_keeps_map_content_fields() {
+        $android = self::factory()->category->create_and_get(array(
+            'name' => 'Android',
+            'slug' => 'android',
+        ));
+        $clean = $this->plugin->sanitize_settings(array(
+            'feeds' => '',
+            'map_post_type' => 'page',
+            'map_taxonomy' => 'category',
+            'map_terms' => array((int) $android->term_id, 'nope'),
+            'map_auto_desk' => 1,
+            'map_post_status' => 'pending',
+            'map_title' => 'source',
+            'map_date' => 'source',
+            'map_content' => 'source',
+        ));
+        $this->assertSame('page', $clean['map_post_type']);
+        $this->assertSame('category', $clean['map_taxonomy']);
+        $this->assertSame(array((int) $android->term_id), $clean['map_terms']);
+        $this->assertSame(1, $clean['map_auto_desk']);
+        $this->assertSame('pending', $clean['map_post_status']);
+        $this->assertSame('source', $clean['map_title']);
+        $this->assertSame('source', $clean['map_date']);
+        $this->assertSame('source', $clean['map_content']);
     }
 
     public function test_writer_and_reviewer_prompts_include_google_ranking_steps() {

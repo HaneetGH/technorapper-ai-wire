@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.14
+ * Version: 0.2.15
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.14';
+    const VERSION = '0.2.15';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -27,7 +27,7 @@ final class TechnoRapper_AI_Wire {
     const SEARCH_CALL_USD = 0.01;
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
     const PROCESSING_LOCK_TTL = 2700;
-    const SCHEMA_VERSION = '5';
+    const SCHEMA_VERSION = '6';
     const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
 
     private $table;
@@ -87,6 +87,7 @@ final class TechnoRapper_AI_Wire {
             source_url text NOT NULL,
             source_title text NOT NULL,
             source_body longtext NOT NULL,
+            source_published_at datetime NULL,
             rewrite_json longtext NULL,
             review_json longtext NULL,
             status varchar(24) NOT NULL DEFAULT 'new',
@@ -156,6 +157,14 @@ final class TechnoRapper_AI_Wire {
             'seo_require_keyphrase' => 1,
             'seo_require_social' => 1,
             'pin_to_homepage' => 1,
+            'map_post_type' => 'post',
+            'map_taxonomy' => 'category',
+            'map_terms' => array(),
+            'map_auto_desk' => 1,
+            'map_post_status' => 'auto',
+            'map_title' => 'rewrite',
+            'map_date' => 'now',
+            'map_content' => 'rewrite',
         );
     }
 
@@ -309,6 +318,26 @@ final class TechnoRapper_AI_Wire {
         $out['seo_require_keyphrase'] = empty($input['seo_require_keyphrase']) ? 0 : 1;
         $out['seo_require_social'] = empty($input['seo_require_social']) ? 0 : 1;
         $out['pin_to_homepage'] = empty($input['pin_to_homepage']) ? 0 : 1;
+        $types = $this->mappable_post_types();
+        $type = sanitize_key($input['map_post_type'] ?? $defaults['map_post_type']);
+        $out['map_post_type'] = isset($types[$type]) ? $type : $defaults['map_post_type'];
+        $taxes = $this->mappable_taxonomies();
+        $taxonomy = sanitize_key($input['map_taxonomy'] ?? $defaults['map_taxonomy']);
+        $out['map_taxonomy'] = isset($taxes[$taxonomy]) ? $taxonomy : $defaults['map_taxonomy'];
+        $terms = array();
+        foreach ((array) ($input['map_terms'] ?? array()) as $term_id) {
+            $term_id = absint($term_id);
+            if ($term_id > 0 && term_exists($term_id, $out['map_taxonomy'])) {
+                $terms[] = $term_id;
+            }
+        }
+        $out['map_terms'] = array_values(array_unique($terms));
+        $out['map_auto_desk'] = empty($input['map_auto_desk']) ? 0 : 1;
+        $statuses = array('auto', 'publish', 'draft', 'pending');
+        $out['map_post_status'] = in_array($input['map_post_status'] ?? '', $statuses, true) ? $input['map_post_status'] : $defaults['map_post_status'];
+        $out['map_title'] = (($input['map_title'] ?? '') === 'source') ? 'source' : 'rewrite';
+        $out['map_date'] = (($input['map_date'] ?? '') === 'source') ? 'source' : 'now';
+        $out['map_content'] = (($input['map_content'] ?? '') === 'source') ? 'source' : 'rewrite';
         return $out;
     }
 
@@ -398,6 +427,32 @@ final class TechnoRapper_AI_Wire {
                     <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="2000" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. 350 is the daily target. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row">Auto-publish</th><td><label><input id="tr-auto-publish" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]" value="1" <?php checked($s['auto_publish'], 1); ?>> <strong>Publish posts automatically</strong> — no draft and no Publish button. Passing items go live. Rejected items stay quarantined.</label></td></tr>
                     <tr><th scope="row">Homepage</th><td><label><input id="tr-pin-home" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[pin_to_homepage]" value="1" <?php checked(!empty($s['pin_to_homepage']), true); ?>> <strong>Pin new posts to the homepage</strong> — assign a real desk (Android, Apple, AI, Guides…) and a featured image, and mark the post sticky so the home board can show it. Writer “News” no longer wins over a better desk.</label></td></tr>
+                    <tr><th colspan="2"><h2 style="margin:12px 0 0;">3. Map content</h2><p class="description">Same mapping as feed-to-post plugins: choose the WordPress type, taxonomy, status, title, date, and body for each item.</p></th></tr>
+                    <tr><th scope="row"><label for="tr-map-post-type">Post type</label></th><td><select id="tr-map-post-type" name="<?php echo esc_attr(self::OPTION); ?>[map_post_type]"><?php foreach ($this->mappable_post_types() as $type => $label) : ?><option value="<?php echo esc_attr($type); ?>" <?php selected($s['map_post_type'], $type); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Home page boards only show the <code>post</code> type. Pages and other types stay off the home feed.</p></td></tr>
+                    <tr><th scope="row"><label for="tr-map-taxonomy">Post taxonomy</label></th><td><select id="tr-map-taxonomy" name="<?php echo esc_attr(self::OPTION); ?>[map_taxonomy]"><?php foreach ($this->mappable_taxonomies() as $tax => $label) : ?><option value="<?php echo esc_attr($tax); ?>" <?php selected($s['map_taxonomy'], $tax); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Pick Categories so desks like Android / Apple can appear on the home board.</p></td></tr>
+                    <tr><th scope="row">Terms</th><td>
+                        <div style="max-height:180px;overflow:auto;border:1px solid #c3c4c7;padding:8px 12px;background:#fff;max-width:420px;">
+                            <?php
+                            $map_terms = array_map('intval', (array) ($s['map_terms'] ?? array()));
+                            $term_list = get_terms(array('taxonomy' => $s['map_taxonomy'] ?: 'category', 'hide_empty' => false, 'number' => 200));
+                            if (is_wp_error($term_list) || empty($term_list)) :
+                                ?><p class="description">No terms found for this taxonomy yet.</p><?php
+                            else :
+                                foreach ($term_list as $term) :
+                                    ?>
+                                    <label style="display:block;margin:4px 0;"><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[map_terms][]" value="<?php echo esc_attr((string) $term->term_id); ?>" <?php checked(in_array((int) $term->term_id, $map_terms, true)); ?>> <?php echo esc_html($term->name); ?></label>
+                                    <?php
+                                endforeach;
+                            endif;
+                            ?>
+                        </div>
+                        <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[map_auto_desk]" value="1" <?php checked(!empty($s['map_auto_desk']), true); ?>> Also auto-match a desk from the title and tags (Android, Apple, AI…)</label></p>
+                        <p class="description">Checked terms are always assigned. Leave all unchecked to only auto-match.</p>
+                    </td></tr>
+                    <tr><th scope="row"><label for="tr-map-status">Post status</label></th><td><select id="tr-map-status" name="<?php echo esc_attr(self::OPTION); ?>[map_post_status]"><?php foreach (array('auto' => 'Auto (follow Auto-publish)', 'publish' => 'Published', 'draft' => 'Draft', 'pending' => 'Pending review') as $value => $label) : ?><option value="<?php echo esc_attr($value); ?>" <?php selected($s['map_post_status'], $value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></td></tr>
+                    <tr><th scope="row"><label for="tr-map-title">Post title</label></th><td><select id="tr-map-title" name="<?php echo esc_attr(self::OPTION); ?>[map_title]"><option value="rewrite" <?php selected($s['map_title'], 'rewrite'); ?>>Rewrite title (itemtitle after AI)</option><option value="source" <?php selected($s['map_title'], 'source'); ?>>Source title (itemtitle from the feed)</option></select><p class="description">This field is required. A post is not created without a title.</p></td></tr>
+                    <tr><th scope="row"><label for="tr-map-date">Post date</label></th><td><select id="tr-map-date" name="<?php echo esc_attr(self::OPTION); ?>[map_date]"><option value="now" <?php selected($s['map_date'], 'now'); ?>>Publish now</option><option value="source" <?php selected($s['map_date'], 'source'); ?>>Source date ({item_date})</option></select><p class="description">Leave as Publish now if the feed date is missing or you want the post at the top of the home board.</p></td></tr>
+                    <tr><th scope="row"><label for="tr-map-content">Content</label></th><td><select id="tr-map-content" name="<?php echo esc_attr(self::OPTION); ?>[map_content]"><option value="rewrite" <?php selected($s['map_content'], 'rewrite'); ?>>Rewrite article (itemcontent after AI)</option><option value="source" <?php selected($s['map_content'], 'source'); ?>>Source body (itemcontent from the feed)</option></select></td></tr>
                     <tr><th scope="row"><label for="tr-items-run">Maximum items per run</label></th><td><input id="tr-items-run" type="number" min="1" max="350" name="<?php echo esc_attr(self::OPTION); ?>[max_items_per_run]" value="<?php echo esc_attr($s['max_items_per_run']); ?>"> <p class="description">Caps queued items touched in one run (1–350). Long days continue on WP-Cron after the time budget.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"> <p class="description">Processing stops when tracked usage reaches the cap. Set to 0 to stop AI calls.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-tokens">Monthly token limit</label></th><td><input id="tr-monthly-tokens" type="number" min="0" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[monthly_token_limit]" value="<?php echo esc_attr($s['monthly_token_limit']); ?>"> <p class="description">Combined input + output tokens, based on API usage reports. Also stops at this cap.</p></td></tr>
@@ -653,9 +708,9 @@ final class TechnoRapper_AI_Wire {
             'ID' => $post_id,
             'post_author' => $this->publishing_author_id(),
         ));
-        $this->assign_home_categories($post_id, $rewrite);
+        $this->assign_home_categories($post_id, $rewrite, $s);
         $this->maybe_set_featured_image($post_id, is_array($item) ? $item : array(), $rewrite);
-        if (!empty($s['pin_to_homepage']) && get_post_status($post_id) === 'publish') {
+        if (!empty($s['pin_to_homepage']) && get_post_status($post_id) === 'publish' && get_post_type($post_id) === 'post') {
             stick_post($post_id);
         }
         $this->refresh_front_page($post_id);
@@ -971,7 +1026,7 @@ final class TechnoRapper_AI_Wire {
                     continue;
                 }
                 $assignment = $this->experiment_assignment($key, $s);
-                $id = $this->insert_item($key, $assignment['experiment_id'], $assignment['variant'], $feed_url, $feed_name, $guid, $url, $title, $body);
+                $id = $this->insert_item($key, $assignment['experiment_id'], $assignment['variant'], $feed_url, $feed_name, $guid, $url, $title, $body, $entry['published_at'] ?? '');
                 if ($id) {
                     $new_ids[] = (int) $id;
                     $summary['new_items']++;
@@ -1019,6 +1074,7 @@ final class TechnoRapper_AI_Wire {
                         'url' => $item->get_permalink(),
                         'guid' => $item->get_id(),
                         'body' => $item->get_content() ?: $item->get_description(),
+                        'published_at' => method_exists($item, 'get_date') ? (string) $item->get_date('Y-m-d H:i:s') : '',
                     );
                 }
             }
@@ -1091,11 +1147,22 @@ final class TechnoRapper_AI_Wire {
             if ($title === '' || $url === '') {
                 continue;
             }
+            $published = $this->xpath_text($xpath, './/*[local-name()="published"]', $node);
+            if ($published === '') {
+                $published = $this->xpath_text($xpath, './/*[local-name()="updated"]', $node);
+            }
+            if ($published === '') {
+                $published = $this->xpath_text($xpath, './/*[local-name()="pubDate"]', $node);
+            }
+            if ($published === '') {
+                $published = $this->xpath_text($xpath, './/*[local-name()="date"]', $node);
+            }
             $entries[] = array(
                 'title' => $title,
                 'url' => $url,
                 'guid' => $guid,
                 'body' => $body,
+                'published_at' => $published,
             );
         }
         return $entries;
@@ -1143,14 +1210,21 @@ final class TechnoRapper_AI_Wire {
         return array('experiment_id' => sanitize_key($settings['experiment_id'] ?? 'editorial-v1'), 'variant' => $variant);
     }
 
-    private function insert_item($key, $experiment_id, $variant, $feed, $name, $guid, $url, $title, $body) {
+    private function insert_item($key, $experiment_id, $variant, $feed, $name, $guid, $url, $title, $body, $published_at = '') {
         global $wpdb;
         $now = current_time('mysql', true);
-        $ok = $wpdb->insert($this->table, array(
+        $published = $this->normalize_source_date($published_at);
+        $row = array(
             'source_key' => $key, 'experiment_id' => $experiment_id, 'variant' => $variant, 'feed_url' => $feed, 'feed_name' => $name, 'source_guid' => $guid,
             'source_url' => $url, 'source_title' => $title, 'source_body' => $body,
             'status' => 'new', 'created_at' => $now, 'updated_at' => $now,
-        ), array('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s'));
+        );
+        $formats = array('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s');
+        if ($published !== '') {
+            $row['source_published_at'] = $published;
+            $formats[] = '%s';
+        }
+        $ok = $wpdb->insert($this->table, $row, $formats);
         return $ok ? (int) $wpdb->insert_id : 0;
     }
 
@@ -1572,23 +1646,136 @@ final class TechnoRapper_AI_Wire {
         );
     }
 
-    private function resolve_post_categories($rewrite) {
-        $ids = array();
-        $matched = $this->match_existing_category($rewrite);
-        if ($matched > 0) {
-            $ids[] = $matched;
+    private function mappable_post_types() {
+        $skip = array('attachment', 'revision', 'nav_menu_item', 'custom_css', 'customize_changeset', 'oembed_cache', 'user_request', 'wp_block', 'wp_template', 'wp_template_part', 'wp_navigation', 'wp_global_styles', 'wp_font_family', 'wp_font_face');
+        $out = array();
+        foreach (get_post_types(array('show_ui' => true), 'objects') as $name => $obj) {
+            if (in_array($name, $skip, true)) {
+                continue;
+            }
+            $out[$name] = $obj->labels->singular_name ? $obj->labels->singular_name : $name;
         }
-        $default = (int) get_option('default_category');
-        if ($default > 0 && term_exists($default, 'category') && !in_array($default, $ids, true)) {
-            $ids[] = $default;
+        if (!isset($out['post'])) {
+            $out = array('post' => 'Post') + $out;
+        }
+        return $out;
+    }
+
+    private function mappable_taxonomies() {
+        $out = array();
+        foreach (get_taxonomies(array('show_ui' => true), 'objects') as $name => $obj) {
+            $out[$name] = !empty($obj->labels->name) ? $obj->labels->name : $name;
+        }
+        if (!isset($out['category'])) {
+            $out = array('category' => 'Categories') + $out;
+        }
+        return $out;
+    }
+
+    private function mapped_post_type($s) {
+        $types = $this->mappable_post_types();
+        $type = sanitize_key($s['map_post_type'] ?? 'post');
+        return isset($types[$type]) ? $type : 'post';
+    }
+
+    private function mapped_taxonomy($s) {
+        $taxes = $this->mappable_taxonomies();
+        $taxonomy = sanitize_key($s['map_taxonomy'] ?? 'category');
+        return isset($taxes[$taxonomy]) ? $taxonomy : 'category';
+    }
+
+    private function mapped_post_status($s) {
+        $wanted = $s['map_post_status'] ?? 'auto';
+        if (in_array($wanted, array('publish', 'draft', 'pending'), true)) {
+            return $wanted;
+        }
+        return !empty($s['auto_publish']) ? 'publish' : 'draft';
+    }
+
+    private function mapped_title($rewrite, $item, $s) {
+        if (($s['map_title'] ?? 'rewrite') === 'source') {
+            $title = sanitize_text_field($item['source_title'] ?? '');
+            if ($title !== '') {
+                return $title;
+            }
+        }
+        return sanitize_text_field($rewrite['title'] ?? '');
+    }
+
+    private function mapped_post_date($item, $s) {
+        if (($s['map_date'] ?? 'now') === 'source') {
+            $raw = $item['source_published_at'] ?? '';
+            $mysql = $this->normalize_source_date($raw);
+            if ($mysql) {
+                return $mysql;
+            }
+        }
+        return current_time('mysql');
+    }
+
+    private function normalize_source_date($value) {
+        $value = trim((string) $value);
+        if ($value === '' || $value === '0000-00-00 00:00:00') {
+            return '';
+        }
+        $ts = strtotime($value);
+        if (!$ts) {
+            return '';
+        }
+        return wp_date('Y-m-d H:i:s', $ts);
+    }
+
+    private function mapped_content($rewrite, $item, $s) {
+        if (($s['map_content'] ?? 'rewrite') === 'source') {
+            $body = trim((string) ($item['source_body'] ?? ''));
+            if ($body !== '') {
+                return wpautop(esc_html($body));
+            }
+        }
+        $lede = sanitize_text_field($rewrite['lede'] ?? '');
+        $body = wp_kses_post($rewrite['body_html'] ?? '');
+        $content = '<p class="tr-ai-wire-byline"><em>By TechnoRapper editorial desk. This is an attributed analysis of the linked source, not original reporting or an independent test.</em></p>';
+        $content .= ($lede ? '<p><strong>' . esc_html($lede) . '</strong></p>' : '') . $body;
+        $content .= '<p class="tr-ai-wire-source"><strong>Source:</strong> <a href="' . esc_url($item['source_url'] ?? '') . '" rel="nofollow noopener" target="_blank">' . esc_html($item['feed_name'] ?? 'Source') . '</a></p>';
+        $content .= '<p class="tr-ai-wire-method">How we used the source: facts, quotes, and numbers below come only from that link. We added structure, search intent, and reader context. We did not independently verify the reporting.</p>';
+        return $content;
+    }
+
+    private function resolve_post_categories($rewrite, $s = null) {
+        return $this->resolve_mapped_term_ids($rewrite, $s);
+    }
+
+    private function resolve_mapped_term_ids($rewrite, $s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $taxonomy = $this->mapped_taxonomy($s);
+        $ids = array();
+        foreach ((array) ($s['map_terms'] ?? array()) as $term_id) {
+            $term_id = absint($term_id);
+            if ($term_id > 0 && term_exists($term_id, $taxonomy) && !in_array($term_id, $ids, true)) {
+                $ids[] = $term_id;
+            }
+        }
+        if (!empty($s['map_auto_desk']) && $taxonomy === 'category') {
+            $matched = $this->match_existing_category($rewrite);
+            if ($matched > 0 && !in_array($matched, $ids, true)) {
+                $ids[] = $matched;
+            }
+        }
+        if ($taxonomy === 'category') {
+            $default = (int) get_option('default_category');
+            if ($default > 0 && term_exists($default, 'category') && !in_array($default, $ids, true)) {
+                $ids[] = $default;
+            }
         }
         return $ids;
     }
 
-    private function assign_home_categories($post_id, $rewrite) {
-        $ids = $this->resolve_post_categories($rewrite);
-        if ($ids) {
-            wp_set_post_categories((int) $post_id, $ids, false);
+    private function assign_home_categories($post_id, $rewrite, $s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $ids = $this->resolve_mapped_term_ids($rewrite, $s);
+        $taxonomy = $this->mapped_taxonomy($s);
+        if ($ids && taxonomy_exists($taxonomy)) {
+            wp_set_object_terms((int) $post_id, $ids, $taxonomy, false);
         }
     }
 
@@ -2260,10 +2447,11 @@ final class TechnoRapper_AI_Wire {
 
     private function create_draft($id, $item, $rewrite, $review, $s = null) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
-        $publish = !empty($s['auto_publish']);
+        $status = $this->mapped_post_status($s);
+        $publish = ($status === 'publish');
         // Recover a post created just before a worker crash; never duplicate it.
         $existing_posts = get_posts(array(
-            'post_type' => 'post',
+            'post_type' => 'any',
             'post_status' => array('draft', 'pending', 'publish', 'private', 'future'),
             'posts_per_page' => 1,
             'fields' => 'ids',
@@ -2285,28 +2473,28 @@ final class TechnoRapper_AI_Wire {
             $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => null, 'rewrite_json' => wp_json_encode($rewrite)));
             return;
         }
-        $title = sanitize_text_field($rewrite['title'] ?? '');
+        $title = $this->mapped_title($rewrite, $item, $s);
         $lede = sanitize_text_field($rewrite['lede'] ?? '');
         $body = wp_kses_post($rewrite['body_html'] ?? '');
-        if (!$title || !$body) {
+        if (!$title || ($body === '' && ($s['map_content'] ?? 'rewrite') === 'rewrite')) {
             $this->update_item($id, array('status' => 'quarantined', 'error_text' => 'Rewrite did not include a title and body.'));
             return;
         }
-        $content = '<p class="tr-ai-wire-byline"><em>By TechnoRapper editorial desk. This is an attributed analysis of the linked source, not original reporting or an independent test.</em></p>';
-        $content .= ($lede ? '<p><strong>' . esc_html($lede) . '</strong></p>' : '') . $body;
-        $content .= '<p class="tr-ai-wire-source"><strong>Source:</strong> <a href="' . esc_url($item['source_url']) . '" rel="nofollow noopener" target="_blank">' . esc_html($item['feed_name']) . '</a></p>';
-        $content .= '<p class="tr-ai-wire-method">How we used the source: facts, quotes, and numbers below come only from that link. We added structure, search intent, and reader context. We did not independently verify the reporting.</p>';
+        if ($body === '' && ($s['map_content'] ?? 'rewrite') === 'source' && trim((string) ($item['source_body'] ?? '')) === '') {
+            $this->update_item($id, array('status' => 'quarantined', 'error_text' => 'Rewrite did not include a title and body.'));
+            return;
+        }
+        $content = $this->mapped_content($rewrite, $item, $s);
         $slug = $this->seo_slug($rewrite);
-        $now = current_time('mysql');
-        $post_id = wp_insert_post(array(
-            'post_type' => 'post',
-            'post_status' => $publish ? 'publish' : 'draft',
+        $now = $this->mapped_post_date($item, $s);
+        $insert = array(
+            'post_type' => $this->mapped_post_type($s),
+            'post_status' => $status,
             'post_author' => $this->publishing_author_id(),
             'post_title' => $title,
             'post_name' => $slug,
             'post_date' => $now,
             'post_date_gmt' => get_gmt_from_date($now),
-            'post_category' => $this->resolve_post_categories($rewrite),
             'post_content' => $content,
             'post_excerpt' => $lede,
             'meta_input' => array(
@@ -2317,7 +2505,11 @@ final class TechnoRapper_AI_Wire {
                 '_tr_ai_wire_queue_id' => (int) $id,
                 '_tr_ai_wire_review' => wp_json_encode($review),
             ),
-        ), true);
+        );
+        if ($this->mapped_taxonomy($s) === 'category') {
+            $insert['post_category'] = $this->resolve_mapped_term_ids($rewrite, $s);
+        }
+        $post_id = wp_insert_post($insert, true);
         if (is_wp_error($post_id) || !$post_id) {
             $error = is_wp_error($post_id) ? $post_id->get_error_message() : 'WordPress did not return a post ID.';
             $this->update_item($id, array('status' => 'error', 'error_text' => $error));
