@@ -877,4 +877,63 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $old = $wpdb->get_row($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $old_id), ARRAY_A);
         $this->assertSame('quarantined', $old['status']);
     }
+
+    public function test_atom_feed_queues_every_entry_not_just_the_first() {
+        $atom = '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Example Atom</title>'
+            . '<entry><title>First Atom story</title><link rel="alternate" href="https://example.com/atom-1"/><id>tag:example.com,2026:1</id><summary>First body with enough source text for the plugin to accept.</summary></entry>'
+            . '<entry><title>Second Atom story</title><link rel="alternate" href="https://example.com/atom-2"/><id>tag:example.com,2026:2</id><summary>Second body with enough source text for the plugin to accept.</summary></entry>'
+            . '<entry><title>Third Atom story</title><link rel="alternate" href="https://example.com/atom-3"/><id>tag:example.com,2026:3</id><summary>Third body with enough source text for the plugin to accept.</summary></entry>'
+            . '</feed>';
+        $parsed = $this->invoke_private('parse_feed_xml', array($atom));
+        $this->assertCount(3, $parsed);
+        $this->assertSame('https://example.com/atom-1', $parsed[0]['url']);
+        $this->assertSame('https://example.com/atom-2', $parsed[1]['url']);
+        $this->assertSame('https://example.com/atom-3', $parsed[2]['url']);
+
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['feeds'] = 'https://example.com/atom-feed.xml | Example Atom';
+        $settings['max_posts_per_day'] = 5;
+        $settings['max_items_per_run'] = 1;
+        $settings['monthly_budget_usd'] = 50;
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $callback = function ($preempt, $args, $url) use ($atom) {
+            if (strpos($url, 'example.com/atom-feed.xml') !== false) {
+                return array(
+                    'headers' => array('content-type' => 'application/atom+xml'),
+                    'body' => $atom,
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            if (strpos($url, 'api.openai.com/v1/responses') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => wp_json_encode(array(
+                        'output' => array(array(
+                            'type' => 'message',
+                            'content' => array(array('type' => 'output_text', 'text' => wp_json_encode(array(
+                                'title' => 'A useful technology update',
+                                'lede' => 'A concise summary.',
+                                'body_html' => '<p>Grounded article body.</p>',
+                            )))),
+                        )),
+                        'usage' => array('input_tokens' => 20, 'output_tokens' => 30),
+                    )),
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return $preempt;
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $summary = $this->plugin->process_feeds(array('foreground' => true, 'reason' => 'manual'));
+        remove_filter('pre_http_request', $callback, 10);
+        $this->assertSame(3, (int) $summary['new_items']);
+        global $wpdb;
+        $urls = $wpdb->get_col("SELECT source_url FROM {$wpdb->prefix}tr_ai_wire_items WHERE source_url LIKE 'https://example.com/atom-%' ORDER BY source_url ASC");
+        $this->assertSame(array('https://example.com/atom-1', 'https://example.com/atom-2', 'https://example.com/atom-3'), $urls);
+    }
 }

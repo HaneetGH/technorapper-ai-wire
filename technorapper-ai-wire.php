@@ -676,26 +676,22 @@ final class TechnoRapper_AI_Wire {
             }
             $summary['feeds_checked']++;
             $feed_name = isset($parts[1]) && $parts[1] !== '' ? sanitize_text_field($parts[1]) : wp_parse_url($feed_url, PHP_URL_HOST);
-            $feed = fetch_feed($feed_url);
-            if (is_wp_error($feed)) {
-                $summary['feed_errors'][] = $feed_name . ': ' . $feed->get_error_message();
-                continue;
-            }
-            foreach ($feed->get_items(0, 10) as $item) {
-                $url = esc_url_raw($item->get_permalink(), array('http', 'https'));
+            $entries = $this->read_feed_entries($feed_url, $summary, $feed_name);
+            foreach ($entries as $entry) {
+                $url = esc_url_raw($entry['url'] ?? '', array('http', 'https'));
                 if (!$url || !wp_http_validate_url($url)) {
                     continue;
                 }
-                $title = sanitize_text_field($item->get_title());
-                $body = wp_strip_all_tags($item->get_content() ?: $item->get_description(), true);
+                $title = sanitize_text_field($entry['title'] ?? '');
+                $body = wp_strip_all_tags((string) ($entry['body'] ?? ''), true);
                 $body = trim(html_entity_decode($body, ENT_QUOTES | ENT_HTML5, get_bloginfo('charset') ?: 'UTF-8'));
                 $body = function_exists('mb_substr') ? mb_substr($body, 0, (int) $s['max_source_chars']) : substr($body, 0, (int) $s['max_source_chars']);
                 if ($body === '' || $title === '') {
                     continue;
                 }
-                $guid = sanitize_text_field($item->get_id() ?: $url);
-                $key = hash('sha256', $feed_url . '|' . $guid . '|' . $url);
-                if ($this->has_item($key)) {
+                $guid = sanitize_text_field(($entry['guid'] ?? '') !== '' ? $entry['guid'] : $url);
+                $key = hash('sha256', $feed_url . '|' . $url);
+                if ($this->has_item($key) || $this->has_source_url($url)) {
                     continue;
                 }
                 $assignment = $this->experiment_assignment($key, $s);
@@ -723,7 +719,141 @@ final class TechnoRapper_AI_Wire {
         if (is_object($feed) && method_exists($feed, 'set_useragent')) {
             $feed->set_useragent($this->feed_user_agent());
         }
+        if (is_object($feed) && method_exists($feed, 'force_feed')) {
+            $feed->force_feed(true);
+        }
         return $feed;
+    }
+
+    private function read_feed_entries($feed_url, &$summary, $feed_name) {
+        $feed = fetch_feed($feed_url);
+        $raw = '';
+        $simplepie_entries = array();
+        if (!is_wp_error($feed)) {
+            if (method_exists($feed, 'get_raw_data')) {
+                $raw = (string) $feed->get_raw_data();
+            }
+            if (method_exists($feed, 'get_items')) {
+                foreach ((array) $feed->get_items() as $item) {
+                    if (!is_object($item)) {
+                        continue;
+                    }
+                    $simplepie_entries[] = array(
+                        'title' => $item->get_title(),
+                        'url' => $item->get_permalink(),
+                        'guid' => $item->get_id(),
+                        'body' => $item->get_content() ?: $item->get_description(),
+                    );
+                }
+            }
+        } else {
+            $summary['feed_errors'][] = $feed_name . ': ' . $feed->get_error_message();
+        }
+        if ($raw === '') {
+            $response = wp_remote_get($feed_url, array(
+                'timeout' => 20,
+                'redirection' => 3,
+                'user-agent' => $this->feed_user_agent(),
+            ));
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) >= 200 && wp_remote_retrieve_response_code($response) < 300) {
+                $raw = (string) wp_remote_retrieve_body($response);
+            } elseif (empty($simplepie_entries) && is_wp_error($response)) {
+                $summary['feed_errors'][] = $feed_name . ': ' . $response->get_error_message();
+            }
+        }
+        $parsed = $raw !== '' ? $this->parse_feed_xml($raw) : array();
+        $entries = count($parsed) >= count($simplepie_entries) ? $parsed : $simplepie_entries;
+        return array_slice($entries, 0, 20);
+    }
+
+    private function parse_feed_xml($xml) {
+        $xml = trim((string) $xml);
+        if ($xml === '' || strpos($xml, '<') === false) {
+            return array();
+        }
+        $previous = libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        $loaded = $dom->loadXML($xml, LIBXML_NONET | LIBXML_NOCDATA);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+        if (!$loaded) {
+            return array();
+        }
+        $xpath = new DOMXPath($dom);
+        $xpath->registerNamespace('atom', 'http://www.w3.org/2005/Atom');
+        $nodes = $xpath->query('//atom:entry');
+        if (!$nodes || $nodes->length === 0) {
+            $nodes = $xpath->query('//*[local-name()="entry"]');
+        }
+        if (!$nodes || $nodes->length === 0) {
+            $nodes = $xpath->query('//item');
+        }
+        $entries = array();
+        if (!$nodes) {
+            return $entries;
+        }
+        foreach ($nodes as $node) {
+            $title = $this->xpath_text($xpath, './/*[local-name()="title"]', $node);
+            $url = $this->atom_entry_link($xpath, $node);
+            if ($url === '') {
+                $url = $this->xpath_text($xpath, './/*[local-name()="link"]', $node);
+            }
+            $guid = $this->xpath_text($xpath, './/*[local-name()="id"]', $node);
+            if ($guid === '') {
+                $guid = $this->xpath_text($xpath, './/*[local-name()="guid"]', $node);
+            }
+            $body = $this->xpath_text($xpath, './/*[local-name()="encoded"]', $node);
+            if ($body === '') {
+                $body = $this->xpath_text($xpath, './/*[local-name()="content"]', $node);
+            }
+            if ($body === '') {
+                $body = $this->xpath_text($xpath, './/*[local-name()="summary"]', $node);
+            }
+            if ($body === '') {
+                $body = $this->xpath_text($xpath, './/*[local-name()="description"]', $node);
+            }
+            if ($title === '' || $url === '') {
+                continue;
+            }
+            $entries[] = array(
+                'title' => $title,
+                'url' => $url,
+                'guid' => $guid,
+                'body' => $body,
+            );
+        }
+        return $entries;
+    }
+
+    private function atom_entry_link($xpath, $node) {
+        $queries = array(
+            './/*[local-name()="link"][@rel="alternate"]/@href',
+            './/*[local-name()="link"][not(@rel)]/@href',
+            './/*[local-name()="link"]/@href',
+        );
+        foreach ($queries as $query) {
+            $found = $xpath->query($query, $node);
+            if ($found && $found->length) {
+                $href = trim((string) $found->item(0)->nodeValue);
+                if ($href !== '') {
+                    return $href;
+                }
+            }
+        }
+        return '';
+    }
+
+    private function xpath_text($xpath, $query, $node) {
+        $found = $xpath->query($query, $node);
+        if (!$found || !$found->length) {
+            return '';
+        }
+        return trim((string) $found->item(0)->textContent);
+    }
+
+    private function has_source_url($url) {
+        global $wpdb;
+        return (bool) $wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->table} WHERE source_url = %s", $url));
     }
 
     private function has_item($key) {
