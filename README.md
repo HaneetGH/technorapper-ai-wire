@@ -195,7 +195,7 @@ The API-key section has its own save action so the secret is not included in the
 ## Known limitations and operational caveats
 
 - The reviewer is an AI quality gate, not a fact-checking guarantee. Web corroboration can help but cannot certify accuracy.
-- The plugin does not import source images or migrate existing Feedzy jobs/posts. Auto-publish can be turned off.
+- Featured images use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`). The plugin does not copy that file into the WordPress media library. Items with no image URL are skipped. Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
 - WP-Cron is traffic-triggered unless backed by a host system cron.
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.

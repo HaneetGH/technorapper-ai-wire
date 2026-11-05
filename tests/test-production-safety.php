@@ -14,21 +14,6 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
         delete_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         unset($_SERVER['REMOTE_ADDR']);
-        add_filter('pre_http_request', array($this, 'stub_source_image_http'), 20, 3);
-    }
-
-    public function stub_source_image_http($preempt, $args, $url) {
-        if (strpos((string) $url, 'cdn.example.com/photo') === false) {
-            return $preempt;
-        }
-        $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
-        return array(
-            'headers' => array('content-type' => 'image/png'),
-            'body' => $png,
-            'response' => array('code' => 200, 'message' => 'OK'),
-            'cookies' => array(),
-            'filename' => null,
-        );
     }
 
     public function tear_down() {
@@ -752,6 +737,15 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains((int) get_option('default_category'), $cats);
         $this->assertContains((int) $android->term_id, $cats);
         $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
+        $this->assertSame('https://cdn.example.com/photo.jpg', get_post_meta((int) $posts[0]->ID, '_tr_ai_wire_source_image', true));
+        $this->assertLessThan(0, (int) get_post_thumbnail_id((int) $posts[0]->ID));
+        $this->assertStringContainsString('https://cdn.example.com/photo.jpg', get_the_post_thumbnail((int) $posts[0]->ID));
+        $this->assertSame('https://cdn.example.com/photo.jpg', get_the_post_thumbnail_url((int) $posts[0]->ID));
+        $this->assertCount(0, get_children(array(
+            'post_parent' => (int) $posts[0]->ID,
+            'post_type' => 'attachment',
+            'numberposts' => 5,
+        )));
         $this->assertTrue(is_sticky((int) $posts[0]->ID));
         $this->assertSame('1', get_post_meta((int) $posts[0]->ID, '_tr_ai_wire_show_on_home', true));
         $this->assertGreaterThan(0, (int) $posts[0]->post_author);
@@ -783,6 +777,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1, $this->plugin->repair_home_posts(20));
         $this->assertContains((int) $apple->term_id, wp_get_post_categories($post_id));
         $this->assertTrue(has_post_thumbnail($post_id));
+        $this->assertSame('https://cdn.example.com/photo.jpg', get_post_meta($post_id, '_tr_ai_wire_source_image', true));
+        $this->assertLessThan(0, (int) get_post_thumbnail_id($post_id));
         $this->assertTrue(is_sticky($post_id));
         $this->assertSame('1', get_post_meta($post_id, '_tr_ai_wire_show_on_home', true));
         $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);

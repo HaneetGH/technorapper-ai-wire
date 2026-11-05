@@ -57,5 +57,11 @@ final class TechnoRapper_AI_Wire {
         add_action('admin_post_tr_ai_wire_clean_queue', array($this, 'clean_queue_request'));
         add_action('admin_post_tr_ai_wire_repair_home', array($this, 'repair_home_request'));
         add_action('pre_get_posts', array($this, 'exclude_from_homepage'));
+        add_filter('get_post_metadata', array($this, 'filter_thumbnail_id_meta'), 10, 4);
+        add_filter('has_post_thumbnail', array($this, 'filter_has_post_thumbnail'), 10, 3);
+        add_filter('post_thumbnail_html', array($this, 'filter_post_thumbnail_html'), 10, 5);
+        add_filter('post_thumbnail_url', array($this, 'filter_post_thumbnail_url'), 10, 3);
+        add_filter('image_downsize', array($this, 'filter_image_downsize'), 10, 3);
+        add_filter('wp_get_attachment_url', array($this, 'filter_attachment_url'), 10, 2);
     }
 }
