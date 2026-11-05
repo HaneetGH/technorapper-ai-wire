@@ -40,6 +40,7 @@ final class TechnoRapper_AI_Wire {
         add_action('update_option_' . self::OPTION, array($this, 'settings_updated'), 10, 2);
         add_action('admin_post_tr_ai_wire_save_api_key', array($this, 'save_api_key'));
         add_action('init', array($this, 'maybe_upgrade_schema'), 5);
+        add_action('init', array($this, 'maybe_enable_auto_publish'), 6);
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
@@ -53,6 +54,7 @@ final class TechnoRapper_AI_Wire {
             add_option(self::OPTION, self::defaults());
         }
         self::schedule_cron();
+        self::enable_auto_publish_once();
     }
 
     /**
@@ -138,7 +140,7 @@ final class TechnoRapper_AI_Wire {
             'draft_max_similarity' => 'high',
             'draft_block_policy_flags' => 1,
             'draft_block_fact_flags' => 0,
-            'auto_publish' => 0,
+            'auto_publish' => 1,
             'seo_min_score' => 50,
             'seo_max_readability_errors' => 3,
             'seo_require_keyphrase' => 1,
@@ -182,6 +184,23 @@ final class TechnoRapper_AI_Wire {
         if (get_option('tr_ai_wire_schema_version') !== self::SCHEMA_VERSION) {
             self::ensure_schema();
         }
+    }
+
+    public function maybe_enable_auto_publish() {
+        self::enable_auto_publish_once();
+    }
+
+    public static function enable_auto_publish_once() {
+        if (get_option('tr_ai_wire_auto_publish_on') === '1') {
+            return;
+        }
+        $opt = get_option(self::OPTION, array());
+        if (!is_array($opt)) {
+            $opt = array();
+        }
+        $opt['auto_publish'] = 1;
+        update_option(self::OPTION, $opt, false);
+        update_option('tr_ai_wire_auto_publish_on', '1', false);
     }
 
     public function sanitize_settings($input) {
@@ -290,7 +309,7 @@ final class TechnoRapper_AI_Wire {
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
-            <p>Feed items are rewritten and reviewed, then saved as WordPress drafts or published immediately when they pass the review and SEO gates. Auto-publish is off until you turn it on.</p>
+            <p>Feed items are rewritten, reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead.</p>
             <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
                 <h2>1. OpenAI API connection</h2>
                 <?php if ($key_ready) : ?>
@@ -318,6 +337,7 @@ final class TechnoRapper_AI_Wire {
                     <tr><th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th><td><select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]"><?php foreach (array('hourly' => 'Every hour', 'every_3_hours' => 'Every 3 hours', 'every_6_hours' => 'Every 6 hours', 'every_12_hours' => 'Every 12 hours', 'daily' => 'Once per day', 'manual' => 'Manual only (disable scheduled runs)') as $frequency => $label) : ?><option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p></td></tr>
                     <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
                     <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="500" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. Set to 0 to pause creation.</p></td></tr>
+                    <tr><th scope="row">Auto-publish</th><td><label><input id="tr-auto-publish" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]" value="1" <?php checked($s['auto_publish'], 1); ?>> <strong>Publish posts automatically</strong> — no draft and no Publish button. Passing items go live. Rejected items stay quarantined.</label></td></tr>
                     <tr><th scope="row"><label for="tr-items-run">Maximum items per run</label></th><td><input id="tr-items-run" type="number" min="1" max="100" name="<?php echo esc_attr(self::OPTION); ?>[max_items_per_run]" value="<?php echo esc_attr($s['max_items_per_run']); ?>"> <p class="description">Caps total queued/retried items processed during each scheduled or manual run (1–100).</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-budget">Monthly API budget (USD)</label></th><td><input id="tr-monthly-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[monthly_budget_usd]" value="<?php echo esc_attr($s['monthly_budget_usd']); ?>"> <p class="description">Processing stops when tracked usage reaches the cap. Set to 0 to stop AI calls.</p></td></tr>
                     <tr><th scope="row"><label for="tr-monthly-tokens">Monthly token limit</label></th><td><input id="tr-monthly-tokens" type="number" min="0" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[monthly_token_limit]" value="<?php echo esc_attr($s['monthly_token_limit']); ?>"> <p class="description">Combined input + output tokens, based on API usage reports. Also stops at this cap.</p></td></tr>
@@ -335,8 +355,7 @@ final class TechnoRapper_AI_Wire {
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_new]" value="1" <?php checked($s['draft_require_new'], 1); ?>> Require original writing vs the source</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_policy_flags]" value="1" <?php checked($s['draft_block_policy_flags'], 1); ?>> Block if policy flags are present</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_fact_flags]" value="1" <?php checked($s['draft_block_fact_flags'], 1); ?>> Block if fact flags are present</label></p>
-                        <p><label for="tr-auto-publish"><strong>After review</strong></label> <select id="tr-auto-publish" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]"><option value="0" <?php selected($s['auto_publish'], 0); ?>>Save as draft</option><option value="1" <?php selected($s['auto_publish'], 1); ?>>Publish immediately (no draft)</option></select></p>
-                        <p class="description">Reject always stays quarantined. Review and SEO gates still apply. “Publish immediately” puts the post live with no draft step. After changing rules, run the queue again to re-check existing quarantined items.</p>
+                        <p class="description">Reject always stays quarantined. Auto-publish is at the top of this form. After changing rules, run the queue again to re-check existing quarantined items.</p>
                     </td></tr>
                     <tr><th scope="row">After rewrite: SEO tests</th><td>
                         <p><label for="tr-seo-min-score"><strong>Minimum SEO score</strong></label> <input id="tr-seo-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[seo_min_score]" value="<?php echo esc_attr($s['seo_min_score']); ?>"> <span class="description">Visibility, keyphrase, readability and social markup. 0–100.</span></p>
@@ -351,7 +370,7 @@ final class TechnoRapper_AI_Wire {
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_run_now">
                 <?php wp_nonce_field('tr_ai_wire_run_now'); ?>
-                <p class="description">This runs immediately: fetch new feed items first, then rewrite, review, and create drafts or posts. It can take up to a minute. Save settings before running if you just changed feeds.</p>
+                <p class="description">This runs immediately: fetch new feed items, rewrite, review, and publish (or save drafts if Auto-publish is off). It can take up to a minute. Save settings first if you just changed feeds.</p>
                 <?php submit_button('Fetch feeds and process queue now', 'secondary'); ?>
             </form>
         </div>
@@ -1567,7 +1586,7 @@ final class TechnoRapper_AI_Wire {
         <form method="get" style="margin:12px 0;"><input type="hidden" name="page" value="tr-ai-wire-queue"><label for="tr-ai-wire-status">Filter status </label><select id="tr-ai-wire-status" name="status"><option value="">All statuses</option><?php foreach ($allowed_statuses as $option_status) : ?><option value="<?php echo esc_attr($option_status); ?>" <?php selected($status_filter, $option_status); ?>><?php echo esc_html($option_status); ?></option><?php endforeach; ?></select> <button class="button">Apply</button></form>
         <table class="widefat striped"><thead><tr><th>Added (UTC)</th><th>Feed</th><th>Source item</th><th>Status</th><th>Post / details</th></tr></thead><tbody>
         <?php if (empty($rows)) : ?><tr><td colspan="5">No items processed yet.</td></tr><?php else : foreach ($rows as $row) : ?>
-            <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>"><?php echo $row['status'] === 'published' ? 'Edit post' : 'Edit draft'; ?></a><?php if ($row['status'] === 'published') : ?> · <a href="<?php echo esc_url(get_permalink((int) $row['wp_post_id'])); ?>" target="_blank" rel="noopener">View</a><?php endif; ?><?php endif; ?><?php if (in_array($row['status'], array('error', 'retry_wait', 'quarantined'), true)) : ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_retry_item&item_id=' . (int) $row['id']), 'tr_ai_wire_retry_item_' . (int) $row['id'])); ?>"><?php echo $row['status'] === 'quarantined' ? (!empty($s['auto_publish']) ? 'Publish now' : 'Create draft') : 'Retry'; ?></a> <?php endif; ?><?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?><?php if ($row['rewrite_json']) : $rewrite = json_decode($row['rewrite_json'], true); $seo = is_array($rewrite) && is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : null; if (is_array($seo)) : ?><br><?php echo esc_html((string) ($seo['visibility_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['seo_analysis_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['readability_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['keyphrase_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['social_label'] ?? '')); ?><?php endif; endif; ?></td></tr>
+            <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>"><?php echo $row['status'] === 'published' ? 'Edit post' : 'Edit draft'; ?></a><?php if ($row['status'] === 'published') : ?> · <a href="<?php echo esc_url(get_permalink((int) $row['wp_post_id'])); ?>" target="_blank" rel="noopener">View</a><?php endif; ?><?php endif; ?><?php if (in_array($row['status'], array('error', 'retry_wait', 'quarantined'), true)) : ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_retry_item&item_id=' . (int) $row['id']), 'tr_ai_wire_retry_item_' . (int) $row['id'])); ?>">Retry</a> <?php endif; ?><?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?><?php if ($row['rewrite_json']) : $rewrite = json_decode($row['rewrite_json'], true); $seo = is_array($rewrite) && is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : null; if (is_array($seo)) : ?><br><?php echo esc_html((string) ($seo['visibility_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['seo_analysis_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['readability_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['keyphrase_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['social_label'] ?? '')); ?><?php endif; endif; ?></td></tr>
         <?php endforeach; endif; ?>
         </tbody></table>
         <?php $pages = (int) ceil($total_rows / $per_page); if ($pages > 1) : ?>

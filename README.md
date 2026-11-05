@@ -1,8 +1,8 @@
 # TechnoRapper AI Wire
 
-A WordPress plugin that turns configured RSS/Atom items into source-attributed, AI-assisted editorial drafts or published posts. Each item passes a writer and a separate editorial review. Passing items become **WordPress drafts** by default. Turn on **Publish immediately** if you want live posts with no draft step.
+A WordPress plugin that turns configured RSS/Atom items into source-attributed, AI-assisted editorial posts. Each item passes a writer and a separate editorial review. Passing items are **published automatically**. Uncheck **Auto-publish** if you want WordPress drafts instead.
 
-> **Safety default:** auto-publish is off. AI review is a quality gate, not a guarantee of factual accuracy or legal clearance.
+> AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
 
 For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md).
 
@@ -49,7 +49,7 @@ flowchart TD
 | Assignment | Stable A/B assignment from the source key | Retries keep the same experiment and variant |
 | Generation | Writer produces title, lede, body, category and tags | Source content is treated as untrusted input |
 | Review | Separate model evaluates factual consistency, novelty, usefulness and policy flags | Fail closed: only explicit passing output proceeds |
-| Draft or publish | Sanitized content is inserted as a WordPress draft, or published when auto-publish is on | Auto-publish is off unless enabled |
+| Draft or publish | Sanitized content is published automatically, or saved as a draft if Auto-publish is unchecked | Reject stays quarantined |
 | Measurement | GA4 event plus first-party 3-second visible-read counter | Signed REST payload, per-session browser dedupe, no IP storage |
 | Analysis | WordPress dashboard and GA4 Explore | Do not infer revenue or SEO lift from draft counts or a small sample |
 
@@ -77,7 +77,7 @@ flowchart TD
 
 The plugin release is **not considered production-validated until the staging acceptance checklist has passed on the target WordPress host**. Version 0.2.0 adds background enqueueing for manual runs, scheduled bounded retries, permanent-vs-transient API error handling, an idempotent draft recovery path, atomic stale-lock deletion/heartbeat handling, and an atomic database-backed public-view rate limiter. The schema migration creates the rate-limit table without dropping existing queue/view data.
 
-Automated WordPress integration tests now exercise selected critical paths. They do not prove the production host's cron runner, outbound networking, database upgrade behavior on a copy of the live database, proxy/IP configuration, or end-to-end analytics. Leave auto-publish off until review and SEO gates look right on real feeds, then complete the staging runbook before enabling scheduled processing.
+Automated WordPress integration tests now exercise selected critical paths. They do not prove the production host's cron runner, outbound networking, database upgrade behavior on a copy of the live database, proxy/IP configuration, or end-to-end analytics. Auto-publish is on; uncheck it if you want a human publish step. Complete the staging runbook before enabling a busy schedule.
 
 ## Install and configure
 
@@ -86,7 +86,7 @@ Automated WordPress integration tests now exercise selected critical paths. They
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
 4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
 5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to fetch new items immediately, then rewrite/review them in that same request. Scheduled runs still use WP-Cron.
-6. Inspect **AI Wire → Queue & usage**. With the default **Save as draft** setting, review generated drafts in WordPress and publish manually. With **Publish immediately**, passing items go live.
+6. Inspect **AI Wire → Queue & usage**. Passing items go live when **Auto-publish** is checked (the default). Uncheck it to keep drafts.
 
 ### Dashboard configuration reference
 
@@ -106,7 +106,8 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Writer and reviewer models | Model selection for the two editorial passes |
 | Independent web search | Optional reviewer corroboration and associated search charges |
 | Editorial A/B experiment | Enables/disables stable A/B writer assignment and sets the experiment ID |
-| When to create a draft | Minimum review score, pass vs pass+revise, similarity cap, grounded/useful/new/flag gates, and save as draft vs publish immediately |
+| Auto-publish | When checked, passing items go live with no draft step |
+| When to create a draft | Minimum review score, pass vs pass+revise, similarity cap, and grounded/useful/new/flag gates |
 | After rewrite: SEO tests | Minimum SEO score, max readability errors, and required focus keyphrase / social markup. The plugin fills Rank Math, Yoast and AIOSEO fields on the draft |
 
 The API-key section has its own save action so the secret is not included in the ordinary WordPress settings payload. The other configuration values are saved together with **Save settings**.
@@ -117,7 +118,7 @@ The API-key section has its own save action so the secret is not included in the
 - Start with 1–3 trusted feeds and a daily cap of 1–3 drafts.
 - Set a low monthly API budget and token ceiling; raise only after observing real usage.
 - Leave optional web search disabled until you have validated its cost and review output.
-- Keep **Save as draft** until you have reviewed real output. Turn on **Publish immediately** only when you want posts live with no draft step.
+- Auto-publish is on. Uncheck it if you want a human to publish drafts.
 - Use a unique experiment ID for each materially different experiment. Do not rename an experiment midway through a reporting window.
 
 ## Spend, rate and volume controls
@@ -162,7 +163,7 @@ The API-key section has its own save action so the secret is not included in the
 2. Save one test feed and run the queue manually.
 3. Verify the source item is stored once, with an experiment ID and A/B variant.
 4. Verify writer and reviewer outcomes are visible in the queue.
-5. With **Save as draft**, confirm a passing item becomes a **draft**, not a published post. With **Publish immediately**, confirm it goes live. Confirm a rejected item is quarantined.
+5. With Auto-publish on, confirm a passing item goes live. With it off, confirm a passing item becomes a draft. Confirm a rejected item is quarantined.
 6. Re-run the same feed and confirm the source key prevents duplicate queue items.
 7. Test budget exhaustion and verify no further AI calls are made by the plugin.
 8. Publish a test article. Verify GA4 event `tr_ai_wire_article_view` in DebugView/Realtime and a first-party count after a visible 3-second read.
@@ -190,7 +191,7 @@ The API-key section has its own save action so the secret is not included in the
 ## Known limitations and operational caveats
 
 - The reviewer is an AI quality gate, not a fact-checking guarantee. Web corroboration can help but cannot certify accuracy.
-- The plugin does not auto-publish, import source images, or migrate existing Feedzy jobs/posts.
+- The plugin does not import source images or migrate existing Feedzy jobs/posts. Auto-publish can be turned off.
 - WP-Cron is traffic-triggered unless backed by a host system cron.
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.

@@ -28,6 +28,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         return $reflection->invokeArgs($this->plugin, $args);
     }
 
+    private function draft_settings() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['auto_publish'] = 0;
+        return $settings;
+    }
+
     private function create_queue_item($status = 'reviewed') {
         return $this->invoke_private('insert_item', array(
             hash('sha256', wp_generate_uuid4()),
@@ -72,7 +78,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         );
         $review = array('verdict' => 'pass', 'safe_to_publish' => true);
 
-        $this->invoke_private('create_draft', array($id, $item, $rewrite, $review));
+        $this->invoke_private('create_draft', array($id, $item, $rewrite, $review, $this->draft_settings()));
         $first_posts = get_posts(array(
             'post_type' => 'post',
             'post_status' => 'any',
@@ -87,7 +93,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         // Simulate a crash window by reverting only the queue state.
         global $wpdb;
         $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'reviewed', 'wp_post_id' => null), array('id' => $id));
-        $this->invoke_private('create_draft', array($id, $item, $rewrite, $review));
+        $this->invoke_private('create_draft', array($id, $item, $rewrite, $review, $this->draft_settings()));
 
         $posts = get_posts(array(
             'post_type' => 'post',
@@ -200,7 +206,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             );
         };
         add_filter('pre_http_request', $callback, 10, 3);
-        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings = $this->draft_settings();
 
         $this->invoke_private('process_item', array($id, $settings));
         global $wpdb;
@@ -351,7 +357,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'experiment_id' => 'test-experiment',
             'variant' => 'A',
         );
-        $this->invoke_private('create_draft', array($id, $item, array('title' => '', 'body_html' => ''), array('verdict' => 'pass')));
+        $this->invoke_private('create_draft', array($id, $item, array('title' => '', 'body_html' => ''), array('verdict' => 'pass'), $this->draft_settings()));
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame('quarantined', $row['status']);
@@ -362,7 +368,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'lede' => 'A concise summary.',
             'body_html' => '<p>Grounded article body.</p>',
         );
-        $this->invoke_private('create_draft', array($id, $item, $rewrite, array('verdict' => 'pass')));
+        $this->invoke_private('create_draft', array($id, $item, $rewrite, array('verdict' => 'pass'), $this->draft_settings()));
         $posts = get_posts(array(
             'post_type' => 'post',
             'post_status' => 'any',
@@ -399,11 +405,27 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $settings = TechnoRapper_AI_Wire::defaults();
         $this->assertSame('manual', $settings['cron_frequency']);
         $this->assertSame(0, $settings['max_posts_per_day']);
-        $this->assertSame(0, $settings['auto_publish']);
+        $this->assertSame(1, $settings['auto_publish']);
         $this->assertSame('', $settings['feeds']);
         $this->assertSame('', $this->invoke_private('api_key'));
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK));
+    }
+
+    public function test_existing_installs_turn_auto_publish_on_once() {
+        delete_option('tr_ai_wire_auto_publish_on');
+        update_option(TechnoRapper_AI_Wire::OPTION, array(
+            'auto_publish' => 0,
+            'feeds' => 'https://example.com/feed.xml',
+        ), false);
+        TechnoRapper_AI_Wire::enable_auto_publish_once();
+        $saved = get_option(TechnoRapper_AI_Wire::OPTION);
+        $this->assertSame(1, (int) $saved['auto_publish']);
+        $this->assertSame('https://example.com/feed.xml', $saved['feeds']);
+        $saved['auto_publish'] = 0;
+        update_option(TechnoRapper_AI_Wire::OPTION, $saved, false);
+        TechnoRapper_AI_Wire::enable_auto_publish_once();
+        $this->assertSame(0, (int) get_option(TechnoRapper_AI_Wire::OPTION)['auto_publish']);
     }
 
     public function test_revise_review_creates_a_draft_for_human_editing() {
@@ -430,7 +452,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 ),
             )),
         ), array('id' => $id));
-        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults()));
+        $this->invoke_private('process_item', array($id, $this->draft_settings()));
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame('draft', $row['status']);
         $this->assertGreaterThan(0, (int) $row['wp_post_id']);
@@ -586,7 +608,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'title' => 'A useful technology update',
             'lede' => 'A concise summary.',
             'body_html' => '<p>Grounded article body.</p>',
-        ), array('verdict' => 'pass')));
+        ), array('verdict' => 'pass'), $this->draft_settings()));
         $posts = get_posts(array(
             'post_type' => 'post',
             'post_status' => 'any',
@@ -656,9 +678,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
             )),
         ), array('id' => $id));
-        $settings = TechnoRapper_AI_Wire::defaults();
-        $settings['auto_publish'] = 1;
-        $this->invoke_private('process_item', array($id, $settings));
+        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults()));
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame('published', $row['status']);
         $this->assertGreaterThan(0, (int) $row['wp_post_id']);
@@ -679,7 +699,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'lede' => 'A concise summary.',
             'body_html' => '<p>Grounded article body.</p>',
         );
-        $this->invoke_private('create_draft', array($id, $item, $rewrite, array('verdict' => 'pass')));
+        $this->invoke_private('create_draft', array($id, $item, $rewrite, array('verdict' => 'pass'), $this->draft_settings()));
         $post_id = (int) get_posts(array(
             'post_type' => 'post',
             'post_status' => 'any',
@@ -761,7 +781,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             );
         };
         add_filter('pre_http_request', $callback, 10, 3);
-        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults(), true));
+        $this->invoke_private('process_item', array($id, $this->draft_settings(), true));
         remove_filter('pre_http_request', $callback, 10);
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
