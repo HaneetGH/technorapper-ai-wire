@@ -48,6 +48,23 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
     }
 
+    private function assert_plugin_table_exists($table) {
+        global $wpdb;
+        $like = method_exists($wpdb, 'esc_like') ? $wpdb->esc_like($table) : $table;
+        $found = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
+        if ($found === $table) {
+            $this->assertSame($table, $found);
+            return;
+        }
+        // WP PHPUnit rewrites CREATE TABLE to CREATE TEMPORARY TABLE during a
+        // test. SHOW TABLES omits those, so probe columns on the session table.
+        $was_suppressing = $wpdb->suppress_errors();
+        $safe_table = str_replace('`', '', (string) $table);
+        $columns = $wpdb->get_results("SHOW COLUMNS FROM `{$safe_table}`");
+        $wpdb->suppress_errors($was_suppressing);
+        $this->assertNotEmpty($columns, 'Missing plugin table: ' . $table);
+    }
+
     public function test_activation_creates_all_required_tables() {
         global $wpdb;
         $expected = array(
@@ -56,11 +73,15 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $wpdb->prefix . 'tr_ai_wire_view_limits',
         );
         foreach ($expected as $table) {
-            $found = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
-            $this->assertSame($table, $found, 'Missing plugin table: ' . $table);
+            $this->assert_plugin_table_exists($table);
         }
         $this->assertSame('6', get_option('tr_ai_wire_schema_version'));
         $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_items LIKE 'source_published_at'"));
+    }
+
+    public function test_schema_upgrade_is_hooked_on_frontend_init() {
+        $this->assertSame(5, has_action('init', array($this->plugin, 'maybe_upgrade_schema')));
+        $this->assertSame(5, has_action('admin_init', array($this->plugin, 'maybe_upgrade_schema')));
     }
 
     public function test_draft_creation_recovers_existing_post_after_interrupted_queue_update() {
@@ -121,8 +142,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame((string) $id, (string) $row['id']);
         $this->assertSame('Source title', $row['source_title']);
         $this->assertSame('6', get_option('tr_ai_wire_schema_version'));
-        $limits_table = $wpdb->prefix . 'tr_ai_wire_view_limits';
-        $this->assertSame($limits_table, $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $limits_table)));
+        $this->assert_plugin_table_exists($wpdb->prefix . 'tr_ai_wire_view_limits');
     }
 
     public function test_old_worker_cannot_overwrite_a_replacement_lease() {
