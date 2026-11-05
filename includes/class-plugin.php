@@ -15,7 +15,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
 
-    const VERSION = '0.2.20';
+    const VERSION = '0.2.21';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -45,6 +45,7 @@ final class TechnoRapper_AI_Wire {
         add_action('init', array($this, 'maybe_enable_auto_publish'), 6);
         add_action('init', array($this, 'maybe_enable_detailed_output'), 7);
         add_action('init', array($this, 'maybe_enable_daily_volume'), 8);
+        add_action('admin_init', array($this, 'maybe_backfill_home_media'), 20);
         add_action('wp_head', array($this, 'print_article_schema'), 5);
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));

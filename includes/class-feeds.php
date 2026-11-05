@@ -99,6 +99,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             $summary['feed_errors'] = array();
         }
         $this->maybe_upgrade_schema();
+        $this->maybe_backfill_home_media();
         $foreground = !empty($args['foreground']);
         if (!function_exists('fetch_feed')) {
             require_once ABSPATH . WPINC . '/feed.php';

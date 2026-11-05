@@ -773,6 +773,35 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);
     }
 
+    public function test_news_only_rewrite_still_gets_a_featured_image() {
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-news-only',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'No image in this source.',
+        ), array(
+            'title' => 'Bluetooth HDT could make wireless gadgets faster',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'category' => 'News',
+            'tags' => array(),
+        ), array('verdict' => 'pass'), TechnoRapper_AI_Wire::defaults()));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
+        $this->assertGreaterThan(0, (int) get_post_thumbnail_id((int) $posts[0]->ID));
+        $this->assertContains((int) get_option('default_category'), wp_get_post_categories((int) $posts[0]->ID));
+    }
+
     public function test_homepage_toggle_off_keeps_posts_off_the_home_feed() {
         $settings = TechnoRapper_AI_Wire::defaults();
         $settings['pin_to_homepage'] = 0;
