@@ -604,6 +604,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Readability:', $seo['readability_label']);
         $this->assertNotSame('Focus Keyphrase: No focus keyphrase!', $seo['keyphrase_label']);
         $this->assertSame('useful technology update', $prepared['focus_keyphrase']);
+        $this->assertSame('useful-technology-update', $prepared['slug']);
         $this->assertSame('Social: Social markup ready!', $seo['social_label']);
         $this->assertNotEmpty($prepared['social_title']);
         $this->assertNotEmpty($prepared['social_description']);
@@ -643,6 +644,60 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotEmpty(get_post_meta($post_id, '_aioseo_title', true));
         $this->assertNotEmpty(get_post_meta($post_id, '_aioseo_og_description', true));
         $this->assertSame('draft', get_post_status($post_id));
+        $this->assertStringStartsWith('useful-technology-update', $posts[0]->post_name);
+    }
+
+    public function test_writer_and_reviewer_prompts_include_google_ranking_steps() {
+        $writer = $this->invoke_private('writer_prompt', array('A'));
+        $reviewer = $this->invoke_private('reviewer_prompt', array(TechnoRapper_AI_Wire::defaults()));
+        foreach (array($writer, $reviewer) as $prompt) {
+            $this->assertStringContainsString('brief', $prompt);
+            $this->assertStringContainsString('focus_keyphrase', str_replace('focus keyphrase', 'focus_keyphrase', $prompt));
+            $this->assertStringContainsString('slug', $prompt);
+            $this->assertStringContainsString('internal', $prompt);
+        }
+        $this->assertStringContainsString('India', $writer);
+        $this->assertStringContainsString('search_intent', $writer);
+        $this->assertStringContainsString('featured_image_alt', $writer);
+        $this->assertStringContainsString('qualcomm-data-center-push', $writer);
+    }
+
+    public function test_writer_input_and_draft_include_internal_links() {
+        $related = self::factory()->post->create_and_get(array(
+            'post_status' => 'publish',
+            'post_title' => 'Older chipset explainer',
+            'post_name' => 'older-chipset-explainer',
+        ));
+        $item = array(
+            'feed_name' => 'Example Feed',
+            'source_title' => 'A useful technology update',
+            'source_url' => 'https://example.com/story',
+            'source_body' => 'Source body',
+        );
+        $input = $this->invoke_private('build_writer_input', array($item));
+        $this->assertStringContainsString(get_permalink($related), $input);
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-links',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        ), array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        ), array('verdict' => 'pass'), $this->draft_settings()));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assertStringContainsString(get_permalink($related), $posts[0]->post_content);
+        $this->assertStringContainsString('Related on TechnoRapper', $posts[0]->post_content);
     }
 
     public function test_rewrite_seo_gate_can_hold_an_item_before_review() {
