@@ -734,8 +734,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertCount(1, $posts);
         $this->assertSame('publish', get_post_status($posts[0]));
         $cats = wp_get_post_categories((int) $posts[0]->ID);
-        $this->assertContains((int) get_option('default_category'), $cats);
         $this->assertContains((int) $android->term_id, $cats);
+        $this->assertNotContains((int) get_option('default_category'), $cats);
         $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
         $this->assertSame('https://cdn.example.com/photo.jpg', get_post_meta((int) $posts[0]->ID, '_tr_ai_wire_source_image', true));
         $this->assertLessThan(0, (int) get_post_thumbnail_id((int) $posts[0]->ID));
@@ -750,6 +750,69 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('1', get_post_meta((int) $posts[0]->ID, '_tr_ai_wire_show_on_home', true));
         $this->assertGreaterThan(0, (int) $posts[0]->post_author);
         $this->assertContains('index', (array) get_post_meta((int) $posts[0]->ID, 'rank_math_robots', true));
+    }
+
+    public function test_reads_source_document_for_category_and_tags() {
+        $android = self::factory()->category->create_and_get(array(
+            'name' => 'Android',
+            'slug' => 'android',
+        ));
+        self::factory()->category->create(array(
+            'name' => 'News',
+            'slug' => 'tech',
+        ));
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-classify',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_title' => 'Galaxy S25 Ultra leak',
+            'source_body' => 'Samsung is testing One UI 7 on the Galaxy S25 Ultra for Android phones. <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ), array(
+            'title' => 'A faster wireless gadget update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'category' => 'News',
+            'tags' => array(),
+        ), array('verdict' => 'pass'), TechnoRapper_AI_Wire::defaults()));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $cats = wp_get_post_categories((int) $posts[0]->ID);
+        $this->assertContains((int) $android->term_id, $cats);
+        $this->assertNotContains((int) get_option('default_category'), $cats);
+        $tag_names = wp_get_post_tags((int) $posts[0]->ID, array('fields' => 'names'));
+        $this->assertNotEmpty($tag_names);
+        $joined = strtolower(implode(' ', $tag_names));
+        $this->assertTrue(strpos($joined, 'samsung') !== false || strpos($joined, 'galaxy') !== false || strpos($joined, 'android') !== false);
+    }
+
+    public function test_writer_input_lists_live_site_categories() {
+        self::factory()->category->create(array(
+            'name' => 'Android',
+            'slug' => 'android',
+        ));
+        self::factory()->category->create(array(
+            'name' => 'News',
+            'slug' => 'tech',
+        ));
+        $input = $this->invoke_private('build_writer_input', array(array(
+            'feed_name' => 'Example Feed',
+            'source_title' => 'Galaxy leak',
+            'source_url' => 'https://example.com/story',
+            'source_body' => 'Samsung Android update',
+        )));
+        $this->assertStringContainsString('Site categories', $input);
+        $this->assertStringContainsString('Android', $input);
+        $this->assertStringContainsString('Do not ask a human', $input);
+        $this->assertStringContainsString('Never pick News', $input);
     }
 
     public function test_repair_puts_existing_plugin_posts_on_home_desks() {
@@ -1080,7 +1143,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('none were supplied', $reviewer);
         $this->assertStringContainsString('that is not a failure', $writer);
         $this->assertStringContainsString('Never use News or Technology', $writer);
-        $this->assertStringContainsString('homepage desk', $writer);
+        $this->assertStringContainsString('Site categories', $writer);
+        $this->assertStringContainsString('Do not wait for a human', $writer);
     }
 
     public function test_review_input_does_not_punish_missing_internal_links() {

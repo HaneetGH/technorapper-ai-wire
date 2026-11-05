@@ -82,8 +82,8 @@ trait TechnoRapper_AI_Wire_Admin {
                             endif;
                             ?>
                         </div>
-                        <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[map_auto_desk]" value="1" <?php checked(!empty($s['map_auto_desk']), true); ?>> Also auto-match a desk from the title and tags (Android, Apple, AI…)</label></p>
-                        <p class="description">Checked terms are always assigned. Leave all unchecked to only auto-match.</p>
+                        <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[map_auto_desk]" value="1" <?php checked(!empty($s['map_auto_desk']), true); ?>> Read the source and auto-tag a matching site category (Android, Apple, AI…)</label></p>
+                        <p class="description">Leave all terms unchecked. The writer reads the document and picks the category and tags. Checked terms are forced on every post from this tenant.</p>
                     </td></tr>
                     <tr><th scope="row"><label for="tr-map-status">Post status</label></th><td><select id="tr-map-status" name="<?php echo esc_attr(self::OPTION); ?>[map_post_status]"><?php foreach (array('auto' => 'Auto (follow Auto-publish)', 'publish' => 'Published', 'draft' => 'Draft', 'pending' => 'Pending review') as $value => $label) : ?><option value="<?php echo esc_attr($value); ?>" <?php selected($s['map_post_status'], $value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></td></tr>
                     <tr><th scope="row"><label for="tr-map-title">Post title</label></th><td><select id="tr-map-title" name="<?php echo esc_attr(self::OPTION); ?>[map_title]"><option value="rewrite" <?php selected($s['map_title'], 'rewrite'); ?>>Rewrite title (itemtitle after AI)</option><option value="source" <?php selected($s['map_title'], 'source'); ?>>Source title (itemtitle from the feed)</option></select><p class="description">This field is required. A post is not created without a title.</p></td></tr>

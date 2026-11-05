@@ -67,7 +67,13 @@ trait TechnoRapper_AI_Wire_Publisher {
             'ID' => $post_id,
             'post_author' => $this->publishing_author_id(),
         ));
-        $this->assign_home_categories($post_id, $rewrite, $s);
+        $this->assign_home_categories($post_id, $rewrite, $s, $item);
+        if (!wp_get_post_tags($post_id)) {
+            $tags = $this->resolve_post_tags($rewrite, is_array($item) ? $item : array());
+            if ($tags) {
+                wp_set_post_tags($post_id, $tags, false);
+            }
+        }
         $this->maybe_set_featured_image($post_id, is_array($item) ? $item : array(), $rewrite);
         $show_home = !empty($s['pin_to_homepage']) && $this->post_has_featured_image($post_id);
         update_post_meta($post_id, '_tr_ai_wire_show_on_home', $show_home ? '1' : '0');
@@ -418,11 +424,80 @@ trait TechnoRapper_AI_Wire_Publisher {
         return $content;
     }
 
-    private function resolve_post_categories($rewrite, $s = null) {
-        return $this->resolve_mapped_term_ids($rewrite, $s);
+    private function generic_category_names() {
+        return array('news', 'technology', 'tech', 'uncategorized', 'general', 'latest');
     }
 
-    private function resolve_mapped_term_ids($rewrite, $s = null) {
+    private function is_generic_category($name, $slug = '') {
+        $name = strtolower(trim((string) $name));
+        $slug = strtolower(trim((string) $slug));
+        $generic = $this->generic_category_names();
+        return in_array($name, $generic, true) || ($slug !== '' && in_array($slug, $generic, true));
+    }
+
+    private function site_category_names() {
+        $names = array();
+        foreach (get_categories(array('hide_empty' => false, 'number' => 200)) as $cat) {
+            if ($this->is_generic_category($cat->name, $cat->slug)) {
+                continue;
+            }
+            $names[] = $cat->name;
+        }
+        return $names;
+    }
+
+    private function site_tag_names($limit = 40) {
+        $tags = get_tags(array(
+            'hide_empty' => false,
+            'number' => max(1, (int) $limit),
+            'orderby' => 'count',
+            'order' => 'DESC',
+        ));
+        if (is_wp_error($tags) || empty($tags)) {
+            return array();
+        }
+        $names = array();
+        foreach ($tags as $tag) {
+            $name = trim((string) $tag->name);
+            if ($name !== '' && !$this->is_generic_category($name, $tag->slug)) {
+                $names[] = $name;
+            }
+        }
+        return $names;
+    }
+
+    private function classification_haystack($rewrite, $item = array()) {
+        $body = wp_strip_all_tags((string) ($item['source_body'] ?? ''));
+        if (function_exists('mb_substr')) {
+            $body = mb_substr($body, 0, 4000);
+        } else {
+            $body = substr($body, 0, 4000);
+        }
+        $parts = array(
+            $rewrite['category'] ?? '',
+            $rewrite['title'] ?? '',
+            $rewrite['lede'] ?? '',
+            $item['source_title'] ?? '',
+            $body,
+            implode(' ', (array) ($rewrite['tags'] ?? array())),
+        );
+        $hay = strtolower(preg_replace('/\s+/', ' ', implode(' ', $parts)));
+        return ' ' . trim((string) $hay) . ' ';
+    }
+
+    private function text_mentions($hay, $needle) {
+        $needle = strtolower(trim((string) $needle));
+        if ($needle === '' || strlen($needle) < 2) {
+            return false;
+        }
+        return (bool) preg_match('/(^|[^a-z0-9])' . preg_quote($needle, '/') . '([^a-z0-9]|$)/', $hay);
+    }
+
+    private function resolve_post_categories($rewrite, $s = null, $item = array()) {
+        return $this->resolve_mapped_term_ids($rewrite, $s, $item);
+    }
+
+    private function resolve_mapped_term_ids($rewrite, $s = null, $item = array()) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
         $taxonomy = $this->mapped_taxonomy($s);
         $ids = array();
@@ -433,57 +508,48 @@ trait TechnoRapper_AI_Wire_Publisher {
             }
         }
         if (!empty($s['map_auto_desk']) && $taxonomy === 'category') {
-            $matched = $this->match_existing_category($rewrite);
+            $matched = $this->match_existing_category($rewrite, $item);
             if ($matched > 0 && !in_array($matched, $ids, true)) {
                 $ids[] = $matched;
             }
         }
-        if ($taxonomy === 'category') {
+        if ($taxonomy === 'category' && !$ids) {
             $default = (int) get_option('default_category');
-            if ($default > 0 && term_exists($default, 'category') && !in_array($default, $ids, true)) {
+            if ($default > 0 && term_exists($default, 'category')) {
                 $ids[] = $default;
             }
         }
         return $ids;
     }
 
-    private function assign_home_categories($post_id, $rewrite, $s = null) {
+    private function assign_home_categories($post_id, $rewrite, $s = null, $item = array()) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
-        $ids = $this->resolve_mapped_term_ids($rewrite, $s);
+        $ids = $this->resolve_mapped_term_ids($rewrite, $s, $item);
         $taxonomy = $this->mapped_taxonomy($s);
         if ($ids && taxonomy_exists($taxonomy)) {
             wp_set_object_terms((int) $post_id, $ids, $taxonomy, false);
         }
     }
 
-    private function match_existing_category($rewrite) {
+    private function match_existing_category($rewrite, $item = array()) {
         $wanted = trim(sanitize_text_field($rewrite['category'] ?? ''));
-        if (in_array(strtolower($wanted), array('news', 'technology', 'tech', 'uncategorized', 'general'), true)) {
+        if ($this->is_generic_category($wanted, sanitize_title($wanted))) {
             $wanted = '';
         }
-        $hay = ' ' . strtolower(trim($wanted . ' ' . ($rewrite['title'] ?? '') . ' ' . implode(' ', (array) ($rewrite['tags'] ?? array())))) . ' ';
+        $hay = $this->classification_haystack($rewrite, is_array($item) ? $item : array());
         $best = 0;
         $best_hits = 0;
         foreach (get_categories(array('hide_empty' => false, 'number' => 200)) as $cat) {
-            $slug = strtolower((string) $cat->slug);
-            $name = strtolower((string) $cat->name);
-            foreach ($this->home_desk_needles() as $desk => $words) {
-                if ($slug !== $desk && $name !== $desk && $slug !== str_replace('-', '', $desk)) {
-                    continue;
-                }
-                $hits = 0;
-                foreach ($words as $word) {
-                    if (strpos($hay, $word) !== false) {
-                        $hits++;
-                    }
-                }
-                if ($hits > $best_hits) {
-                    $best_hits = $hits;
-                    $best = (int) $cat->term_id;
-                }
+            if ($this->is_generic_category($cat->name, $cat->slug)) {
+                continue;
+            }
+            $hits = $this->category_match_score($cat, $hay, $wanted);
+            if ($hits > $best_hits) {
+                $best_hits = $hits;
+                $best = (int) $cat->term_id;
             }
         }
-        if ($best > 0) {
+        if ($best > 0 && $best_hits > 0) {
             return $best;
         }
         if ($wanted === '') {
@@ -493,10 +559,82 @@ trait TechnoRapper_AI_Wire_Publisher {
         if (!$term) {
             $term = get_term_by('slug', sanitize_title($wanted), 'category');
         }
-        if ($term && !is_wp_error($term)) {
+        if ($term && !is_wp_error($term) && !$this->is_generic_category($term->name, $term->slug)) {
             return (int) $term->term_id;
         }
         return 0;
+    }
+
+    private function category_match_score($cat, $hay, $wanted) {
+        $slug = strtolower((string) $cat->slug);
+        $name = strtolower((string) $cat->name);
+        $hits = 0;
+        if ($wanted !== '' && (strcasecmp($wanted, $cat->name) === 0 || strcasecmp(sanitize_title($wanted), $slug) === 0)) {
+            $hits += 8;
+        }
+        $needles = array($name, str_replace('-', ' ', $slug));
+        foreach ($this->home_desk_needles() as $desk => $words) {
+            if ($slug === $desk || $name === $desk || $slug === str_replace('-', '', $desk) || str_replace('-', ' ', $slug) === str_replace('-', ' ', $desk)) {
+                $needles = array_merge($needles, $words);
+            }
+        }
+        foreach (array_unique($needles) as $word) {
+            $word = strtolower((string) $word);
+            $trimmed = trim($word);
+            if ($trimmed === '') {
+                continue;
+            }
+            $matched = ($word !== $trimmed)
+                ? strpos($hay, $word) !== false
+                : $this->text_mentions($hay, $trimmed);
+            if (!$matched && strlen($trimmed) >= 5 && strpos($hay, $trimmed) !== false) {
+                $matched = true;
+            }
+            if ($matched) {
+                $hits += strlen($trimmed) >= 5 ? 2 : 1;
+            }
+        }
+        return $hits;
+    }
+
+    private function resolve_post_tags($rewrite, $item = array()) {
+        $tags = array();
+        $seen = array();
+        foreach (array_merge((array) ($rewrite['tags'] ?? array()), $this->tags_from_source($rewrite, $item)) as $tag) {
+            $tag = sanitize_text_field($tag);
+            if ($tag === '' || $this->is_generic_category($tag, sanitize_title($tag))) {
+                continue;
+            }
+            $key = strtolower($tag);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $tags[] = $tag;
+        }
+        return array_slice($tags, 0, 8);
+    }
+
+    private function tags_from_source($rewrite, $item = array()) {
+        $hay = $this->classification_haystack($rewrite, is_array($item) ? $item : array());
+        $tags = array();
+        foreach ($this->site_tag_names(80) as $name) {
+            if ($this->text_mentions($hay, $name)) {
+                $tags[] = $name;
+            }
+        }
+        foreach ($this->home_desk_needles() as $words) {
+            foreach ($words as $word) {
+                $label = trim((string) $word);
+                if (strlen($label) < 4) {
+                    continue;
+                }
+                if ($this->text_mentions($hay, $label) || (strlen($label) >= 5 && strpos($hay, strtolower($label)) !== false)) {
+                    $tags[] = ucwords($label);
+                }
+            }
+        }
+        return $tags;
     }
 
     private function publishing_author_id() {
@@ -613,7 +751,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             ),
         );
         if ($this->mapped_taxonomy($s) === 'category') {
-            $insert['post_category'] = $this->resolve_mapped_term_ids($rewrite, $s);
+            $insert['post_category'] = $this->resolve_mapped_term_ids($rewrite, $s, $item);
         }
         $post_id = wp_insert_post($insert, true);
         if (is_wp_error($post_id) || !$post_id) {
@@ -621,11 +759,9 @@ trait TechnoRapper_AI_Wire_Publisher {
             $this->update_item($id, array('status' => 'error', 'error_text' => $error));
             return;
         }
-        if (!empty($rewrite['tags']) && is_array($rewrite['tags'])) {
-            $tags = array_slice(array_filter(array_map('sanitize_text_field', $rewrite['tags'])), 0, 10);
-            if ($tags) {
-                wp_set_post_tags((int) $post_id, $tags, false);
-            }
+        $tags = $this->resolve_post_tags($rewrite, $item);
+        if ($tags) {
+            wp_set_post_tags((int) $post_id, $tags, false);
         }
         $this->apply_seo_meta((int) $post_id, $rewrite);
         $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);

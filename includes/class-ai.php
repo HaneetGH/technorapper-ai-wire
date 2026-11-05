@@ -28,7 +28,7 @@ trait TechnoRapper_AI_Wire_AI {
             . '11) Write as the TechnoRapper editorial desk. Include one sentence on how the source was used. No first-person “I tested”, no source-brand voice, no invented quotes, tests, or experience. '
             . '12) Return official_links as 0–2 http(s) URLs that already appear in the source text (company, regulator, or docs). Never invent URLs. '
             . '13) Return featured_image_alt as a factual caption for a suitable editorial still. Do not claim you created or saw a photo. '
-            . '14) Use 3–6 specific tags and one homepage desk category: Android, Apple, AI, Auto, PC Hardware, Reviews, Guides, or Tech. Never use News or Technology when a desk fits. Attribute the source once. Label uncertainty. '
+            . '14) Read the source document and classify it yourself. Set category to exactly one name from the supplied Site categories list. Set tags to 3–6 specific names that appear in or clearly describe the source (products, companies, chips, OS). Never use News or Technology when a desk fits. Do not wait for a human to map the feed. Attribute the source once. Label uncertainty. '
             . '15) Return search_intent as the reader job-to-be-done in one sentence. '
             . 'Return only JSON with keys title, lede, body_html, angle, category, tags (array), source_attribution, claims (array of factual claims), novelty_notes, focus_keyphrase, seo_title, meta_description, social_title, social_description, slug, search_intent, featured_image_alt, key_takeaways (array of 3 strings), faq (array of {question, answer}), official_links (array of {url, anchor}), internal_links (array of {url, anchor}).';
     }
@@ -51,6 +51,18 @@ trait TechnoRapper_AI_Wire_AI {
 
     private function build_writer_input($item) {
         $input = "Feed: {$item['feed_name']}\nSource title: {$item['source_title']}\nSource URL: {$item['source_url']}\nSource text:\n{$item['source_body']}";
+        $categories = $this->site_category_names();
+        if ($categories) {
+            $input .= "\n\nSite categories — pick exactly one that best fits this source document. Do not ask a human. Never pick News, Tech, Technology, or Uncategorized:\n- " . implode("\n- ", $categories);
+        } else {
+            $input .= "\n\nSite categories — pick exactly one homepage desk: Android, Apple, AI, Auto, PC Hardware, Reviews, Guides, or Tech. Never pick News or Uncategorized.";
+        }
+        $tags = $this->site_tag_names();
+        if ($tags) {
+            $input .= "\n\nExisting tags you may reuse when they fit. Also add 3–6 specific names from the source:\n- " . implode("\n- ", $tags);
+        } else {
+            $input .= "\n\nTags — read the source and return 3–6 specific names (products, companies, chips, OS).";
+        }
         $related = $this->related_site_posts($item['source_title'] ?? '');
         if ($related) {
             $lines = array();

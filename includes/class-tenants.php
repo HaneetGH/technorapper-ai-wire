@@ -218,7 +218,7 @@ trait TechnoRapper_AI_Wire_Tenants {
                     endif;
                     ?>
                 </div>
-                <p><label><input type="checkbox" name="<?php echo esc_attr($base); ?>[map_auto_desk]" value="1" <?php checked(!empty($tenant['map_auto_desk'])); ?>> Auto-match a desk from the title and tags</label></p>
+                <p><label><input type="checkbox" name="<?php echo esc_attr($base); ?>[map_auto_desk]" value="1" <?php checked(!empty($tenant['map_auto_desk'])); ?>> Read the source and auto-tag a matching site category</label></p>
                 <p><label>Post status <select name="<?php echo esc_attr($base); ?>[map_post_status]"><?php foreach (array('auto' => 'Auto', 'publish' => 'Published', 'draft' => 'Draft', 'pending' => 'Pending') as $value => $label) : ?><option value="<?php echo esc_attr($value); ?>" <?php selected($tenant['map_post_status'], $value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label></p>
                 <p><label>Title <select name="<?php echo esc_attr($base); ?>[map_title]"><option value="rewrite" <?php selected($tenant['map_title'], 'rewrite'); ?>>Rewrite</option><option value="source" <?php selected($tenant['map_title'], 'source'); ?>>Source</option></select></label>
                 &nbsp;<label>Date <select name="<?php echo esc_attr($base); ?>[map_date]"><option value="now" <?php selected($tenant['map_date'], 'now'); ?>>Now</option><option value="source" <?php selected($tenant['map_date'], 'source'); ?>>Source</option></select></label>
