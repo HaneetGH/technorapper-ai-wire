@@ -605,6 +605,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotSame('Focus Keyphrase: No focus keyphrase!', $seo['keyphrase_label']);
         $this->assertSame('useful technology update', $prepared['focus_keyphrase']);
         $this->assertSame('useful-technology-update', $prepared['slug']);
+        $this->assertCount(3, $prepared['key_takeaways']);
+        $this->assertCount(3, $prepared['faq']);
+        $this->assertStringContainsString('Key takeaways', $prepared['body_html']);
+        $this->assertStringContainsString('Frequently asked questions', $prepared['body_html']);
         $this->assertSame('Social: Social markup ready!', $seo['social_label']);
         $this->assertNotEmpty($prepared['social_title']);
         $this->assertNotEmpty($prepared['social_description']);
@@ -660,6 +664,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('search_intent', $writer);
         $this->assertStringContainsString('featured_image_alt', $writer);
         $this->assertStringContainsString('qualcomm-data-center-push', $writer);
+        $this->assertStringContainsString('key_takeaways', $writer);
+        $this->assertStringContainsString('faq', $writer);
+        $this->assertStringContainsString('featured snippet', $writer);
+        $this->assertStringContainsString('editorial desk', $writer);
+        $this->assertStringContainsString('FAQ', $reviewer);
     }
 
     public function test_writer_input_and_draft_include_internal_links() {
@@ -698,6 +707,15 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertCount(1, $posts);
         $this->assertStringContainsString(get_permalink($related), $posts[0]->post_content);
         $this->assertStringContainsString('Related on TechnoRapper', $posts[0]->post_content);
+        $this->assertStringContainsString('TechnoRapper editorial desk', $posts[0]->post_content);
+        $this->assertStringContainsString('Key takeaways', $posts[0]->post_content);
+        $this->assertStringContainsString('Frequently asked questions', $posts[0]->post_content);
+        $this->assertNotEmpty(get_post_meta($posts[0]->ID, '_tr_ai_wire_faq', true));
+    }
+
+    public function test_source_image_url_reads_https_img() {
+        $url = $this->invoke_private('source_image_url', array('<p>Hi <img src="https://cdn.example.com/photo.jpg" alt="x"></p>'));
+        $this->assertSame('https://cdn.example.com/photo.jpg', $url);
     }
 
     public function test_rewrite_seo_gate_can_hold_an_item_before_review() {
