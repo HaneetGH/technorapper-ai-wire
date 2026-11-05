@@ -534,4 +534,105 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertWPError($limited);
         $this->assertSame(429, $limited->get_error_data()['status']);
     }
+
+    public function test_raw_rewrite_seo_labels_match_rank_math_style_checks() {
+        $seo = $this->invoke_private('analyze_rewrite_seo', array(array(
+            'title' => 'Some news headline here today',
+            'lede' => 'A lede that is long enough to look like a summary of the story for readers.',
+            'body_html' => '<p>One paragraph without headings or a focus keyphrase. Words about the story were published. More words were added. ' . str_repeat('Extra words continue. ', 30) . '</p>',
+        )));
+        $this->assertSame('Focus Keyphrase: No focus keyphrase!', $seo['keyphrase_label']);
+        $this->assertSame('Social: Missing social markup!', $seo['social_label']);
+        $this->assertStringStartsWith('Visibility: ', $seo['visibility_label']);
+        $this->assertStringEndsWith('!', $seo['visibility_label']);
+        $this->assertMatchesRegularExpression('/^SEO Analysis: \d+\/100$/', $seo['seo_analysis_label']);
+        $this->assertMatchesRegularExpression('/^Readability: \d+ errors found!$/', $seo['readability_label']);
+        $this->assertGreaterThanOrEqual(3, count($seo['readability_errors']));
+    }
+
+    public function test_prepare_rewrite_seo_fixes_keyphrase_social_and_visibility() {
+        $prepared = $this->invoke_private('prepare_rewrite_seo', array(array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        )));
+        $seo = $prepared['seo'];
+        $this->assertSame('Visibility: Good!', $seo['visibility_label']);
+        $this->assertMatchesRegularExpression('/^SEO Analysis: \d+\/100$/', $seo['seo_analysis_label']);
+        $this->assertGreaterThanOrEqual(70, (int) $seo['seo_score']);
+        $this->assertLessThanOrEqual(3, count($seo['readability_errors']));
+        $this->assertStringContainsString('Readability:', $seo['readability_label']);
+        $this->assertNotSame('Focus Keyphrase: No focus keyphrase!', $seo['keyphrase_label']);
+        $this->assertSame('useful technology update', $prepared['focus_keyphrase']);
+        $this->assertSame('Social: Social markup ready!', $seo['social_label']);
+        $this->assertNotEmpty($prepared['social_title']);
+        $this->assertNotEmpty($prepared['social_description']);
+        $this->assertEmpty($this->invoke_private('rewrite_seo_blockers', array($prepared, TechnoRapper_AI_Wire::defaults())));
+    }
+
+    public function test_create_draft_writes_rank_math_yoast_and_aioseo_meta() {
+        $id = $this->create_queue_item();
+        $item = array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-seo',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        );
+        $this->invoke_private('create_draft', array($id, $item, array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        ), array('verdict' => 'pass')));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $post_id = (int) $posts[0]->ID;
+        $this->assertSame('useful technology update', get_post_meta($post_id, 'rank_math_focus_keyword', true));
+        $this->assertNotEmpty(get_post_meta($post_id, 'rank_math_description', true));
+        $this->assertNotEmpty(get_post_meta($post_id, 'rank_math_facebook_title', true));
+        $this->assertNotEmpty(get_post_meta($post_id, 'rank_math_facebook_description', true));
+        $this->assertSame('useful technology update', get_post_meta($post_id, '_yoast_wpseo_focuskw', true));
+        $this->assertNotEmpty(get_post_meta($post_id, '_yoast_wpseo_metadesc', true));
+        $this->assertNotEmpty(get_post_meta($post_id, '_yoast_wpseo_opengraph-title', true));
+        $this->assertNotEmpty(get_post_meta($post_id, '_aioseo_title', true));
+        $this->assertNotEmpty(get_post_meta($post_id, '_aioseo_og_description', true));
+        $this->assertSame('draft', get_post_status($post_id));
+    }
+
+    public function test_rewrite_seo_gate_can_hold_an_item_before_review() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['seo_max_readability_errors'] = 0;
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text, rewrite_json FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertStringContainsString('Held after rewrite SEO tests', (string) $row['error_text']);
+        $this->assertStringContainsString('readability', (string) $row['error_text']);
+        $rewrite = json_decode($row['rewrite_json'], true);
+        $this->assertSame('Visibility: Good!', $rewrite['seo']['visibility_label']);
+        $this->assertSame('Focus Keyphrase: useful technology update', $rewrite['seo']['keyphrase_label']);
+        $this->assertSame('Social: Social markup ready!', $rewrite['seo']['social_label']);
+    }
 }
