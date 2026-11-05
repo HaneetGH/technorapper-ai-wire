@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.12
+ * Version: 0.2.13
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.12';
+    const VERSION = '0.2.13';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -50,6 +50,9 @@ final class TechnoRapper_AI_Wire {
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
         add_action('admin_post_tr_ai_wire_run_now', array($this, 'run_now'));
         add_action('admin_post_tr_ai_wire_retry_item', array($this, 'retry_item'));
+        add_action('admin_post_tr_ai_wire_stop_run', array($this, 'stop_run'));
+        add_action('admin_post_tr_ai_wire_delete_item', array($this, 'delete_item'));
+        add_action('admin_post_tr_ai_wire_clean_queue', array($this, 'clean_queue_request'));
     }
 
     public static function activate() {
@@ -426,6 +429,12 @@ final class TechnoRapper_AI_Wire {
                 <p class="description">This runs immediately: fetch new feed items, rewrite, review, and publish (or save drafts if Auto-publish is off). It can take up to a minute. Save settings first if you just changed feeds.</p>
                 <?php submit_button('Fetch feeds and process queue now', 'secondary'); ?>
             </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
+                <input type="hidden" name="action" value="tr_ai_wire_stop_run">
+                <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
+                <p class="description">Stops the current run after the item already in flight. Scheduled runs still start again on the next interval unless the schedule is Manual only.</p>
+                <?php submit_button('Stop current run', 'delete'); ?>
+            </form>
         </div>
         <?php
     }
@@ -475,6 +484,107 @@ final class TechnoRapper_AI_Wire {
             }
         }
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&retried=1'));
+        exit;
+    }
+
+    public function is_run_in_progress() {
+        $lock = get_option(self::PROCESSING_LOCK_OPTION, array());
+        return is_array($lock) && !empty($lock['token']);
+    }
+
+    public function release_processing_lock() {
+        delete_option(self::PROCESSING_LOCK_OPTION);
+        wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
+        wp_cache_delete('alloptions', 'options');
+        self::schedule_cron();
+        return true;
+    }
+
+    public function stop_running_jobs($reason = 'Stopped by administrator.') {
+        $this->release_processing_lock();
+        $this->store_last_run(array(
+            'at' => time(),
+            'reason' => 'stopped',
+            'feeds_checked' => 0,
+            'feed_errors' => array(),
+            'new_items' => 0,
+            'processed' => 0,
+            'drafts' => 0,
+            'published' => 0,
+            'quarantined' => 0,
+            'skipped' => sanitize_text_field($reason),
+        ));
+        return true;
+    }
+
+    public function delete_queue_item($id) {
+        global $wpdb;
+        $id = (int) $id;
+        if ($id <= 0) {
+            return false;
+        }
+        return (bool) $wpdb->delete($this->table, array('id' => $id), array('%d'));
+    }
+
+    public function clean_queue($mode = 'all') {
+        global $wpdb;
+        $this->release_processing_lock();
+        if ($mode === 'unfinished') {
+            $deleted = $wpdb->query("DELETE FROM {$this->table} WHERE status NOT IN ('draft', 'published')");
+            $reason = 'cleared';
+            $skipped = 'Cleared unfinished queue items.';
+        } else {
+            $deleted = $wpdb->query("DELETE FROM {$this->table}");
+            $reason = 'cleaned';
+            $skipped = 'Queue board cleaned.';
+        }
+        $this->store_last_run(array(
+            'at' => time(),
+            'reason' => $reason,
+            'feeds_checked' => 0,
+            'feed_errors' => array(),
+            'new_items' => 0,
+            'processed' => 0,
+            'drafts' => 0,
+            'published' => 0,
+            'quarantined' => 0,
+            'skipped' => $skipped,
+        ));
+        return (int) $deleted;
+    }
+
+    public function stop_run() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to stop this task.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_stop_run');
+        $this->stop_running_jobs();
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=stopped'));
+        exit;
+    }
+
+    public function delete_item() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to delete queue items.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_GET['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_delete_item_' . $id);
+        $this->delete_queue_item($id);
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=deleted'));
+        exit;
+    }
+
+    public function clean_queue_request() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to clean the queue.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_clean_queue');
+        $mode = sanitize_key(wp_unslash($_POST['mode'] ?? 'all'));
+        if ($mode !== 'unfinished') {
+            $mode = 'all';
+        }
+        $this->clean_queue($mode);
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=' . ($mode === 'unfinished' ? 'cleared' : 'cleaned')));
         exit;
     }
 
@@ -2696,6 +2806,40 @@ final class TechnoRapper_AI_Wire {
         $rows = $wpdb->get_results($wpdb->prepare("SELECT id, feed_name, source_title, source_url, status, wp_post_id, created_at, error_text, review_json, rewrite_json FROM {$this->table}{$where} ORDER BY id DESC LIMIT %d OFFSET %d", $per_page, $offset), ARRAY_A);
         ?>
         <div class="wrap"><h1>AI Wire — Queue & usage</h1>
+        <?php
+        $notice = sanitize_key(wp_unslash($_GET['queue_notice'] ?? ''));
+        $notices = array(
+            'stopped' => 'The current run was stopped. The item already being written may still finish. Set the schedule to Manual only if you do not want the next scheduled run.',
+            'deleted' => 'Queue item deleted. WordPress posts created from it were left in place.',
+            'cleared' => 'Unfinished queue items were removed. Drafts, published posts, and WordPress posts were kept.',
+            'cleaned' => 'The queue board is clean. WordPress posts were kept. The same feeds can be ingested again.',
+        );
+        if (isset($notices[$notice])) :
+            ?><div class="notice notice-success is-dismissible"><p><?php echo esc_html($notices[$notice]); ?></p></div><?php
+        endif;
+        if ($this->is_run_in_progress()) :
+            ?><div class="notice notice-warning"><p><strong>A run is in progress.</strong> Use Stop current run to release the lock after the item already in flight.</p></div><?php
+        endif;
+        ?>
+        <div class="tablenav top" style="margin:12px 0 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <input type="hidden" name="action" value="tr_ai_wire_stop_run">
+                <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
+                <?php submit_button('Stop current run', $this->is_run_in_progress() ? 'delete' : 'secondary', 'submit', false); ?>
+            </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" onsubmit="return confirm('Remove unfinished queue items? Drafts, published posts, and WordPress posts stay.');">
+                <input type="hidden" name="action" value="tr_ai_wire_clean_queue">
+                <input type="hidden" name="mode" value="unfinished">
+                <?php wp_nonce_field('tr_ai_wire_clean_queue'); ?>
+                <?php submit_button('Clear unfinished', 'secondary', 'submit', false); ?>
+            </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" onsubmit="return confirm('Clean the whole board? This deletes every queue row so you can start over. WordPress posts stay. The same feeds can be ingested again.');">
+                <input type="hidden" name="action" value="tr_ai_wire_clean_queue">
+                <input type="hidden" name="mode" value="all">
+                <?php wp_nonce_field('tr_ai_wire_clean_queue'); ?>
+                <?php submit_button('Clean board', 'delete', 'submit', false); ?>
+            </form>
+        </div>
         <?php $last_run = get_option(self::LAST_RUN_OPTION, array()); if (is_array($last_run) && !empty($last_run['at'])) : ?>
         <div class="notice <?php echo empty($last_run['skipped']) ? 'notice-info' : 'notice-warning'; ?>"><p>
             <strong>Last run</strong> (<?php echo esc_html(gmdate('Y-m-d H:i', (int) $last_run['at'])); ?> UTC):
@@ -2719,7 +2863,7 @@ final class TechnoRapper_AI_Wire {
         <form method="get" style="margin:12px 0;"><input type="hidden" name="page" value="tr-ai-wire-queue"><label for="tr-ai-wire-status">Filter status </label><select id="tr-ai-wire-status" name="status"><option value="">All statuses</option><?php foreach ($allowed_statuses as $option_status) : ?><option value="<?php echo esc_attr($option_status); ?>" <?php selected($status_filter, $option_status); ?>><?php echo esc_html($option_status); ?></option><?php endforeach; ?></select> <button class="button">Apply</button></form>
         <table class="widefat striped"><thead><tr><th>Added (UTC)</th><th>Feed</th><th>Source item</th><th>Status</th><th>Post / details</th></tr></thead><tbody>
         <?php if (empty($rows)) : ?><tr><td colspan="5">No items processed yet.</td></tr><?php else : foreach ($rows as $row) : ?>
-            <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>"><?php echo $row['status'] === 'published' ? 'Edit post' : 'Edit draft'; ?></a><?php if ($row['status'] === 'published') : ?> · <a href="<?php echo esc_url(get_permalink((int) $row['wp_post_id'])); ?>" target="_blank" rel="noopener">View</a><?php endif; ?><?php endif; ?><?php if (in_array($row['status'], array('error', 'retry_wait', 'quarantined'), true)) : ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_retry_item&item_id=' . (int) $row['id']), 'tr_ai_wire_retry_item_' . (int) $row['id'])); ?>">Retry</a> <?php endif; ?><?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?><?php if ($row['rewrite_json']) : $rewrite = json_decode($row['rewrite_json'], true); $seo = is_array($rewrite) && is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : null; if (is_array($seo)) : ?><br><?php echo esc_html((string) ($seo['visibility_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['seo_analysis_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['readability_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['keyphrase_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['social_label'] ?? '')); ?><?php endif; endif; ?></td></tr>
+            <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>"><?php echo $row['status'] === 'published' ? 'Edit post' : 'Edit draft'; ?></a><?php if ($row['status'] === 'published') : ?> · <a href="<?php echo esc_url(get_permalink((int) $row['wp_post_id'])); ?>" target="_blank" rel="noopener">View</a><?php endif; ?><?php endif; ?><?php if (in_array($row['status'], array('error', 'retry_wait', 'quarantined'), true)) : ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_retry_item&item_id=' . (int) $row['id']), 'tr_ai_wire_retry_item_' . (int) $row['id'])); ?>">Retry</a> <?php endif; ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_delete_item&item_id=' . (int) $row['id']), 'tr_ai_wire_delete_item_' . (int) $row['id'])); ?>" onclick="return confirm('Delete this queue item? The WordPress post, if any, stays.');">Delete</a> <?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?><?php if ($row['rewrite_json']) : $rewrite = json_decode($row['rewrite_json'], true); $seo = is_array($rewrite) && is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : null; if (is_array($seo)) : ?><br><?php echo esc_html((string) ($seo['visibility_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['seo_analysis_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['readability_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['keyphrase_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['social_label'] ?? '')); ?><?php endif; endif; ?></td></tr>
         <?php endforeach; endif; ?>
         </tbody></table>
         <?php $pages = (int) ceil($total_rows / $per_page); if ($pages > 1) : ?>
