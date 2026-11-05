@@ -717,6 +717,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains((int) $android->term_id, $cats);
         $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
         $this->assertTrue(is_sticky((int) $posts[0]->ID));
+        $this->assertSame('1', get_post_meta((int) $posts[0]->ID, '_tr_ai_wire_show_on_home', true));
         $this->assertGreaterThan(0, (int) $posts[0]->post_author);
         $this->assertContains('index', (array) get_post_meta((int) $posts[0]->ID, 'rank_math_robots', true));
     }
@@ -747,7 +748,48 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains((int) $apple->term_id, wp_get_post_categories($post_id));
         $this->assertTrue(has_post_thumbnail($post_id));
         $this->assertTrue(is_sticky($post_id));
+        $this->assertSame('1', get_post_meta($post_id, '_tr_ai_wire_show_on_home', true));
         $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);
+    }
+
+    public function test_homepage_toggle_off_keeps_posts_off_the_home_feed() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['pin_to_homepage'] = 0;
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-home-off',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        ), array(
+            'title' => 'Off-home Android update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'category' => 'News',
+            'tags' => array('Android'),
+        ), array('verdict' => 'pass'), $settings));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $hidden_id = (int) $posts[0]->ID;
+        $this->assertFalse(is_sticky($hidden_id));
+        $this->assertSame('0', get_post_meta($hidden_id, '_tr_ai_wire_show_on_home', true));
+        $this->assertSame('publish', get_post_status($hidden_id));
+
+        $visible_id = self::factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Regular home post',
+        ));
+        $this->go_to(home_url('/'));
+        $home_ids = wp_list_pluck($GLOBALS['wp_query']->posts, 'ID');
+        $this->assertNotContains($hidden_id, $home_ids);
+        $this->assertContains($visible_id, $home_ids);
     }
 
     public function test_map_content_uses_forced_terms_source_title_and_source_date() {

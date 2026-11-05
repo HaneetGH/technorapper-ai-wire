@@ -107,7 +107,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Independent web search | Optional reviewer corroboration and associated search charges |
 | Editorial A/B experiment | Enables/disables stable A/B writer assignment and sets the experiment ID |
 | Auto-publish | When checked, passing items go live with no draft step |
-| Homepage | Pin new posts to the homepage: assign a real desk (Android, Apple, AI, Guides…) plus a featured image, and mark them sticky so they can appear on the home board |
+| Show on homepage | On puts new posts on the home board (desk, image, sticky). Off keeps them on their own link and hides them from the home feed |
 | Map content | Post type, taxonomy, forced terms, status, title, date, and body — the same mapping competitors expose so items land on a homepage desk instead of only a permalink |
 | When to create a draft | Minimum review score, pass vs pass+revise, similarity cap, and grounded/useful/new/flag gates |
 | After rewrite: SEO tests | Minimum SEO score, max readability errors, and required focus keyphrase / social markup. The plugin fills Rank Math, Yoast and AIOSEO fields on the draft |

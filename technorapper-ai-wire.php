@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.15
+ * Version: 0.2.16
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.15';
+    const VERSION = '0.2.16';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -54,6 +54,7 @@ final class TechnoRapper_AI_Wire {
         add_action('admin_post_tr_ai_wire_delete_item', array($this, 'delete_item'));
         add_action('admin_post_tr_ai_wire_clean_queue', array($this, 'clean_queue_request'));
         add_action('admin_post_tr_ai_wire_repair_home', array($this, 'repair_home_request'));
+        add_action('pre_get_posts', array($this, 'exclude_from_homepage'));
     }
 
     public static function activate() {
@@ -426,7 +427,13 @@ final class TechnoRapper_AI_Wire {
                     <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
                     <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="2000" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. 350 is the daily target. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row">Auto-publish</th><td><label><input id="tr-auto-publish" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]" value="1" <?php checked($s['auto_publish'], 1); ?>> <strong>Publish posts automatically</strong> — no draft and no Publish button. Passing items go live. Rejected items stay quarantined.</label></td></tr>
-                    <tr><th scope="row">Homepage</th><td><label><input id="tr-pin-home" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[pin_to_homepage]" value="1" <?php checked(!empty($s['pin_to_homepage']), true); ?>> <strong>Pin new posts to the homepage</strong> — assign a real desk (Android, Apple, AI, Guides…) and a featured image, and mark the post sticky so the home board can show it. Writer “News” no longer wins over a better desk.</label></td></tr>
+                    <tr><th scope="row">Show on homepage</th><td>
+                        <fieldset>
+                            <label style="display:block;margin:0 0 8px;"><input id="tr-pin-home-on" type="radio" name="<?php echo esc_attr(self::OPTION); ?>[pin_to_homepage]" value="1" <?php checked(!empty($s['pin_to_homepage']), true); ?>> <strong>On</strong> — assign a desk, featured image, and sticky flag so the post can appear on the home board.</label>
+                            <label style="display:block;"><input id="tr-pin-home-off" type="radio" name="<?php echo esc_attr(self::OPTION); ?>[pin_to_homepage]" value="0" <?php checked(empty($s['pin_to_homepage']), true); ?>> <strong>Off</strong> — keep the post on its own link only. It is hidden from the home feed.</label>
+                        </fieldset>
+                        <p class="description">Turn Off if you only want the permalink. Repair existing posts after you change this.</p>
+                    </td></tr>
                     <tr><th colspan="2"><h2 style="margin:12px 0 0;">3. Map content</h2><p class="description">Same mapping as feed-to-post plugins: choose the WordPress type, taxonomy, status, title, date, and body for each item.</p></th></tr>
                     <tr><th scope="row"><label for="tr-map-post-type">Post type</label></th><td><select id="tr-map-post-type" name="<?php echo esc_attr(self::OPTION); ?>[map_post_type]"><?php foreach ($this->mappable_post_types() as $type => $label) : ?><option value="<?php echo esc_attr($type); ?>" <?php selected($s['map_post_type'], $type); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Home page boards only show the <code>post</code> type. Pages and other types stay off the home feed.</p></td></tr>
                     <tr><th scope="row"><label for="tr-map-taxonomy">Post taxonomy</label></th><td><select id="tr-map-taxonomy" name="<?php echo esc_attr(self::OPTION); ?>[map_taxonomy]"><?php foreach ($this->mappable_taxonomies() as $tax => $label) : ?><option value="<?php echo esc_attr($tax); ?>" <?php selected($s['map_taxonomy'], $tax); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Pick Categories so desks like Android / Apple can appear on the home board.</p></td></tr>
@@ -710,10 +717,51 @@ final class TechnoRapper_AI_Wire {
         ));
         $this->assign_home_categories($post_id, $rewrite, $s);
         $this->maybe_set_featured_image($post_id, is_array($item) ? $item : array(), $rewrite);
-        if (!empty($s['pin_to_homepage']) && get_post_status($post_id) === 'publish' && get_post_type($post_id) === 'post') {
+        $show_home = !empty($s['pin_to_homepage']);
+        update_post_meta($post_id, '_tr_ai_wire_show_on_home', $show_home ? '1' : '0');
+        if ($show_home && get_post_status($post_id) === 'publish' && get_post_type($post_id) === 'post') {
             stick_post($post_id);
+        } else {
+            unstick_post($post_id);
         }
         $this->refresh_front_page($post_id);
+    }
+
+    public function exclude_from_homepage($query) {
+        if (is_admin() || !($query instanceof WP_Query) || $query->get('tr_ai_wire_include_home')) {
+            return;
+        }
+        if ($query->is_singular() || $query->is_feed() || $query->is_search()) {
+            return;
+        }
+        if ($query->get('p') || $query->get('name') || $query->get('post__in') || $query->get('meta_key')) {
+            return;
+        }
+        $this_query_is_home = $query->is_home() || $query->is_front_page();
+        $secondary_home_loop = !$query->is_main_query() && (is_front_page() || is_home());
+        if (!$this_query_is_home && !$secondary_home_loop) {
+            return;
+        }
+        $type = $query->get('post_type');
+        if ($type && $type !== 'post' && $type !== 'any' && !(is_array($type) && in_array('post', $type, true))) {
+            return;
+        }
+        $existing = $query->get('meta_query');
+        if (!is_array($existing)) {
+            $existing = array();
+        }
+        $existing[] = array(
+            'relation' => 'OR',
+            array(
+                'key' => '_tr_ai_wire_show_on_home',
+                'compare' => 'NOT EXISTS',
+            ),
+            array(
+                'key' => '_tr_ai_wire_show_on_home',
+                'value' => '1',
+            ),
+        );
+        $query->set('meta_query', $existing);
     }
 
     private function has_usable_rewrite($rewrite) {
