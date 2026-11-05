@@ -98,6 +98,7 @@ trait TechnoRapper_AI_Wire_Feeds {
         if (!isset($summary['feed_errors']) || !is_array($summary['feed_errors'])) {
             $summary['feed_errors'] = array();
         }
+        $this->maybe_upgrade_schema();
         $foreground = !empty($args['foreground']);
         if (!function_exists('fetch_feed')) {
             require_once ABSPATH . WPINC . '/feed.php';

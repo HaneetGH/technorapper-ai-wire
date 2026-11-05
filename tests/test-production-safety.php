@@ -791,6 +791,17 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $home_ids = wp_list_pluck($GLOBALS['wp_query']->posts, 'ID');
         $this->assertNotContains($hidden_id, $home_ids);
         $this->assertContains($visible_id, $home_ids);
+        $query = $GLOBALS['wp_query'];
+        $this->assertContains($hidden_id, array_map('intval', (array) $query->get('post__not_in')));
+        $this->assertEmpty($query->get('meta_query'));
+    }
+
+    public function test_homepage_exclusion_does_not_add_a_meta_query() {
+        $query = new WP_Query();
+        $query->is_home = true;
+        $query->is_front_page = false;
+        $this->plugin->exclude_from_homepage($query);
+        $this->assertEmpty($query->get('meta_query'));
     }
 
     public function test_map_content_uses_forced_terms_source_title_and_source_date() {

@@ -15,7 +15,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
 
-    const VERSION = '0.2.18';
+    const VERSION = '0.2.19';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -40,7 +40,7 @@ final class TechnoRapper_AI_Wire {
         add_filter('cron_schedules', array($this, 'cron_schedules'));
         add_action('update_option_' . self::OPTION, array($this, 'settings_updated'), 10, 2);
         add_action('admin_post_tr_ai_wire_save_api_key', array($this, 'save_api_key'));
-        add_action('init', array($this, 'maybe_upgrade_schema'), 5);
+        add_action('admin_init', array($this, 'maybe_upgrade_schema'), 5);
         add_action('init', array($this, 'maybe_enable_auto_publish'), 6);
         add_action('init', array($this, 'maybe_enable_detailed_output'), 7);
         add_action('init', array($this, 'maybe_enable_daily_volume'), 8);

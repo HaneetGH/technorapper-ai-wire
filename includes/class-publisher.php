@@ -68,6 +68,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         } else {
             unstick_post($post_id);
         }
+        $this->clear_homepage_excluded_cache();
         $this->refresh_front_page($post_id);
     }
 
@@ -78,34 +79,49 @@ trait TechnoRapper_AI_Wire_Publisher {
         if ($query->is_singular() || $query->is_feed() || $query->is_search()) {
             return;
         }
-        if ($query->get('p') || $query->get('name') || $query->get('post__in') || $query->get('meta_key')) {
+        if ($query->get('p') || $query->get('name') || $query->get('post__in') || $query->get('meta_key') || $query->get('meta_query')) {
             return;
         }
-        $this_query_is_home = $query->is_home() || $query->is_front_page();
-        $secondary_home_loop = !$query->is_main_query() && (is_front_page() || is_home());
-        if (!$this_query_is_home && !$secondary_home_loop) {
+        if (!$query->is_home() && !$query->is_front_page()) {
             return;
         }
         $type = $query->get('post_type');
         if ($type && $type !== 'post' && $type !== 'any' && !(is_array($type) && in_array('post', $type, true))) {
             return;
         }
-        $existing = $query->get('meta_query');
-        if (!is_array($existing)) {
-            $existing = array();
+        $excluded = $this->homepage_excluded_ids();
+        if (!$excluded) {
+            return;
         }
-        $existing[] = array(
-            'relation' => 'OR',
-            array(
-                'key' => '_tr_ai_wire_show_on_home',
-                'compare' => 'NOT EXISTS',
-            ),
-            array(
-                'key' => '_tr_ai_wire_show_on_home',
-                'value' => '1',
-            ),
-        );
-        $query->set('meta_query', $existing);
+        $not_in = array_merge(array_map('intval', (array) $query->get('post__not_in')), $excluded);
+        $query->set('post__not_in', array_values(array_unique(array_filter($not_in))));
+    }
+
+    private function homepage_excluded_ids() {
+        $cached = get_transient('tr_ai_wire_home_excluded_ids');
+        if (is_array($cached)) {
+            return array_values(array_filter(array_map('intval', $cached)));
+        }
+        $found = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 300,
+            'fields' => 'ids',
+            'meta_key' => '_tr_ai_wire_show_on_home',
+            'meta_value' => '0',
+            'no_found_rows' => true,
+            'suppress_filters' => true,
+            'update_post_meta_cache' => false,
+            'update_post_term_cache' => false,
+            'tr_ai_wire_include_home' => true,
+        ));
+        $ids = array_values(array_filter(array_map('intval', (array) $found)));
+        set_transient('tr_ai_wire_home_excluded_ids', $ids, 10 * MINUTE_IN_SECONDS);
+        return $ids;
+    }
+
+    private function clear_homepage_excluded_cache() {
+        delete_transient('tr_ai_wire_home_excluded_ids');
     }
 
     private function source_image_url($html) {
