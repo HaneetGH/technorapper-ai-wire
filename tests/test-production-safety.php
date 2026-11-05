@@ -44,7 +44,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'guid-' . wp_generate_uuid4(),
             'https://example.com/story',
             'Source title',
-            'Source body',
+            'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
         ));
     }
 
@@ -716,7 +716,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'source_guid' => 'guid-home',
             'experiment_id' => 'test-experiment',
             'variant' => 'A',
-            'source_body' => 'Plain text with no image.',
+            'source_body' => 'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
         ), array(
             'title' => 'Samsung Android update lands today',
             'lede' => 'A concise summary.',
@@ -737,6 +737,15 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains((int) get_option('default_category'), $cats);
         $this->assertContains((int) $android->term_id, $cats);
         $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
+        $this->assertSame('https://cdn.example.com/photo.jpg', get_post_meta((int) $posts[0]->ID, '_tr_ai_wire_source_image', true));
+        $this->assertLessThan(0, (int) get_post_thumbnail_id((int) $posts[0]->ID));
+        $this->assertStringContainsString('https://cdn.example.com/photo.jpg', get_the_post_thumbnail((int) $posts[0]->ID));
+        $this->assertSame('https://cdn.example.com/photo.jpg', get_the_post_thumbnail_url((int) $posts[0]->ID));
+        $this->assertCount(0, get_children(array(
+            'post_parent' => (int) $posts[0]->ID,
+            'post_type' => 'attachment',
+            'numberposts' => 5,
+        )));
         $this->assertTrue(is_sticky((int) $posts[0]->ID));
         $this->assertSame('1', get_post_meta((int) $posts[0]->ID, '_tr_ai_wire_show_on_home', true));
         $this->assertGreaterThan(0, (int) $posts[0]->post_author);
@@ -768,17 +777,19 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1, $this->plugin->repair_home_posts(20));
         $this->assertContains((int) $apple->term_id, wp_get_post_categories($post_id));
         $this->assertTrue(has_post_thumbnail($post_id));
+        $this->assertSame('https://cdn.example.com/photo.jpg', get_post_meta($post_id, '_tr_ai_wire_source_image', true));
+        $this->assertLessThan(0, (int) get_post_thumbnail_id($post_id));
         $this->assertTrue(is_sticky($post_id));
         $this->assertSame('1', get_post_meta($post_id, '_tr_ai_wire_show_on_home', true));
         $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);
     }
 
-    public function test_news_only_rewrite_still_gets_a_featured_image() {
+    public function test_item_without_source_image_is_skipped() {
         $id = $this->create_queue_item();
         $this->invoke_private('create_draft', array($id, array(
             'source_url' => 'https://example.com/story',
             'feed_name' => 'Example Feed',
-            'source_guid' => 'guid-news-only',
+            'source_guid' => 'guid-no-image',
             'experiment_id' => 'test-experiment',
             'variant' => 'A',
             'source_body' => 'No image in this source.',
@@ -789,17 +800,19 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'category' => 'News',
             'tags' => array(),
         ), array('verdict' => 'pass'), TechnoRapper_AI_Wire::defaults()));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertStringContainsString('No source image', (string) $row['error_text']);
         $posts = get_posts(array(
             'post_type' => 'post',
-            'post_status' => 'publish',
-            'posts_per_page' => 1,
+            'post_status' => 'any',
+            'posts_per_page' => -1,
             'meta_key' => '_tr_ai_wire_queue_id',
             'meta_value' => $id,
         ));
-        $this->assertCount(1, $posts);
-        $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
-        $this->assertGreaterThan(0, (int) get_post_thumbnail_id((int) $posts[0]->ID));
-        $this->assertContains((int) get_option('default_category'), wp_get_post_categories((int) $posts[0]->ID));
+        $this->assertCount(0, $posts);
     }
 
     public function test_homepage_toggle_off_keeps_posts_off_the_home_feed() {
@@ -873,7 +886,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'experiment_id' => 'test-experiment',
             'variant' => 'A',
             'source_title' => 'Feed item title',
-            'source_body' => 'Plain source body from the feed.',
+            'source_body' => 'Plain source body from the feed. <img src="https://cdn.example.com/photo.jpg" alt="photo">',
             'source_published_at' => '2026-01-15 09:30:00',
         ), array(
             'title' => 'Rewritten AI headline',
@@ -1427,7 +1440,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $settings['monthly_budget_usd'] = 50;
         update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
 
-        $rss = '<?xml version="1.0"?><rss version="2.0"><channel><title>Example Tech</title><item><title>New chip announcement</title><link>https://example.com/new-chip</link><guid>https://example.com/new-chip</guid><description>A grounded paragraph about a chip announcement with enough source text for the plugin.</description></item></channel></rss>';
+        $rss = '<?xml version="1.0"?><rss version="2.0"><channel><title>Example Tech</title><item><title>New chip announcement</title><link>https://example.com/new-chip</link><guid>https://example.com/new-chip</guid><description><![CDATA[A grounded paragraph about a chip announcement with enough source text for the plugin. <img src="https://cdn.example.com/photo.jpg" alt="chip" />]]></description><enclosure url="https://cdn.example.com/photo.jpg" type="image/jpeg" /></item></channel></rss>';
         $calls = 0;
         $callback = function ($preempt, $args, $url) use (&$calls, $rss) {
             if (strpos($url, 'example.com/tech-feed.xml') !== false) {

@@ -174,9 +174,13 @@ trait TechnoRapper_AI_Wire_Feeds {
                     continue;
                 }
                 $title = sanitize_text_field($entry['title'] ?? '');
+                $image = $this->source_image_url((string) ($entry['body'] ?? ''));
                 $body = wp_strip_all_tags((string) ($entry['body'] ?? ''), true);
                 $body = trim(html_entity_decode($body, ENT_QUOTES | ENT_HTML5, get_bloginfo('charset') ?: 'UTF-8'));
                 $body = function_exists('mb_substr') ? mb_substr($body, 0, (int) $s['max_source_chars']) : substr($body, 0, (int) $s['max_source_chars']);
+                if ($image !== '') {
+                    $body = '<img src="' . esc_url($image) . '" alt="" /> ' . $body;
+                }
                 if ($body === '' || $title === '') {
                     continue;
                 }
@@ -229,11 +233,19 @@ trait TechnoRapper_AI_Wire_Feeds {
                     if (!is_object($item)) {
                         continue;
                     }
+                    $body = $item->get_content() ?: $item->get_description();
+                    if ($this->source_image_url($body) === '' && method_exists($item, 'get_enclosure')) {
+                        $enc = $item->get_enclosure();
+                        $link = ($enc && method_exists($enc, 'get_link')) ? (string) $enc->get_link() : '';
+                        if ($link !== '') {
+                            $body = '<img src="' . esc_url($link) . '" alt="" /> ' . $body;
+                        }
+                    }
                     $simplepie_entries[] = array(
                         'title' => $item->get_title(),
                         'url' => $item->get_permalink(),
                         'guid' => $item->get_id(),
-                        'body' => $item->get_content() ?: $item->get_description(),
+                        'body' => $body,
                         'published_at' => method_exists($item, 'get_date') ? (string) $item->get_date('Y-m-d H:i:s') : '',
                     );
                 }
@@ -317,6 +329,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             if ($published === '') {
                 $published = $this->xpath_text($xpath, './/*[local-name()="date"]', $node);
             }
+            $body = $this->feed_entry_image_markup($xpath, $node, $body);
             $entries[] = array(
                 'title' => $title,
                 'url' => $url,
@@ -344,6 +357,28 @@ trait TechnoRapper_AI_Wire_Feeds {
             }
         }
         return '';
+    }
+
+    private function feed_entry_image_markup($xpath, $node, $body) {
+        $body = (string) $body;
+        if ($this->source_image_url($body) !== '') {
+            return $body;
+        }
+        foreach (array(
+            array('.//*[local-name()="enclosure"]', 'url'),
+            array('.//*[local-name()="thumbnail"]', 'url'),
+            array('.//*[local-name()="content"][@url]', 'url'),
+        ) as $spec) {
+            $found = $xpath->query($spec[0], $node);
+            if (!$found || !$found->length) {
+                continue;
+            }
+            $url = esc_url_raw(trim((string) $found->item(0)->getAttribute($spec[1])));
+            if ($url !== '' && preg_match('#^https?://#i', $url)) {
+                return '<img src="' . esc_attr($url) . '" alt="" /> ' . $body;
+            }
+        }
+        return $body;
     }
 
     private function xpath_text($xpath, $query, $node) {

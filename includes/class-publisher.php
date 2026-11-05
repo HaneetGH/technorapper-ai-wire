@@ -69,7 +69,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         ));
         $this->assign_home_categories($post_id, $rewrite, $s);
         $this->maybe_set_featured_image($post_id, is_array($item) ? $item : array(), $rewrite);
-        $show_home = !empty($s['pin_to_homepage']);
+        $show_home = !empty($s['pin_to_homepage']) && $this->post_has_featured_image($post_id);
         update_post_meta($post_id, '_tr_ai_wire_show_on_home', $show_home ? '1' : '0');
         if ($show_home && get_post_status($post_id) === 'publish' && get_post_type($post_id) === 'post') {
             stick_post($post_id);
@@ -149,176 +149,166 @@ trait TechnoRapper_AI_Wire_Publisher {
         return '';
     }
 
-    private function with_upload_user($callback) {
-        $uid = $this->publishing_author_id();
-        $prev = get_current_user_id();
-        if ($uid > 0 && (int) $prev !== $uid) {
-            wp_set_current_user($uid);
-        }
-        try {
-            return $callback();
-        } finally {
-            if ((int) get_current_user_id() !== (int) $prev) {
-                wp_set_current_user($prev);
-            }
-        }
-    }
+    private $reading_thumbnail_meta = false;
 
     private function maybe_set_featured_image($post_id, $item, $rewrite) {
         $post_id = (int) $post_id;
         if ($post_id <= 0) {
             return;
         }
-        $existing = (int) get_post_thumbnail_id($post_id);
-        if ($existing > 0 && get_post($existing)) {
+        if ($this->real_thumbnail_id($post_id) > 0) {
+            return;
+        }
+        $url = $this->source_image_url($item['source_body'] ?? '');
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
             return;
         }
         $alt = sanitize_text_field($rewrite['featured_image_alt'] ?? ($rewrite['title'] ?? ''));
-        $this->with_upload_user(function () use ($post_id, $item, $rewrite, $alt) {
-            require_once ABSPATH . 'wp-admin/includes/file.php';
-            require_once ABSPATH . 'wp-admin/includes/media.php';
-            require_once ABSPATH . 'wp-admin/includes/image.php';
-            $attachment_id = 0;
-            $url = $this->source_image_url($item['source_body'] ?? '');
-            if ($url) {
-                $attachment_id = $this->download_source_image($url, $post_id, $alt);
-            }
-            if ($attachment_id <= 0) {
-                $attachment_id = $this->generate_featured_image($post_id, (string) ($rewrite['title'] ?? ''), $alt);
-            }
-            if ($attachment_id <= 0) {
-                return;
-            }
-            set_post_thumbnail($post_id, $attachment_id);
-            update_post_meta($post_id, '_thumbnail_id', (int) $attachment_id);
-            if ($alt !== '') {
-                update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt);
-            }
-        });
+        update_post_meta($post_id, '_tr_ai_wire_source_image', $url);
+        if ($alt !== '') {
+            update_post_meta($post_id, '_tr_ai_wire_featured_image_alt', $alt);
+        }
+        update_post_meta($post_id, 'rank_math_facebook_image', $url);
+        update_post_meta($post_id, 'rank_math_twitter_image', $url);
+        update_post_meta($post_id, '_yoast_wpseo_opengraph-image', $url);
+        update_post_meta($post_id, '_yoast_wpseo_twitter-image', $url);
+        update_post_meta($post_id, '_aioseo_og_image', $url);
     }
 
-    private function download_source_image($url, $post_id, $alt) {
-        if ($url === '' || !wp_http_validate_url($url)) {
-            return 0;
-        }
-        $tmp = download_url($url, 8);
-        if (is_wp_error($tmp) || !is_string($tmp) || !file_exists($tmp)) {
-            return 0;
-        }
-        $path = (string) wp_parse_url($url, PHP_URL_PATH);
-        $name = sanitize_file_name(basename($path));
-        if (!preg_match('/\.(jpe?g|png|gif|webp)$/i', $name)) {
-            $name = 'source-' . (int) $post_id . '.jpg';
-        }
-        $file_array = array(
-            'name' => $name,
-            'tmp_name' => $tmp,
-        );
-        $id = media_handle_sideload($file_array, (int) $post_id, $alt);
-        if (is_wp_error($id) || !$id) {
-            @unlink($tmp);
-            return 0;
-        }
-        return (int) $id;
+    private function upstream_image_url($post_id) {
+        $url = esc_url_raw((string) get_post_meta((int) $post_id, '_tr_ai_wire_source_image', true));
+        return preg_match('#^https?://#i', $url) ? $url : '';
     }
 
-    private function generate_featured_image($post_id, $title, $alt) {
-        $png = $this->featured_image_png((string) $title);
-        if ($png === '') {
-            $png = $this->tiny_png();
-        }
-        if ($png === '') {
-            return 0;
-        }
-        return $this->store_image_bytes((int) $post_id, $png, $alt, 'technorapper-' . (int) $post_id . '-' . time() . '.png');
-    }
-
-    private function store_image_bytes($post_id, $bytes, $alt, $filename) {
-        if ($bytes === '') {
-            return 0;
-        }
-        require_once ABSPATH . 'wp-admin/includes/file.php';
-        require_once ABSPATH . 'wp-admin/includes/media.php';
-        require_once ABSPATH . 'wp-admin/includes/image.php';
-        $upload = wp_upload_dir();
-        if (!empty($upload['error']) || empty($upload['path'])) {
-            return 0;
-        }
-        if (!wp_mkdir_p($upload['path'])) {
-            return 0;
-        }
-        $filename = sanitize_file_name($filename);
-        $path = trailingslashit($upload['path']) . $filename;
-        if (file_put_contents($path, $bytes) === false) {
-            return 0;
-        }
-        $filetype = wp_check_filetype($path, null);
-        $attachment_id = wp_insert_attachment(array(
-            'post_mime_type' => $filetype['type'] ? $filetype['type'] : 'image/png',
-            'post_title' => $alt !== '' ? $alt : 'TechnoRapper',
-            'post_content' => '',
-            'post_status' => 'inherit',
-            'guid' => trailingslashit($upload['url']) . $filename,
-        ), $path, (int) $post_id, true);
-        if (is_wp_error($attachment_id) || !$attachment_id) {
-            return 0;
-        }
-        $meta = wp_generate_attachment_metadata((int) $attachment_id, $path);
-        if (is_array($meta)) {
-            wp_update_attachment_metadata((int) $attachment_id, $meta);
-        }
-        return (int) $attachment_id;
-    }
-
-    private function tiny_png() {
-        $raw = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
-        return is_string($raw) ? $raw : '';
-    }
-
-    private function featured_image_png($title) {
-        if (function_exists('imagecreatetruecolor')) {
-            $width = 1200;
-            $height = 630;
-            $image = imagecreatetruecolor($width, $height);
-            if ($image) {
-                $bg = imagecolorallocate($image, 16, 24, 40);
-                $accent = imagecolorallocate($image, 56, 189, 248);
-                $white = imagecolorallocate($image, 248, 250, 252);
-                $muted = imagecolorallocate($image, 148, 163, 184);
-                imagefilledrectangle($image, 0, 0, $width, $height, $bg);
-                imagefilledrectangle($image, 0, 0, 18, $height, $accent);
-                imagestring($image, 5, 56, 72, 'TechnoRapper', $accent);
-                $y = 150;
-                foreach (explode("\n", wordwrap(wp_strip_all_tags($title), 36)) as $line) {
-                    imagestring($image, 5, 56, $y, $line, $white);
-                    $y += 36;
-                    if ($y > 500) {
-                        break;
-                    }
-                }
-                imagestring($image, 3, 56, 560, 'technorapper.com', $muted);
-                ob_start();
-                $ok = imagepng($image);
-                $png = ob_get_clean();
-                imagedestroy($image);
-                if ($ok && $png !== '') {
-                    return $png;
-                }
-            }
-        }
-        if (!function_exists('gzcompress')) {
+    private function display_image_url($post_id) {
+        $url = $this->upstream_image_url($post_id);
+        if ($url === '') {
             return '';
         }
-        $width = 1200;
-        $height = 630;
-        $row = "\x00" . str_repeat("\x10\x18\x28", $width);
-        $raw = str_repeat($row, $height);
-        $ihdr = pack('NNCCCCC', $width, $height, 8, 2, 0, 0, 0);
-        return "\x89PNG\r\n\x1a\n" . $this->png_chunk('IHDR', $ihdr) . $this->png_chunk('IDAT', gzcompress($raw, 9)) . $this->png_chunk('IEND', '');
+        if (function_exists('jetpack_photon_url')) {
+            $url = jetpack_photon_url($url);
+        }
+        return $url;
     }
 
-    private function png_chunk($type, $data) {
-        return pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+    private function virtual_thumbnail_id($post_id) {
+        $post_id = (int) $post_id;
+        return $post_id > 0 ? -(1000000 + $post_id) : 0;
+    }
+
+    private function post_id_from_virtual_thumb($thumb_id) {
+        $thumb_id = (int) $thumb_id;
+        if ($thumb_id >= -1000000) {
+            return 0;
+        }
+        return abs($thumb_id) - 1000000;
+    }
+
+    private function real_thumbnail_id($post_id) {
+        $this->reading_thumbnail_meta = true;
+        $thumb = (int) get_post_meta((int) $post_id, '_thumbnail_id', true);
+        $this->reading_thumbnail_meta = false;
+        return $thumb > 0 && get_post($thumb) ? $thumb : 0;
+    }
+
+    private function post_id_from($post) {
+        if ($post instanceof WP_Post) {
+            return (int) $post->ID;
+        }
+        if (is_numeric($post) && (int) $post > 0) {
+            return (int) $post;
+        }
+        $resolved = get_post($post);
+        return $resolved instanceof WP_Post ? (int) $resolved->ID : 0;
+    }
+
+    public function filter_thumbnail_id_meta($value, $object_id, $meta_key, $single) {
+        if ($meta_key !== '_thumbnail_id' || $this->reading_thumbnail_meta) {
+            return $value;
+        }
+        if ($this->real_thumbnail_id($object_id) > 0 || $this->upstream_image_url($object_id) === '') {
+            return $value;
+        }
+        $virtual = $this->virtual_thumbnail_id($object_id);
+        return $single ? $virtual : array($virtual);
+    }
+
+    public function filter_has_post_thumbnail($has, $post, $thumbnail_id = 0) {
+        if ($has) {
+            return $has;
+        }
+        return $this->upstream_image_url($this->post_id_from($post)) !== '';
+    }
+
+    public function filter_post_thumbnail_html($html, $post_id, $post_thumbnail_id, $size, $attr) {
+        if ($html !== '') {
+            return $html;
+        }
+        $url = $this->display_image_url($post_id);
+        if ($url === '') {
+            return $html;
+        }
+        $alt = sanitize_text_field((string) get_post_meta((int) $post_id, '_tr_ai_wire_featured_image_alt', true));
+        if ($alt === '') {
+            $alt = get_the_title($post_id);
+        }
+        $attr = is_array($attr) ? $attr : array();
+        $class = isset($attr['class']) ? $attr['class'] : 'attachment-post-thumbnail size-post-thumbnail wp-post-image';
+        return '<img src="' . esc_url($url) . '" alt="' . esc_attr($alt) . '" class="' . esc_attr($class) . '" />';
+    }
+
+    public function filter_post_thumbnail_url($url, $post, $size) {
+        if ($url) {
+            return $url;
+        }
+        return $this->display_image_url($this->post_id_from($post));
+    }
+
+    public function filter_image_downsize($out, $id, $size) {
+        if ($out) {
+            return $out;
+        }
+        $post_id = $this->post_id_from_virtual_thumb($id);
+        $url = $post_id > 0 ? $this->display_image_url($post_id) : '';
+        if ($url === '') {
+            return $out;
+        }
+        return array($url, 0, 0, false);
+    }
+
+    public function filter_attachment_url($url, $attachment_id) {
+        if ($url) {
+            return $url;
+        }
+        $post_id = $this->post_id_from_virtual_thumb($attachment_id);
+        return $post_id > 0 ? $this->display_image_url($post_id) : $url;
+    }
+
+    private function post_has_featured_image($post_id) {
+        if ($this->upstream_image_url($post_id) !== '') {
+            return true;
+        }
+        return $this->real_thumbnail_id($post_id) > 0;
+    }
+
+    private function skip_item_without_image($id, $reason = 'No source image; skipped.') {
+        $this->update_item((int) $id, array(
+            'status' => 'quarantined',
+            'error_text' => $reason,
+            'wp_post_id' => null,
+        ));
+    }
+
+    private function item_with_source_body($id, $item) {
+        $item = is_array($item) ? $item : array();
+        if (trim((string) ($item['source_body'] ?? '')) !== '') {
+            return $item;
+        }
+        $stored = $this->get_item((int) $id);
+        if (is_array($stored) && !empty($stored['source_body'])) {
+            $item['source_body'] = $stored['source_body'];
+        }
+        return $item;
     }
 
     private function home_desk_needles() {
@@ -546,6 +536,7 @@ trait TechnoRapper_AI_Wire_Publisher {
 
     private function create_draft($id, $item, $rewrite, $review, $s = null) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $item = $this->item_with_source_body($id, $item);
         $status = $this->mapped_post_status($s);
         $publish = ($status === 'publish');
         // Recover a post created just before a worker crash; never duplicate it.
@@ -561,6 +552,17 @@ trait TechnoRapper_AI_Wire_Publisher {
         $rewrite = $this->prepare_rewrite_seo($rewrite);
         if (!empty($existing_posts)) {
             $existing_id = (int) $existing_posts[0];
+            $this->maybe_set_featured_image($existing_id, $item, $rewrite);
+            if (!$this->post_has_featured_image($existing_id)) {
+                if (get_post_status($existing_id) === 'publish') {
+                    $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
+                    $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => 'No source image; kept off the home board.', 'rewrite_json' => wp_json_encode($rewrite)));
+                    return;
+                }
+                wp_delete_post($existing_id, true);
+                $this->skip_item_without_image($id);
+                return;
+            }
             if ($publish && in_array(get_post_status($existing_id), array('draft', 'pending', 'future'), true)) {
                 wp_update_post(array(
                     'ID' => $existing_id,
@@ -577,6 +579,10 @@ trait TechnoRapper_AI_Wire_Publisher {
         $body = wp_kses_post($rewrite['body_html'] ?? '');
         if (!$title || ($body === '' && ($s['map_content'] ?? 'rewrite') === 'rewrite')) {
             $this->update_item($id, array('status' => 'quarantined', 'error_text' => 'Rewrite did not include a title and body.'));
+            return;
+        }
+        if ($this->source_image_url($item['source_body'] ?? '') === '') {
+            $this->skip_item_without_image($id);
             return;
         }
         if ($body === '' && ($s['map_content'] ?? 'rewrite') === 'source' && trim((string) ($item['source_body'] ?? '')) === '') {
@@ -623,6 +629,11 @@ trait TechnoRapper_AI_Wire_Publisher {
         }
         $this->apply_seo_meta((int) $post_id, $rewrite);
         $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);
+        if (!$this->post_has_featured_image((int) $post_id)) {
+            wp_delete_post((int) $post_id, true);
+            $this->skip_item_without_image($id);
+            return;
+        }
         $this->update_item($id, array(
             'status' => $this->queue_status_for_post((int) $post_id, $publish),
             'wp_post_id' => (int) $post_id,
@@ -667,6 +678,10 @@ trait TechnoRapper_AI_Wire_Publisher {
                 ),
             ),
         );
+        $image = $this->display_image_url($post_id);
+        if ($image !== '') {
+            $graph[0]['image'] = array($image);
+        }
         if (is_array($faq) && $faq) {
             $questions = array();
             foreach ($faq as $row) {
