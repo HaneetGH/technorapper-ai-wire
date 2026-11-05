@@ -822,6 +822,63 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertGreaterThan(0, (int) $row['wp_post_id']);
     }
 
+    public function test_retry_publishes_a_low_review_score() {
+        $id = $this->create_queue_item();
+        $item = array(
+            'status' => 'quarantined',
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-low-score',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+        );
+        $rewrite = array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        );
+        $review = array(
+            'verdict' => 'revise',
+            'score' => 12,
+            'policy_flags' => array(),
+            'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+        );
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_min_score'] = 70;
+        $this->assertTrue($this->invoke_private('should_force_publish_retry', array($item, $rewrite, $review, $settings)));
+        $this->invoke_private('force_publish_item', array($id, $item, $rewrite, $review, $settings));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+    }
+
+    public function test_run_publishes_a_quarantined_score_hold() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'revise',
+                'score' => 12,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+            'error_text' => 'Held for editorial review: score 12 < 70',
+        ), array('id' => $id));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_min_score'] = 70;
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+    }
+
     public function test_auto_publish_creates_a_live_post() {
         $id = $this->create_queue_item();
         global $wpdb;
