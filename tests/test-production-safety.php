@@ -405,6 +405,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('manual', $settings['cron_frequency']);
         $this->assertSame(0, $settings['max_posts_per_day']);
         $this->assertSame(1, $settings['auto_publish']);
+        $this->assertSame(1, $settings['pin_to_homepage']);
         $this->assertSame(4000, $settings['max_output_tokens']);
         $this->assertSame('', $settings['feeds']);
         $this->assertSame('', $this->invoke_private('api_key'));
@@ -676,6 +677,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'name' => 'Android',
             'slug' => 'android',
         ));
+        self::factory()->category->create(array(
+            'name' => 'News',
+            'slug' => 'tech',
+        ));
         $id = $this->create_queue_item();
         $this->invoke_private('create_draft', array($id, array(
             'source_url' => 'https://example.com/story',
@@ -688,7 +693,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'title' => 'Samsung Android update lands today',
             'lede' => 'A concise summary.',
             'body_html' => '<p>Grounded article body.</p>',
-            'category' => 'Technology',
+            'category' => 'News',
             'tags' => array('Android', 'Samsung'),
         ), array('verdict' => 'pass'), TechnoRapper_AI_Wire::defaults()));
         $posts = get_posts(array(
@@ -704,7 +709,38 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains((int) get_option('default_category'), $cats);
         $this->assertContains((int) $android->term_id, $cats);
         $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
+        $this->assertTrue(is_sticky((int) $posts[0]->ID));
+        $this->assertGreaterThan(0, (int) $posts[0]->post_author);
         $this->assertContains('index', (array) get_post_meta((int) $posts[0]->ID, 'rank_math_robots', true));
+    }
+
+    public function test_repair_puts_existing_plugin_posts_on_home_desks() {
+        $apple = self::factory()->category->create_and_get(array(
+            'name' => 'Apple',
+            'slug' => 'apple',
+        ));
+        $id = $this->create_queue_item();
+        $post_id = self::factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'iPhone camera update',
+            'post_author' => 0,
+            'meta_input' => array(
+                '_tr_ai_wire_queue_id' => $id,
+            ),
+        ));
+        $this->invoke_private('update_item', array($id, array(
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'iPhone camera update',
+                'category' => 'News',
+                'tags' => array('iPhone', 'Apple'),
+            )),
+        )));
+        $this->assertFalse(has_post_thumbnail($post_id));
+        $this->assertSame(1, $this->plugin->repair_home_posts(20));
+        $this->assertContains((int) $apple->term_id, wp_get_post_categories($post_id));
+        $this->assertTrue(has_post_thumbnail($post_id));
+        $this->assertTrue(is_sticky($post_id));
+        $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);
     }
 
     public function test_writer_and_reviewer_prompts_include_google_ranking_steps() {
@@ -729,6 +765,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Do not deduct below 80', $reviewer);
         $this->assertStringContainsString('none were supplied', $reviewer);
         $this->assertStringContainsString('that is not a failure', $writer);
+        $this->assertStringContainsString('Never use News or Technology', $writer);
+        $this->assertStringContainsString('homepage desk', $writer);
     }
 
     public function test_review_input_does_not_punish_missing_internal_links() {
