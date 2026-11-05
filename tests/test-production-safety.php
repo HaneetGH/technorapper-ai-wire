@@ -671,6 +671,42 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringStartsWith('useful-technology-update', $posts[0]->post_name);
     }
 
+    public function test_published_post_lands_on_home_category_with_image() {
+        $android = self::factory()->category->create_and_get(array(
+            'name' => 'Android',
+            'slug' => 'android',
+        ));
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-home',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'Plain text with no image.',
+        ), array(
+            'title' => 'Samsung Android update lands today',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'category' => 'Technology',
+            'tags' => array('Android', 'Samsung'),
+        ), array('verdict' => 'pass'), TechnoRapper_AI_Wire::defaults()));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assertSame('publish', get_post_status($posts[0]));
+        $cats = wp_get_post_categories((int) $posts[0]->ID);
+        $this->assertContains((int) get_option('default_category'), $cats);
+        $this->assertContains((int) $android->term_id, $cats);
+        $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
+        $this->assertContains('index', (array) get_post_meta((int) $posts[0]->ID, 'rank_math_robots', true));
+    }
+
     public function test_writer_and_reviewer_prompts_include_google_ranking_steps() {
         $writer = $this->invoke_private('writer_prompt', array('A'));
         $reviewer = $this->invoke_private('reviewer_prompt', array(TechnoRapper_AI_Wire::defaults()));
