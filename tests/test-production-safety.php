@@ -261,7 +261,6 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertWPError($result);
         $this->assertSame('tr_ai_wire_api_permanent', $result->get_error_code());
         $this->assertSame(TechnoRapper_AI_Wire::API_TIMEOUT, $captured_timeout);
-        $this->assertSame(45, $captured_timeout);
     }
 
     public function test_schema_upgrade_does_not_clear_scheduled_retry_events() {
@@ -406,6 +405,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('manual', $settings['cron_frequency']);
         $this->assertSame(0, $settings['max_posts_per_day']);
         $this->assertSame(1, $settings['auto_publish']);
+        $this->assertSame(4000, $settings['max_output_tokens']);
         $this->assertSame('', $settings['feeds']);
         $this->assertSame('', $this->invoke_private('api_key'));
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
@@ -426,6 +426,21 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         update_option(TechnoRapper_AI_Wire::OPTION, $saved, false);
         TechnoRapper_AI_Wire::enable_auto_publish_once();
         $this->assertSame(0, (int) get_option(TechnoRapper_AI_Wire::OPTION)['auto_publish']);
+    }
+
+    public function test_existing_installs_raise_output_tokens_for_detailed_articles() {
+        delete_option('tr_ai_wire_detailed_output_on');
+        update_option(TechnoRapper_AI_Wire::OPTION, array(
+            'max_output_tokens' => 1200,
+            'feeds' => 'https://example.com/feed.xml',
+        ), false);
+        TechnoRapper_AI_Wire::enable_detailed_output_once();
+        $saved = get_option(TechnoRapper_AI_Wire::OPTION);
+        $this->assertSame(4000, (int) $saved['max_output_tokens']);
+        $saved['max_output_tokens'] = 2500;
+        update_option(TechnoRapper_AI_Wire::OPTION, $saved, false);
+        TechnoRapper_AI_Wire::enable_detailed_output_once();
+        $this->assertSame(2500, (int) get_option(TechnoRapper_AI_Wire::OPTION)['max_output_tokens']);
     }
 
     public function test_revise_review_creates_a_draft_for_human_editing() {
