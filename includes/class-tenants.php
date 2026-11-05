@@ -149,6 +149,20 @@ trait TechnoRapper_AI_Wire_Tenants {
         return $out;
     }
 
+    private function tenant_by_id($id, $s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $id = sanitize_text_field((string) $id);
+        if ($id === '') {
+            return null;
+        }
+        foreach ((array) ($s['tenants'] ?? array()) as $tenant) {
+            if (($tenant['id'] ?? '') === $id) {
+                return $tenant;
+            }
+        }
+        return null;
+    }
+
     private function tenant_for_feed($feed_url, $s = null) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
         $feed_url = esc_url_raw((string) $feed_url, array('http', 'https'));

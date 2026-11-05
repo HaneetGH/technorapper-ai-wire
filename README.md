@@ -113,8 +113,32 @@ All day-to-day settings are available in one place under **AI Wire**:
 | After rewrite: SEO tests | Minimum SEO score, max readability errors, and required focus keyphrase / social markup. The plugin fills Rank Math, Yoast and AIOSEO fields on the draft |
 | Scores | Average review and SEO scores for drafts/published items, graphed by day, week, or month |
 | Queue controls | Stop the current run, delete one item, clear unfinished items, or clean the whole board |
+| Use from your AI agent | Optional MCP connection via Easy MCP AI. AI Wire registers WordPress abilities so Claude, ChatGPT, Cursor, or any MCP client can list tenants, inspect the queue, and run or pause work |
 
 The API-key section has its own save action so the secret is not included in the ordinary WordPress settings payload. The other configuration values are saved together with **Save settings**.
+
+### Use AI Wire from Claude, ChatGPT, or Cursor
+
+AI Wire does not run its own MCP server. Like Feedzy, it registers **WordPress abilities** (WordPress 6.9+) that a connector such as [Easy MCP AI](https://wordpress.org/plugins/easy-mcp-ai/) exposes as MCP tools. Easy MCP is a separate free plugin; it provides the site MCP URL (`/wp-json/easy-mcp-ai/v1/mcp`), OAuth or API-token auth, and the Connect to Claude / ChatGPT / Cursor buttons.
+
+1. In **AI Wire**, use **Install and activate Easy MCP** (or activate it if it is already installed).
+2. Copy **Your site’s MCP URL** and connect Claude, ChatGPT, Cursor, or another MCP client. Pretty permalinks must be enabled.
+3. In **Easy MCP AI → Tools → Abilities**, enable the **TechnoRapper AI Wire** group. Start with the read-only abilities if you only want reporting.
+4. Ask the agent to do AI Wire work. Example prompts:
+
+   - “Set up an AI Wire tenant that rewrites new articles from https://example.com/feed into my News category as drafts.”
+   - “Find the tenants that have stopped bringing in posts and pause them.”
+   - “Run my News tenant now.”
+
+| Ability | What it does |
+|---|---|
+| `tr-ai-wire/list-tenants`, `get-tenant` | Inspect feed tenants |
+| `tr-ai-wire/create-tenant`, `update-tenant`, `delete-tenant` | Onboard, pause/resume, or remove a feed |
+| `tr-ai-wire/list-queue-items`, `get-queue-item` | Inspect rewrite/review status |
+| `tr-ai-wire/get-run-status`, `get-usage`, `get-settings`, `get-scores`, `get-feed-health` | Health, spend, and score reporting (API key value is never returned) |
+| `tr-ai-wire/run-now`, `stop-run`, `retry-item`, `delete-queue-item` | Queue a run, stop a lock, retry or delete a queue row |
+
+Every ability still requires `manage_options`. Connecting an agent does not bypass WordPress roles. On WordPress older than 6.9 the connect card still appears, but AI Wire tools are not registered until the Abilities API is available.
 
 ### Suggested initial production settings
 
@@ -200,7 +224,7 @@ The API-key section has its own save action so the secret is not included in the
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.
 - First-party engaged-read counters are approximate and can be blocked by browser privacy settings, ad blockers, JavaScript errors or session-storage restrictions.
-- There is no native GA4, Search Console or AdSense data import, revenue attribution, editorial approval workflow, alerting service or remote job dashboard in this release.
+- There is no native GA4, Search Console or AdSense data import, revenue attribution, editorial approval workflow or alerting service in this release. Remote agent access uses WordPress abilities plus Easy MCP AI; it is not a hosted job dashboard.
 
 ## CI and release pipeline
 
@@ -248,6 +272,7 @@ The installable plugin is no longer one 3,000-line file. `technorapper-ai-wire.p
 | `class-seo.php` | Rewrite SEO tests and meta |
 | `class-publisher.php` | WordPress posts, homepage, featured images |
 | `class-scores.php` | Score graph |
+| `class-abilities.php` | WordPress Abilities API tools for MCP clients, plus the Easy MCP connect card |
 
 ## Development checks
 
