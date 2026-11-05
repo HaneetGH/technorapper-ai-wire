@@ -402,6 +402,60 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK));
     }
 
+    public function test_revise_review_creates_a_draft_for_human_editing() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'revise',
+                'safe_to_publish' => false,
+                'fact_flags' => array(),
+                'policy_flags' => array(),
+                'pragmatism' => array(
+                    'is_new' => false,
+                    'is_useful' => true,
+                    'is_grounded' => true,
+                    'similarity_risk' => 'high',
+                ),
+            )),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults()));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('draft', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertSame('draft', get_post_status((int) $row['wp_post_id']));
+    }
+
+    public function test_reject_or_policy_review_stays_quarantined() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'reject',
+                'safe_to_publish' => false,
+                'policy_flags' => array('hate'),
+                'pragmatism' => array('is_grounded' => true),
+            )),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults()));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertStringContainsString('verdict=reject', (string) $row['error_text']);
+    }
+
     public function test_zero_budget_blocks_api_spend() {
         $settings = TechnoRapper_AI_Wire::defaults();
         $settings['monthly_budget_usd'] = 0;
