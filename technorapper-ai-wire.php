@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.16
+ * Version: 0.2.17
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.16';
+    const VERSION = '0.2.17';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -166,11 +166,191 @@ final class TechnoRapper_AI_Wire {
             'map_title' => 'rewrite',
             'map_date' => 'now',
             'map_content' => 'rewrite',
+            'tenants' => array(),
         );
     }
 
     private function settings() {
-        return wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        $s = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        if (empty($s['tenants']) || !is_array($s['tenants'])) {
+            $s['tenants'] = $this->tenants_from_feed_lines($s['feeds'] ?? '', $s);
+        }
+        return $s;
+    }
+
+    private function tenant_defaults() {
+        return array(
+            'id' => '',
+            'url' => '',
+            'name' => '',
+            'enabled' => 1,
+            'pin_to_homepage' => 1,
+            'map_post_type' => 'post',
+            'map_taxonomy' => 'category',
+            'map_terms' => array(),
+            'map_auto_desk' => 1,
+            'map_post_status' => 'auto',
+            'map_title' => 'rewrite',
+            'map_date' => 'now',
+            'map_content' => 'rewrite',
+        );
+    }
+
+    private function tenant_id_for_url($url) {
+        return substr(hash('sha256', (string) $url), 0, 12);
+    }
+
+    private function tenants_from_feed_lines($feeds, $s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
+        $tenants = array();
+        $lines = preg_split('/\r\n|\r|\n/', (string) $feeds);
+        foreach ((array) $lines as $line) {
+            $line = trim($line);
+            if ($line === '' || strpos($line, '#') === 0) {
+                continue;
+            }
+            $parts = array_map('trim', explode('|', $line, 2));
+            $url = esc_url_raw($parts[0], array('http', 'https'));
+            if (!$url || !wp_http_validate_url($url)) {
+                continue;
+            }
+            $name = isset($parts[1]) ? sanitize_text_field($parts[1]) : '';
+            $tenants[] = $this->sanitize_tenant(array(
+                'url' => $url,
+                'name' => $name,
+                'enabled' => 1,
+                'pin_to_homepage' => $s['pin_to_homepage'] ?? 1,
+                'map_post_type' => $s['map_post_type'] ?? 'post',
+                'map_taxonomy' => $s['map_taxonomy'] ?? 'category',
+                'map_terms' => $s['map_terms'] ?? array(),
+                'map_auto_desk' => $s['map_auto_desk'] ?? 1,
+                'map_post_status' => $s['map_post_status'] ?? 'auto',
+                'map_title' => $s['map_title'] ?? 'rewrite',
+                'map_date' => $s['map_date'] ?? 'now',
+                'map_content' => $s['map_content'] ?? 'rewrite',
+            ));
+        }
+        return array_values(array_filter($tenants));
+    }
+
+    private function feeds_from_tenants($tenants) {
+        $lines = array();
+        foreach ((array) $tenants as $tenant) {
+            if (empty($tenant['url'])) {
+                continue;
+            }
+            $line = $tenant['url'];
+            if (!empty($tenant['name'])) {
+                $line .= ' | ' . $tenant['name'];
+            }
+            $lines[] = $line;
+        }
+        return implode("\n", array_unique($lines));
+    }
+
+    private function sanitize_tenant($input) {
+        $defaults = $this->tenant_defaults();
+        $url = esc_url_raw($input['url'] ?? '', array('http', 'https'));
+        if (!$url || !wp_http_validate_url($url)) {
+            return null;
+        }
+        $name = sanitize_text_field($input['name'] ?? '');
+        if ($name === '') {
+            $host = wp_parse_url($url, PHP_URL_HOST);
+            $name = is_string($host) ? $host : $url;
+        }
+        $types = $this->mappable_post_types();
+        $type = sanitize_key($input['map_post_type'] ?? $defaults['map_post_type']);
+        $taxes = $this->mappable_taxonomies();
+        $taxonomy = sanitize_key($input['map_taxonomy'] ?? $defaults['map_taxonomy']);
+        $terms = array();
+        foreach ((array) ($input['map_terms'] ?? array()) as $term_id) {
+            $term_id = absint($term_id);
+            if ($term_id > 0 && term_exists($term_id, isset($taxes[$taxonomy]) ? $taxonomy : 'category')) {
+                $terms[] = $term_id;
+            }
+        }
+        $statuses = array('auto', 'publish', 'draft', 'pending');
+        return array(
+            'id' => $this->tenant_id_for_url($url),
+            'url' => $url,
+            'name' => $name,
+            'enabled' => empty($input['enabled']) ? 0 : 1,
+            'pin_to_homepage' => empty($input['pin_to_homepage']) ? 0 : 1,
+            'map_post_type' => isset($types[$type]) ? $type : $defaults['map_post_type'],
+            'map_taxonomy' => isset($taxes[$taxonomy]) ? $taxonomy : $defaults['map_taxonomy'],
+            'map_terms' => array_values(array_unique($terms)),
+            'map_auto_desk' => empty($input['map_auto_desk']) ? 0 : 1,
+            'map_post_status' => in_array($input['map_post_status'] ?? '', $statuses, true) ? $input['map_post_status'] : $defaults['map_post_status'],
+            'map_title' => (($input['map_title'] ?? '') === 'source') ? 'source' : 'rewrite',
+            'map_date' => (($input['map_date'] ?? '') === 'source') ? 'source' : 'now',
+            'map_content' => (($input['map_content'] ?? '') === 'source') ? 'source' : 'rewrite',
+        );
+    }
+
+    private function sanitize_tenants($rows, $new_tenant = array()) {
+        $tenants = array();
+        $seen = array();
+        foreach ((array) $rows as $row) {
+            if (!empty($row['remove'])) {
+                continue;
+            }
+            $tenant = $this->sanitize_tenant($row);
+            if (!$tenant || isset($seen[$tenant['url']])) {
+                continue;
+            }
+            $seen[$tenant['url']] = true;
+            $tenants[] = $tenant;
+        }
+        if (is_array($new_tenant) && !empty($new_tenant['url'])) {
+            $tenant = $this->sanitize_tenant($new_tenant);
+            if ($tenant && empty($seen[$tenant['url']])) {
+                $tenants[] = $tenant;
+            }
+        }
+        return $tenants;
+    }
+
+    private function enabled_tenants($s) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $tenants = !empty($s['tenants']) && is_array($s['tenants']) ? $s['tenants'] : $this->tenants_from_feed_lines($s['feeds'] ?? '', $s);
+        $out = array();
+        foreach ($tenants as $tenant) {
+            if (!empty($tenant['enabled']) && !empty($tenant['url'])) {
+                $out[] = $tenant;
+            }
+        }
+        return $out;
+    }
+
+    private function tenant_for_feed($feed_url, $s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $feed_url = esc_url_raw((string) $feed_url, array('http', 'https'));
+        foreach ((array) ($s['tenants'] ?? array()) as $tenant) {
+            if (!empty($tenant['url']) && $tenant['url'] === $feed_url) {
+                return $tenant;
+            }
+        }
+        foreach ($this->tenants_from_feed_lines($s['feeds'] ?? '', $s) as $tenant) {
+            if ($tenant['url'] === $feed_url) {
+                return $tenant;
+            }
+        }
+        return null;
+    }
+
+    private function settings_for_item($item, $s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $tenant = $this->tenant_for_feed(is_array($item) ? ($item['feed_url'] ?? '') : '', $s);
+        if (!$tenant) {
+            return $s;
+        }
+        foreach (array('pin_to_homepage', 'map_post_type', 'map_taxonomy', 'map_terms', 'map_auto_desk', 'map_post_status', 'map_title', 'map_date', 'map_content') as $key) {
+            if (array_key_exists($key, $tenant)) {
+                $s[$key] = $tenant[$key];
+            }
+        }
+        return $s;
     }
 
     public function register_settings() {
@@ -339,11 +519,23 @@ final class TechnoRapper_AI_Wire {
         $out['map_title'] = (($input['map_title'] ?? '') === 'source') ? 'source' : 'rewrite';
         $out['map_date'] = (($input['map_date'] ?? '') === 'source') ? 'source' : 'now';
         $out['map_content'] = (($input['map_content'] ?? '') === 'source') ? 'source' : 'rewrite';
+        $current = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        if (isset($input['tenants']) || isset($input['new_tenant'])) {
+            $out['tenants'] = $this->sanitize_tenants($input['tenants'] ?? array(), $input['new_tenant'] ?? array());
+            $out['feeds'] = $this->feeds_from_tenants($out['tenants']);
+        } elseif (array_key_exists('feeds', $input)) {
+            $out['tenants'] = $this->tenants_from_feed_lines($out['feeds'], $out);
+            $out['feeds'] = $this->feeds_from_tenants($out['tenants']);
+        } else {
+            $out['tenants'] = !empty($current['tenants']) && is_array($current['tenants']) ? $current['tenants'] : $this->tenants_from_feed_lines($current['feeds'] ?? '', $out);
+            $out['feeds'] = $this->feeds_from_tenants($out['tenants']);
+        }
         return $out;
     }
 
     public function admin_menu() {
         add_menu_page('TechnoRapper AI Wire', 'AI Wire', 'manage_options', 'tr-ai-wire', array($this, 'settings_page'), 'dashicons-rss', 58);
+        add_submenu_page('tr-ai-wire', 'Feed tenants', 'Feed tenants', 'manage_options', 'tr-ai-wire-tenants', array($this, 'settings_page'));
         add_submenu_page('tr-ai-wire', 'Queue & usage', 'Queue & usage', 'manage_options', 'tr-ai-wire-queue', array($this, 'queue_page'));
         add_submenu_page('tr-ai-wire', 'Scores', 'Scores', 'manage_options', 'tr-ai-wire-scores', array($this, 'scores_page'));
         add_submenu_page('tr-ai-wire', 'A/B experiments', 'A/B experiments', 'manage_options', 'tr-ai-wire-experiments', array($this, 'experiments_page'));
@@ -424,7 +616,11 @@ final class TechnoRapper_AI_Wire {
                 <?php settings_fields('tr_ai_wire'); ?>
                 <table class="form-table" role="presentation">
                     <tr><th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th><td><select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]"><?php foreach (array('hourly' => 'Every hour', 'every_3_hours' => 'Every 3 hours', 'every_6_hours' => 'Every 6 hours', 'every_12_hours' => 'Every 12 hours', 'daily' => 'Once per day', 'manual' => 'Manual only (disable scheduled runs)') as $frequency => $label) : ?><option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p></td></tr>
-                    <tr><th scope="row"><label for="tr-feeds">RSS/Atom feeds</label></th><td><textarea id="tr-feeds" name="<?php echo esc_attr(self::OPTION); ?>[feeds]" rows="8" class="large-text code"><?php echo esc_textarea($s['feeds']); ?></textarea><p class="description">One feed per line: <code>https://example.com/feed.xml | Feed label</code></p></td></tr>
+                    <tr><th colspan="2" id="tr-tenants"><h2 style="margin:12px 0 0;">Feed tenants</h2><p class="description">Each RSS/Atom feed is its own tenant. Onboard one source at a time with its own homepage and content mapping. Disabled tenants are not fetched.</p></th></tr>
+                    <tr><th scope="row">Onboard a tenant</th><td><?php $this->render_tenant_fields('new_tenant', array_merge($this->tenant_defaults(), array('pin_to_homepage' => $s['pin_to_homepage'], 'map_post_type' => $s['map_post_type'], 'map_taxonomy' => $s['map_taxonomy'], 'map_terms' => $s['map_terms'], 'map_auto_desk' => $s['map_auto_desk'], 'map_post_status' => $s['map_post_status'], 'map_title' => $s['map_title'], 'map_date' => $s['map_date'], 'map_content' => $s['map_content'])), true); ?><p class="description">Save settings to add this feed as a tenant. Leave the URL blank if you are only editing tenants below.</p></td></tr>
+                    <?php foreach (array_values((array) ($s['tenants'] ?? array())) as $index => $tenant) : ?>
+                    <tr><th scope="row"><?php echo esc_html($tenant['name'] !== '' ? $tenant['name'] : $tenant['url']); ?></th><td><?php $this->render_tenant_fields('tenants][' . (int) $index, $tenant, false); ?></td></tr>
+                    <?php endforeach; ?>
                     <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="2000" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. 350 is the daily target. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row">Auto-publish</th><td><label><input id="tr-auto-publish" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]" value="1" <?php checked($s['auto_publish'], 1); ?>> <strong>Publish posts automatically</strong> — no draft and no Publish button. Passing items go live. Rejected items stay quarantined.</label></td></tr>
                     <tr><th scope="row">Show on homepage</th><td>
@@ -520,6 +716,55 @@ final class TechnoRapper_AI_Wire {
         echo '</select>';
     }
 
+    private function render_tenant_fields($group, $tenant, $is_new = false) {
+        $tenant = wp_parse_args(is_array($tenant) ? $tenant : array(), $this->tenant_defaults());
+        $base = self::OPTION . '[' . $group . ']';
+        $suffix = $is_new ? '-new' : '-' . sanitize_html_class($tenant['id'] !== '' ? $tenant['id'] : (string) wp_unique_id('t'));
+        ?>
+        <div class="tr-tenant" style="border:1px solid #c3c4c7;padding:12px 14px;background:#fff;max-width:720px;">
+            <p><label for="tr-tenant-url<?php echo esc_attr($suffix); ?>"><strong>Feed URL</strong></label><br>
+            <input id="tr-tenant-url<?php echo esc_attr($suffix); ?>" class="large-text" type="url" name="<?php echo esc_attr($base); ?>[url]" value="<?php echo esc_attr($tenant['url']); ?>" placeholder="https://example.com/feed.xml"></p>
+            <p><label for="tr-tenant-name<?php echo esc_attr($suffix); ?>"><strong>Tenant name</strong></label><br>
+            <input id="tr-tenant-name<?php echo esc_attr($suffix); ?>" class="regular-text" type="text" name="<?php echo esc_attr($base); ?>[name]" value="<?php echo esc_attr($tenant['name']); ?>" placeholder="Android Authority"></p>
+            <?php if (!$is_new) : ?>
+                <p><label><input type="checkbox" name="<?php echo esc_attr($base); ?>[enabled]" value="1" <?php checked(!empty($tenant['enabled'])); ?>> Enabled — fetch and publish this tenant</label></p>
+                <p><label><input type="checkbox" name="<?php echo esc_attr($base); ?>[remove]" value="1"> Remove this tenant</label></p>
+            <?php else : ?>
+                <input type="hidden" name="<?php echo esc_attr($base); ?>[enabled]" value="1">
+            <?php endif; ?>
+            <p><strong>Show on homepage</strong><br>
+            <label><input type="radio" name="<?php echo esc_attr($base); ?>[pin_to_homepage]" value="1" <?php checked(!empty($tenant['pin_to_homepage'])); ?>> On</label>
+            &nbsp;
+            <label><input type="radio" name="<?php echo esc_attr($base); ?>[pin_to_homepage]" value="0" <?php checked(empty($tenant['pin_to_homepage'])); ?>> Off</label></p>
+            <details>
+                <summary>Map content for this tenant</summary>
+                <p><label>Post type <select name="<?php echo esc_attr($base); ?>[map_post_type]"><?php foreach ($this->mappable_post_types() as $type => $label) : ?><option value="<?php echo esc_attr($type); ?>" <?php selected($tenant['map_post_type'], $type); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label></p>
+                <p><label>Taxonomy <select name="<?php echo esc_attr($base); ?>[map_taxonomy]"><?php foreach ($this->mappable_taxonomies() as $tax => $label) : ?><option value="<?php echo esc_attr($tax); ?>" <?php selected($tenant['map_taxonomy'], $tax); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label></p>
+                <div style="max-height:140px;overflow:auto;border:1px solid #dcdcde;padding:8px;margin:8px 0;">
+                    <?php
+                    $map_terms = array_map('intval', (array) ($tenant['map_terms'] ?? array()));
+                    $term_list = get_terms(array('taxonomy' => $tenant['map_taxonomy'] ?: 'category', 'hide_empty' => false, 'number' => 200));
+                    if (is_wp_error($term_list) || empty($term_list)) :
+                        ?><p class="description">No terms found for this taxonomy yet.</p><?php
+                    else :
+                        foreach ($term_list as $term) :
+                            ?>
+                            <label style="display:block;margin:3px 0;"><input type="checkbox" name="<?php echo esc_attr($base); ?>[map_terms][]" value="<?php echo esc_attr((string) $term->term_id); ?>" <?php checked(in_array((int) $term->term_id, $map_terms, true)); ?>> <?php echo esc_html($term->name); ?></label>
+                            <?php
+                        endforeach;
+                    endif;
+                    ?>
+                </div>
+                <p><label><input type="checkbox" name="<?php echo esc_attr($base); ?>[map_auto_desk]" value="1" <?php checked(!empty($tenant['map_auto_desk'])); ?>> Auto-match a desk from the title and tags</label></p>
+                <p><label>Post status <select name="<?php echo esc_attr($base); ?>[map_post_status]"><?php foreach (array('auto' => 'Auto', 'publish' => 'Published', 'draft' => 'Draft', 'pending' => 'Pending') as $value => $label) : ?><option value="<?php echo esc_attr($value); ?>" <?php selected($tenant['map_post_status'], $value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label></p>
+                <p><label>Title <select name="<?php echo esc_attr($base); ?>[map_title]"><option value="rewrite" <?php selected($tenant['map_title'], 'rewrite'); ?>>Rewrite</option><option value="source" <?php selected($tenant['map_title'], 'source'); ?>>Source</option></select></label>
+                &nbsp;<label>Date <select name="<?php echo esc_attr($base); ?>[map_date]"><option value="now" <?php selected($tenant['map_date'], 'now'); ?>>Now</option><option value="source" <?php selected($tenant['map_date'], 'source'); ?>>Source</option></select></label>
+                &nbsp;<label>Content <select name="<?php echo esc_attr($base); ?>[map_content]"><option value="rewrite" <?php selected($tenant['map_content'], 'rewrite'); ?>>Rewrite</option><option value="source" <?php selected($tenant['map_content'], 'source'); ?>>Source</option></select></label></p>
+            </details>
+        </div>
+        <?php
+    }
+
     public function run_now() {
         if (!current_user_can('manage_options')) {
             wp_die(esc_html__('You are not allowed to run this task.', 'technorapper-ai-wire'));
@@ -546,7 +791,7 @@ final class TechnoRapper_AI_Wire {
         if ($item && in_array($item['status'], array('error', 'retry_wait', 'quarantined'), true)) {
             $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
             $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
-            $s = $this->settings();
+            $s = $this->settings_for_item($item, $this->settings());
             if ($this->should_force_publish_retry($item, $rewrite, $review, $s)) {
                 $this->force_publish_item($id, $item, $rewrite, $review, $s);
             } else {
@@ -699,7 +944,7 @@ final class TechnoRapper_AI_Wire {
                     'tags' => wp_get_post_tags($post->ID, array('fields' => 'names')),
                 );
             }
-            $this->prepare_homepage_visibility((int) $post->ID, is_array($item) ? $item : array(), $rewrite, $s);
+            $this->prepare_homepage_visibility((int) $post->ID, is_array($item) ? $item : array(), $rewrite, $this->settings_for_item(is_array($item) ? $item : array(), $s));
             $count++;
         }
         return $count;
@@ -1046,15 +1291,17 @@ final class TechnoRapper_AI_Wire {
         add_filter('wp_feed_cache_transient_lifetime', $lifetime);
         add_filter('http_headers_useragent', array($this, 'feed_user_agent'));
         add_filter('wp_feed_options', array($this, 'configure_feed'), 10, 2);
-        $lines = preg_split('/\r\n|\r|\n/', (string) $s['feeds']);
-        foreach ($lines as $line) {
-            $parts = array_map('trim', explode('|', $line, 2));
-            $feed_url = esc_url_raw($parts[0], array('http', 'https'));
+        foreach ($this->enabled_tenants($s) as $tenant) {
+            $feed_url = esc_url_raw($tenant['url'] ?? '', array('http', 'https'));
             if (!$feed_url || !wp_http_validate_url($feed_url)) {
                 continue;
             }
             $summary['feeds_checked']++;
-            $feed_name = isset($parts[1]) && $parts[1] !== '' ? sanitize_text_field($parts[1]) : wp_parse_url($feed_url, PHP_URL_HOST);
+            $feed_name = sanitize_text_field($tenant['name'] ?? '');
+            if ($feed_name === '') {
+                $host = wp_parse_url($feed_url, PHP_URL_HOST);
+                $feed_name = is_string($host) ? $host : $feed_url;
+            }
             $entries = $this->read_feed_entries($feed_url, $summary, $feed_name);
             foreach ($entries as $entry) {
                 $url = esc_url_raw($entry['url'] ?? '', array('http', 'https'));
@@ -1907,6 +2154,7 @@ final class TechnoRapper_AI_Wire {
         if (!$item || !in_array($item['status'], array('new', 'waiting_budget', 'retry_wait', 'rewritten', 'reviewed', 'quarantined'), true)) {
             return;
         }
+        $s = $this->settings_for_item($item, $s);
         $writer_prompt = $this->writer_prompt($item['variant'] ?? 'A');
         $writer_input = $this->build_writer_input($item);
         $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
@@ -2551,6 +2799,7 @@ final class TechnoRapper_AI_Wire {
                 '_tr_ai_wire_variant' => in_array(($item['variant'] ?? 'A'), array('A', 'B'), true) ? $item['variant'] : 'A',
                 '_tr_ai_wire_source_guid' => sanitize_text_field($item['source_guid']),
                 '_tr_ai_wire_queue_id' => (int) $id,
+                '_tr_ai_wire_tenant_id' => $this->tenant_id_for_url($item['feed_url'] ?? ''),
                 '_tr_ai_wire_review' => wp_json_encode($review),
             ),
         );
