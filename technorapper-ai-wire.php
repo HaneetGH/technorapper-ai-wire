@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.8
+ * Version: 0.2.9
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.8';
+    const VERSION = '0.2.9';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -1262,21 +1262,177 @@ final class TechnoRapper_AI_Wire {
         if ($post_id <= 0 || has_post_thumbnail($post_id)) {
             return;
         }
-        $url = $this->source_image_url($item['source_body'] ?? '');
-        if (!$url) {
-            return;
-        }
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
-        $attachment_id = media_sideload_image($url, $post_id, sanitize_text_field($rewrite['featured_image_alt'] ?? ''), 'id');
-        if (is_wp_error($attachment_id) || !$attachment_id) {
+        $alt = sanitize_text_field($rewrite['featured_image_alt'] ?? ($rewrite['title'] ?? ''));
+        $url = $this->source_image_url($item['source_body'] ?? '');
+        $attachment_id = 0;
+        if ($url) {
+            $sideload = media_sideload_image($url, $post_id, $alt, 'id');
+            if (!is_wp_error($sideload) && $sideload) {
+                $attachment_id = (int) $sideload;
+            }
+        }
+        if ($attachment_id <= 0) {
+            $attachment_id = $this->generate_featured_image($post_id, (string) ($rewrite['title'] ?? ''), $alt);
+        }
+        if ($attachment_id <= 0) {
             return;
         }
-        set_post_thumbnail($post_id, (int) $attachment_id);
-        $alt = sanitize_text_field($rewrite['featured_image_alt'] ?? '');
+        set_post_thumbnail($post_id, $attachment_id);
         if ($alt !== '') {
-            update_post_meta((int) $attachment_id, '_wp_attachment_image_alt', $alt);
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt);
+        }
+    }
+
+    private function generate_featured_image($post_id, $title, $alt) {
+        $png = $this->featured_image_png((string) $title);
+        if ($png === '') {
+            return 0;
+        }
+        $upload = wp_upload_bits('technorapper-' . (int) $post_id . '-' . time() . '.png', null, $png);
+        if (!empty($upload['error']) || empty($upload['file'])) {
+            return 0;
+        }
+        $filetype = wp_check_filetype($upload['file'], null);
+        $attachment_id = wp_insert_attachment(array(
+            'post_mime_type' => $filetype['type'] ? $filetype['type'] : 'image/png',
+            'post_title' => $alt !== '' ? $alt : 'TechnoRapper',
+            'post_content' => '',
+            'post_status' => 'inherit',
+        ), $upload['file'], (int) $post_id);
+        if (is_wp_error($attachment_id) || !$attachment_id) {
+            return 0;
+        }
+        $meta = wp_generate_attachment_metadata($attachment_id, $upload['file']);
+        if (is_array($meta)) {
+            wp_update_attachment_metadata($attachment_id, $meta);
+        }
+        return (int) $attachment_id;
+    }
+
+    private function featured_image_png($title) {
+        if (function_exists('imagecreatetruecolor')) {
+            $width = 1200;
+            $height = 630;
+            $image = imagecreatetruecolor($width, $height);
+            if ($image) {
+                $bg = imagecolorallocate($image, 16, 24, 40);
+                $accent = imagecolorallocate($image, 56, 189, 248);
+                $white = imagecolorallocate($image, 248, 250, 252);
+                $muted = imagecolorallocate($image, 148, 163, 184);
+                imagefilledrectangle($image, 0, 0, $width, $height, $bg);
+                imagefilledrectangle($image, 0, 0, 18, $height, $accent);
+                imagestring($image, 5, 56, 72, 'TechnoRapper', $accent);
+                $y = 150;
+                foreach (explode("\n", wordwrap(wp_strip_all_tags($title), 36)) as $line) {
+                    imagestring($image, 5, 56, $y, $line, $white);
+                    $y += 36;
+                    if ($y > 500) {
+                        break;
+                    }
+                }
+                imagestring($image, 3, 56, 560, 'technorapper.com', $muted);
+                ob_start();
+                $ok = imagepng($image);
+                $png = ob_get_clean();
+                imagedestroy($image);
+                if ($ok && $png !== '') {
+                    return $png;
+                }
+            }
+        }
+        if (!function_exists('gzcompress')) {
+            return '';
+        }
+        $width = 1200;
+        $height = 630;
+        $row = "\x00" . str_repeat("\x10\x18\x28", $width);
+        $raw = str_repeat($row, $height);
+        $ihdr = pack('NNCCCCC', $width, $height, 8, 2, 0, 0, 0);
+        return "\x89PNG\r\n\x1a\n" . $this->png_chunk('IHDR', $ihdr) . $this->png_chunk('IDAT', gzcompress($raw, 9)) . $this->png_chunk('IEND', '');
+    }
+
+    private function png_chunk($type, $data) {
+        return pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+    }
+
+    private function resolve_post_categories($rewrite) {
+        $ids = array();
+        $default = (int) get_option('default_category');
+        if ($default > 0 && term_exists($default, 'category')) {
+            $ids[] = $default;
+        }
+        $matched = $this->match_existing_category($rewrite);
+        if ($matched > 0 && !in_array($matched, $ids, true)) {
+            $ids[] = $matched;
+        }
+        return $ids;
+    }
+
+    private function assign_home_categories($post_id, $rewrite) {
+        $ids = $this->resolve_post_categories($rewrite);
+        if ($ids) {
+            wp_set_post_categories((int) $post_id, $ids, false);
+        }
+    }
+
+    private function match_existing_category($rewrite) {
+        $wanted = trim(sanitize_text_field($rewrite['category'] ?? ''));
+        if ($wanted !== '') {
+            $term = get_term_by('name', $wanted, 'category');
+            if (!$term) {
+                $term = get_term_by('slug', sanitize_title($wanted), 'category');
+            }
+            if ($term && !is_wp_error($term)) {
+                return (int) $term->term_id;
+            }
+        }
+        $hay = strtolower($wanted . ' ' . ($rewrite['title'] ?? '') . ' ' . implode(' ', (array) ($rewrite['tags'] ?? array())));
+        $needles = array(
+            'android' => array('android', 'samsung', 'pixel', 'one ui', 'galaxy'),
+            'apple' => array('apple', 'iphone', 'ipad', 'ios', 'macbook'),
+            'guides' => array('guide', 'how to', 'deal', 'best '),
+        );
+        foreach (get_categories(array('hide_empty' => false, 'number' => 80)) as $cat) {
+            $slug = strtolower($cat->slug);
+            $name = strtolower($cat->name);
+            if ($wanted !== '' && (strpos($name, strtolower($wanted)) !== false || strpos(strtolower($wanted), $name) !== false)) {
+                return (int) $cat->term_id;
+            }
+            foreach ($needles as $desk => $words) {
+                if ($slug !== $desk && $name !== $desk) {
+                    continue;
+                }
+                foreach ($words as $word) {
+                    if (strpos($hay, $word) !== false) {
+                        return (int) $cat->term_id;
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+
+    private function refresh_front_page($post_id) {
+        $post_id = (int) $post_id;
+        if ($post_id > 0) {
+            clean_post_cache($post_id);
+        }
+        delete_transient('wp_latest_posts');
+        wp_cache_delete('wp_get_archives', 'general');
+        if (function_exists('wp_cache_post_change')) {
+            wp_cache_post_change($post_id);
+        }
+        if (function_exists('rocket_clean_home')) {
+            rocket_clean_home();
+        }
+        if (function_exists('wp_cache_clear_cache')) {
+            wp_cache_clear_cache();
+        }
+        if (function_exists('litepeed_purge_url')) {
+            litepeed_purge_url(home_url('/'));
         }
     }
 
@@ -1728,6 +1884,8 @@ final class TechnoRapper_AI_Wire {
             '_tr_ai_wire_faq' => wp_json_encode(is_array($rewrite['faq'] ?? null) ? $rewrite['faq'] : array()),
             '_tr_ai_wire_takeaways' => wp_json_encode(is_array($rewrite['key_takeaways'] ?? null) ? $rewrite['key_takeaways'] : array()),
             '_tr_ai_wire_seo' => wp_json_encode(is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : array()),
+            'rank_math_robots' => array('index', 'follow'),
+            '_yoast_wpseo_meta-robots-noindex' => '0',
             'rank_math_focus_keyword' => $keyphrase,
             'rank_math_title' => $seo_title,
             'rank_math_description' => $meta,
@@ -1888,6 +2046,9 @@ final class TechnoRapper_AI_Wire {
                 ));
             }
             $this->apply_seo_meta($existing_id, $rewrite);
+            $this->assign_home_categories($existing_id, $rewrite);
+            $this->maybe_set_featured_image($existing_id, $item, $rewrite);
+            $this->refresh_front_page($existing_id);
             $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => null, 'rewrite_json' => wp_json_encode($rewrite)));
             return;
         }
@@ -1903,11 +2064,15 @@ final class TechnoRapper_AI_Wire {
         $content .= '<p class="tr-ai-wire-source"><strong>Source:</strong> <a href="' . esc_url($item['source_url']) . '" rel="nofollow noopener" target="_blank">' . esc_html($item['feed_name']) . '</a></p>';
         $content .= '<p class="tr-ai-wire-method">How we used the source: facts, quotes, and numbers below come only from that link. We added structure, search intent, and reader context. We did not independently verify the reporting.</p>';
         $slug = $this->seo_slug($rewrite);
+        $now = current_time('mysql');
         $post_id = wp_insert_post(array(
             'post_type' => 'post',
             'post_status' => $publish ? 'publish' : 'draft',
             'post_title' => $title,
             'post_name' => $slug,
+            'post_date' => $now,
+            'post_date_gmt' => get_gmt_from_date($now),
+            'post_category' => $this->resolve_post_categories($rewrite),
             'post_content' => $content,
             'post_excerpt' => $lede,
             'meta_input' => array(
@@ -1924,16 +2089,7 @@ final class TechnoRapper_AI_Wire {
             $this->update_item($id, array('status' => 'error', 'error_text' => $error));
             return;
         }
-        if (!empty($rewrite['category'])) {
-            $category_name = sanitize_text_field($rewrite['category']);
-            $category = get_term_by('name', $category_name, 'category');
-            if (!$category) {
-                $category = get_term_by('slug', sanitize_title($category_name), 'category');
-            }
-            if ($category && !is_wp_error($category)) {
-                wp_set_post_categories((int) $post_id, array((int) $category->term_id), false);
-            }
-        }
+        $this->assign_home_categories((int) $post_id, $rewrite);
         if (!empty($rewrite['tags']) && is_array($rewrite['tags'])) {
             $tags = array_slice(array_filter(array_map('sanitize_text_field', $rewrite['tags'])), 0, 10);
             if ($tags) {
@@ -1942,6 +2098,7 @@ final class TechnoRapper_AI_Wire {
         }
         $this->apply_seo_meta((int) $post_id, $rewrite);
         $this->maybe_set_featured_image((int) $post_id, $item, $rewrite);
+        $this->refresh_front_page((int) $post_id);
         $this->update_item($id, array(
             'status' => $this->queue_status_for_post((int) $post_id, $publish),
             'wp_post_id' => (int) $post_id,
