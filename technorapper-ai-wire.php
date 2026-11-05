@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.3
+ * Version: 0.2.4
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -15,7 +15,8 @@ if (!defined('ABSPATH')) {
 }
 
 final class TechnoRapper_AI_Wire {
-    const VERSION = '0.2.3';
+    const VERSION = '0.2.4';
+    const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
     const OPTION = 'tr_ai_wire_settings';
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
@@ -350,6 +351,7 @@ final class TechnoRapper_AI_Wire {
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_run_now">
                 <?php wp_nonce_field('tr_ai_wire_run_now'); ?>
+                <p class="description">This runs immediately: fetch new feed items first, then rewrite, review, and create drafts or posts. It can take up to a minute. Save settings before running if you just changed feeds.</p>
                 <?php submit_button('Fetch feeds and process queue now', 'secondary'); ?>
             </form>
         </div>
@@ -370,9 +372,14 @@ final class TechnoRapper_AI_Wire {
             wp_die(esc_html__('You are not allowed to run this task.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_run_now');
-        // Run the work in the background; do not hold the admin request open.
-        wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('manual', wp_generate_uuid4()));
-        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queued=1'));
+        if (function_exists('set_time_limit')) {
+            set_time_limit(120);
+        }
+        if (function_exists('ignore_user_abort')) {
+            ignore_user_abort(true);
+        }
+        $this->process_feeds(array('foreground' => true, 'reason' => 'manual'));
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&ran=1'));
         exit;
     }
 
@@ -388,7 +395,7 @@ final class TechnoRapper_AI_Wire {
             $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
             $status = is_array($review) ? 'reviewed' : (is_array($rewrite) ? 'rewritten' : 'new');
             $this->update_item($id, array('status' => $status, 'attempts' => 0, 'next_retry_at' => null, 'error_text' => null));
-            wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('retry', $id, wp_generate_uuid4()));
+            $this->process_item($id, $this->settings(), true);
         }
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&retried=1'));
         exit;
@@ -458,16 +465,39 @@ final class TechnoRapper_AI_Wire {
      * Serialize manual and scheduled runs. add_option() is atomic at the
      * database level, unlike a transient-based check-then-set lock.
      */
-    public function process_feeds() {
+    public function process_feeds($mode = null) {
+        $args = array();
+        if (is_array($mode)) {
+            $args = $mode;
+        } elseif (is_string($mode) && $mode !== '') {
+            $args['reason'] = $mode;
+        }
+        $foreground = !empty($args['foreground']);
+        $summary = array(
+            'at' => time(),
+            'reason' => sanitize_key($args['reason'] ?? ($foreground ? 'manual' : 'scheduled')),
+            'feeds_checked' => 0,
+            'feed_errors' => array(),
+            'new_items' => 0,
+            'processed' => 0,
+            'drafts' => 0,
+            'published' => 0,
+            'quarantined' => 0,
+            'skipped' => '',
+        );
         $now = time();
         $lock = array('created_at' => $now, 'token' => wp_generate_uuid4());
 
         if (!add_option(self::PROCESSING_LOCK_OPTION, $lock, '', false)) {
             $existing = get_option(self::PROCESSING_LOCK_OPTION, array());
             $created_at = is_array($existing) ? absint($existing['created_at'] ?? 0) : 0;
+            $lock_age = $created_at ? ($now - $created_at) : self::PROCESSING_LOCK_TTL + 1;
+            $can_steal = $foreground ? $lock_age > 90 : ($lock_age > self::PROCESSING_LOCK_TTL);
 
-            if (!$created_at || ($now - $created_at) <= self::PROCESSING_LOCK_TTL) {
-                return;
+            if (!$can_steal) {
+                $summary['skipped'] = $foreground ? 'A run is already in progress. Wait a minute and try again.' : 'locked';
+                $this->store_last_run($summary);
+                return $summary;
             }
 
             // Delete only the exact stale value we inspected. A concurrent
@@ -479,17 +509,21 @@ final class TechnoRapper_AI_Wire {
                 maybe_serialize($existing)
             ));
             if (!$deleted) {
-                return;
+                $summary['skipped'] = 'Could not take over a previous run lock.';
+                $this->store_last_run($summary);
+                return $summary;
             }
             wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
             wp_cache_delete('alloptions', 'options');
             if (!add_option(self::PROCESSING_LOCK_OPTION, $lock, '', false)) {
-                return;
+                $summary['skipped'] = 'Could not start a run because another worker took the lock.';
+                $this->store_last_run($summary);
+                return $summary;
             }
         }
 
         try {
-            $this->process_feeds_locked($lock['token']);
+            $this->process_feeds_locked($lock['token'], $args, $summary);
         } finally {
             $current = get_option(self::PROCESSING_LOCK_OPTION, array());
             if (is_array($current) && !empty($current['token']) && hash_equals($lock['token'], (string) $current['token'])) {
@@ -505,6 +539,12 @@ final class TechnoRapper_AI_Wire {
                 }
             }
         }
+        $this->store_last_run($summary);
+        return $summary;
+    }
+
+    private function store_last_run($summary) {
+        update_option(self::LAST_RUN_OPTION, $summary, false);
     }
 
     private function refresh_processing_lock($token) {
@@ -540,22 +580,40 @@ final class TechnoRapper_AI_Wire {
             && (float) $verified['created_at'] >= (float) $current['created_at'];
     }
 
-    private function process_feeds_locked($lock_token) {
+    private function process_feeds_locked($lock_token, $args = array(), &$summary = null) {
+        if (!is_array($summary)) {
+            $summary = array();
+        }
+        foreach (array('feeds_checked', 'new_items', 'processed', 'drafts', 'published', 'quarantined') as $key) {
+            if (!isset($summary[$key])) {
+                $summary[$key] = 0;
+            }
+        }
+        if (!isset($summary['feed_errors']) || !is_array($summary['feed_errors'])) {
+            $summary['feed_errors'] = array();
+        }
+        $foreground = !empty($args['foreground']);
         if (!function_exists('fetch_feed')) {
             require_once ABSPATH . WPINC . '/feed.php';
         }
         $s = $this->settings();
-        if (!$this->api_key() || $this->remaining_posts_today($s) <= 0) {
+        if (!$this->api_key()) {
+            $summary['skipped'] = 'No API key is configured.';
+            return;
+        }
+        if ($this->remaining_posts_today($s) <= 0) {
+            $summary['skipped'] = 'Daily post cap is 0 or already used. Raise Maximum posts per day and run again.';
             return;
         }
         global $wpdb;
         $processed_this_run = 0;
         $run_limit = (int) $s['max_items_per_run'];
-        // Keep both cron and admin requests bounded; continue remaining work in a later cron tick.
         $started_at = microtime(true);
-        $time_budget_seconds = 10;
-        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE (status IN ('new', 'waiting_budget', 'rewritten', 'reviewed', 'quarantined') AND wp_post_id IS NULL) OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id ASC LIMIT 100", current_time('mysql', true)));
-        foreach ($waiting_ids as $waiting_id) {
+        $time_budget_seconds = $foreground ? 90 : 25;
+        $new_ids = $this->ingest_new_feed_items($s, $summary);
+        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE (status IN ('new', 'waiting_budget', 'rewritten', 'reviewed', 'quarantined') AND wp_post_id IS NULL) OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id DESC LIMIT 100", current_time('mysql', true)));
+        $ids = array_values(array_unique(array_merge($new_ids, array_map('intval', $waiting_ids))));
+        foreach ($ids as $waiting_id) {
             if ((microtime(true) - $started_at) >= $time_budget_seconds) {
                 wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
                 return;
@@ -565,41 +623,46 @@ final class TechnoRapper_AI_Wire {
                 return;
             }
             if ($processed_this_run >= $run_limit) {
+                wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
                 return;
             }
-            $this->process_item((int) $waiting_id, $s);
+            $this->process_item((int) $waiting_id, $s, $foreground);
             $processed_this_run++;
+            $summary['processed'] = $processed_this_run;
+            $row = $this->get_item((int) $waiting_id);
+            if (($row['status'] ?? '') === 'draft') {
+                $summary['drafts']++;
+            } elseif (($row['status'] ?? '') === 'published') {
+                $summary['published']++;
+            } elseif (($row['status'] ?? '') === 'quarantined') {
+                $summary['quarantined']++;
+            }
         }
-        $lines = preg_split('/\r\n|\r|\n/', $s['feeds']);
+    }
+
+    private function ingest_new_feed_items($s, &$summary) {
+        $new_ids = array();
+        $lifetime = function () {
+            return 5 * MINUTE_IN_SECONDS;
+        };
+        add_filter('wp_feed_cache_transient_lifetime', $lifetime);
+        add_filter('http_headers_useragent', array($this, 'feed_user_agent'));
+        add_filter('wp_feed_options', array($this, 'configure_feed'), 10, 2);
+        $lines = preg_split('/\r\n|\r|\n/', (string) $s['feeds']);
         foreach ($lines as $line) {
-            if ((microtime(true) - $started_at) >= $time_budget_seconds) {
-                wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
-                break;
-            }
-            if (!$this->refresh_processing_lock($lock_token)) { return; }
-            if ($this->remaining_posts_today($s) <= 0 || $processed_this_run >= $run_limit) {
-                break;
-            }
             $parts = array_map('trim', explode('|', $line, 2));
             $feed_url = esc_url_raw($parts[0], array('http', 'https'));
             if (!$feed_url || !wp_http_validate_url($feed_url)) {
                 continue;
             }
+            $summary['feeds_checked']++;
             $feed_name = isset($parts[1]) && $parts[1] !== '' ? sanitize_text_field($parts[1]) : wp_parse_url($feed_url, PHP_URL_HOST);
             $feed = fetch_feed($feed_url);
             if (is_wp_error($feed)) {
+                $summary['feed_errors'][] = $feed_name . ': ' . $feed->get_error_message();
                 continue;
             }
-            $items = $feed->get_items(0, 10);
-            foreach ($items as $item) {
-                if ((microtime(true) - $started_at) >= $time_budget_seconds) {
-                    wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
-                    break 2;
-                }
-                if (!$this->refresh_processing_lock($lock_token)) { return; }
-                if ($this->remaining_posts_today($s) <= 0 || $processed_this_run >= $run_limit) {
-                    break 2;
-                }
+            foreach ($feed->get_items(0, 10) as $item) {
                 $url = esc_url_raw($item->get_permalink(), array('http', 'https'));
                 if (!$url || !wp_http_validate_url($url)) {
                     continue;
@@ -619,11 +682,29 @@ final class TechnoRapper_AI_Wire {
                 $assignment = $this->experiment_assignment($key, $s);
                 $id = $this->insert_item($key, $assignment['experiment_id'], $assignment['variant'], $feed_url, $feed_name, $guid, $url, $title, $body);
                 if ($id) {
-                    $this->process_item($id, $s);
-                    $processed_this_run++;
+                    $new_ids[] = (int) $id;
+                    $summary['new_items']++;
                 }
             }
         }
+        remove_filter('wp_feed_cache_transient_lifetime', $lifetime);
+        remove_filter('http_headers_useragent', array($this, 'feed_user_agent'));
+        remove_filter('wp_feed_options', array($this, 'configure_feed'), 10);
+        return $new_ids;
+    }
+
+    public function feed_user_agent() {
+        return 'TechnoRapperAIWire/' . self::VERSION . '; ' . home_url('/');
+    }
+
+    public function configure_feed($feed) {
+        if (is_object($feed) && method_exists($feed, 'set_timeout')) {
+            $feed->set_timeout(20);
+        }
+        if (is_object($feed) && method_exists($feed, 'set_useragent')) {
+            $feed->set_useragent($this->feed_user_agent());
+        }
+        return $feed;
     }
 
     private function has_item($key) {
@@ -659,7 +740,7 @@ final class TechnoRapper_AI_Wire {
         return $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->table} WHERE id = %d", $id), ARRAY_A);
     }
 
-    private function process_item($id, $s) {
+    private function process_item($id, $s, $complete = false) {
         $item = $this->get_item($id);
         if (!$item || !in_array($item['status'], array('new', 'waiting_budget', 'retry_wait', 'rewritten', 'reviewed', 'quarantined'), true)) {
             return;
@@ -693,10 +774,11 @@ final class TechnoRapper_AI_Wire {
                 return;
             }
             $this->update_item($id, array('status' => 'rewritten', 'rewrite_json' => wp_json_encode($rewrite), 'error_text' => null));
-            // Keep each queue request to one model call. The reviewer runs on
-            // the next scheduled tick, avoiding two slow API calls in one PHP request.
-            wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('review', (int) $id, wp_generate_uuid4()));
-            return;
+            if (!$complete) {
+                // Keep scheduled ticks to one model call. Manual Run now finishes review here.
+                wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('review', (int) $id, wp_generate_uuid4()));
+                return;
+            }
         }
         $rewrite = $this->prepare_rewrite_seo($rewrite);
         $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s);
@@ -1462,6 +1544,24 @@ final class TechnoRapper_AI_Wire {
         $rows = $wpdb->get_results($wpdb->prepare("SELECT id, feed_name, source_title, source_url, status, wp_post_id, created_at, error_text, review_json, rewrite_json FROM {$this->table}{$where} ORDER BY id DESC LIMIT %d OFFSET %d", $per_page, $offset), ARRAY_A);
         ?>
         <div class="wrap"><h1>AI Wire — Queue & usage</h1>
+        <?php $last_run = get_option(self::LAST_RUN_OPTION, array()); if (is_array($last_run) && !empty($last_run['at'])) : ?>
+        <div class="notice <?php echo empty($last_run['skipped']) ? 'notice-info' : 'notice-warning'; ?>"><p>
+            <strong>Last run</strong> (<?php echo esc_html(gmdate('Y-m-d H:i', (int) $last_run['at'])); ?> UTC):
+            <?php if (!empty($last_run['skipped'])) : ?>
+                <?php echo esc_html((string) $last_run['skipped']); ?>
+            <?php else : ?>
+                checked <?php echo esc_html((string) (int) ($last_run['feeds_checked'] ?? 0)); ?> feeds,
+                queued <?php echo esc_html((string) (int) ($last_run['new_items'] ?? 0)); ?> new items,
+                processed <?php echo esc_html((string) (int) ($last_run['processed'] ?? 0)); ?>,
+                <?php echo esc_html((string) (int) ($last_run['published'] ?? 0)); ?> published,
+                <?php echo esc_html((string) (int) ($last_run['drafts'] ?? 0)); ?> drafts,
+                <?php echo esc_html((string) (int) ($last_run['quarantined'] ?? 0)); ?> quarantined.
+            <?php endif; ?>
+            <?php if (!empty($last_run['feed_errors']) && is_array($last_run['feed_errors'])) : ?>
+                <br><?php echo esc_html(implode(' · ', array_map('sanitize_text_field', $last_run['feed_errors']))); ?>
+            <?php endif; ?>
+        </p></div>
+        <?php endif; ?>
         <p><strong>This month:</strong> $<?php echo esc_html(number_format_i18n((float) $usage['cost_usd'], 4)); ?> / $<?php echo esc_html(number_format_i18n((float) $s['monthly_budget_usd'], 2)); ?> · <?php echo esc_html(number_format_i18n((int) $usage['input_tokens'] + (int) $usage['output_tokens'])); ?> / <?php echo esc_html(number_format_i18n((int) $s['monthly_token_limit'])); ?> tokens · <?php echo esc_html((int) $usage['search_calls']); ?> web searches</p>
         <p><strong>Daily post cap:</strong> <?php echo esc_html((int) $s['max_posts_per_day']); ?> · Posts still available today: <?php echo esc_html($this->remaining_posts_today($s)); ?><?php if (!empty($s['auto_publish'])) : ?> · Auto-publish is on<?php endif; ?></p>
         <form method="get" style="margin:12px 0;"><input type="hidden" name="page" value="tr-ai-wire-queue"><label for="tr-ai-wire-status">Filter status </label><select id="tr-ai-wire-status" name="status"><option value="">All statuses</option><?php foreach ($allowed_statuses as $option_status) : ?><option value="<?php echo esc_attr($option_status); ?>" <?php selected($status_filter, $option_status); ?>><?php echo esc_html($option_status); ?></option><?php endforeach; ?></select> <button class="button">Apply</button></form>

@@ -85,7 +85,7 @@ Automated WordPress integration tests now exercise selected critical paths. They
 2. Activate **TechnoRapper AI Wire**. The plugin creates/updates its queue and view tables and schedules its initial processing run.
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
 4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
-5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to enqueue a background run. WP-Cron (preferably triggered by a real system cron) executes it.
+5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to fetch new items immediately, then rewrite/review them in that same request. Scheduled runs still use WP-Cron.
 6. Inspect **AI Wire → Queue & usage**. With the default **Save as draft** setting, review generated drafts in WordPress and publish manually. With **Publish immediately**, passing items go live.
 
 ### Dashboard configuration reference

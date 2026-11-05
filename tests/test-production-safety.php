@@ -11,6 +11,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         TechnoRapper_AI_Wire::activate();
         $this->plugin = new TechnoRapper_AI_Wire();
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
+        delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
+        delete_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         unset($_SERVER['REMOTE_ADDR']);
     }
 
@@ -723,5 +725,136 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'body_html' => '<p>Grounded article body.</p>',
         ), array('verdict' => 'pass'), $settings));
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
+    }
+
+    public function test_foreground_process_item_completes_review_in_one_step() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $id = $this->create_queue_item('new');
+        $calls = 0;
+        $callback = function ($preempt, $args, $url) use (&$calls) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $output = $calls === 1 ? array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            ) : array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            );
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array(
+                    'output' => array(array(
+                        'type' => 'message',
+                        'content' => array(array('type' => 'output_text', 'text' => wp_json_encode($output))),
+                    )),
+                    'usage' => array('input_tokens' => 20, 'output_tokens' => 30),
+                )),
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults(), true));
+        remove_filter('pre_http_request', $callback, 10);
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('draft', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertSame(2, $calls);
+    }
+
+    public function test_process_feeds_records_why_a_manual_run_did_nothing() {
+        delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
+        $summary = $this->plugin->process_feeds(array('foreground' => true, 'reason' => 'manual'));
+        $this->assertSame('No API key is configured.', $summary['skipped']);
+        $stored = get_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
+        $this->assertSame('No API key is configured.', $stored['skipped']);
+    }
+
+    public function test_new_feed_items_are_processed_before_old_quarantined_items() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $old_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'Old quarantined item',
+                'lede' => 'Old lede.',
+                'body_html' => '<p>Old body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'reject',
+                'score' => 10,
+                'policy_flags' => array('hate'),
+            )),
+        ), array('id' => $old_id));
+
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['feeds'] = 'https://example.com/tech-feed.xml | Example Tech';
+        $settings['max_posts_per_day'] = 5;
+        $settings['max_items_per_run'] = 1;
+        $settings['auto_publish'] = 1;
+        $settings['monthly_budget_usd'] = 50;
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+
+        $rss = '<?xml version="1.0"?><rss version="2.0"><channel><title>Example Tech</title><item><title>New chip announcement</title><link>https://example.com/new-chip</link><guid>https://example.com/new-chip</guid><description>A grounded paragraph about a chip announcement with enough source text for the plugin.</description></item></channel></rss>';
+        $calls = 0;
+        $callback = function ($preempt, $args, $url) use (&$calls, $rss) {
+            if (strpos($url, 'example.com/tech-feed.xml') !== false) {
+                return array(
+                    'headers' => array('content-type' => 'application/rss+xml'),
+                    'body' => $rss,
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $output = $calls === 1 ? array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            ) : array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            );
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array(
+                    'output' => array(array(
+                        'type' => 'message',
+                        'content' => array(array('type' => 'output_text', 'text' => wp_json_encode($output))),
+                    )),
+                    'usage' => array('input_tokens' => 20, 'output_tokens' => 30),
+                )),
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $summary = $this->plugin->process_feeds(array('foreground' => true, 'reason' => 'manual'));
+        remove_filter('pre_http_request', $callback, 10);
+
+        $this->assertSame('', (string) ($summary['skipped'] ?? ''));
+        $this->assertSame(1, (int) $summary['new_items']);
+        $new = $wpdb->get_row("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE source_url = 'https://example.com/new-chip'", ARRAY_A);
+        $this->assertNotEmpty($new);
+        $this->assertSame('published', $new['status']);
+        $this->assertGreaterThan(0, (int) $new['wp_post_id']);
+        $old = $wpdb->get_row($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $old_id), ARRAY_A);
+        $this->assertSame('quarantined', $old['status']);
     }
 }
