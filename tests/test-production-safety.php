@@ -1184,4 +1184,97 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $urls = $wpdb->get_col("SELECT source_url FROM {$wpdb->prefix}tr_ai_wire_items WHERE source_url LIKE 'https://example.com/atom-%' ORDER BY source_url ASC");
         $this->assertSame(array('https://example.com/atom-1', 'https://example.com/atom-2', 'https://example.com/atom-3'), $urls);
     }
+
+    private function insert_scored_queue_item($status, $score, $seo_score, $created_at) {
+        global $wpdb;
+        $ok = $wpdb->insert($wpdb->prefix . 'tr_ai_wire_items', array(
+            'source_key' => hash('sha256', wp_generate_uuid4()),
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'feed_url' => 'https://example.com/feed.xml',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-' . wp_generate_uuid4(),
+            'source_url' => 'https://example.com/' . wp_generate_uuid4(),
+            'source_title' => 'Scored story',
+            'source_body' => 'Source body',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'Scored story',
+                'seo' => array('seo_score' => $seo_score),
+            )),
+            'review_json' => wp_json_encode(array('verdict' => 'pass', 'score' => $score)),
+            'status' => $status,
+            'created_at' => $created_at,
+            'updated_at' => $created_at,
+        ), array('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'));
+        $this->assertNotFalse($ok);
+        return (int) $wpdb->insert_id;
+    }
+
+    public function test_score_report_averages_posts_by_day_and_month() {
+        $this->insert_scored_queue_item('published', 80, 70, '2026-11-01 10:00:00');
+        $this->insert_scored_queue_item('published', 60, 50, '2026-11-01 12:00:00');
+        $this->insert_scored_queue_item('draft', 90, 80, '2026-11-02 09:00:00');
+        $this->insert_scored_queue_item('quarantined', 20, 10, '2026-11-02 11:00:00');
+
+        $day = $this->invoke_private('score_report', array(array(
+            'range' => 'all',
+            'group' => 'day',
+            'scope' => 'posts',
+            'now' => '2026-11-05 12:00:00',
+        )));
+        $this->assertSame(3, $day['count']);
+        $this->assertSame(76.7, $day['average']);
+        $this->assertSame(66.7, $day['seo_average']);
+        $this->assertSame(3, $day['above_min']);
+        $this->assertSame(1, $day['distribution']['50-69']);
+        $this->assertSame(1, $day['distribution']['70-84']);
+        $this->assertSame(1, $day['distribution']['85-100']);
+
+        $by_label = array();
+        foreach ($day['series'] as $point) {
+            $by_label[$point['label']] = $point;
+        }
+        $this->assertSame(2, $by_label['2026-11-01']['count']);
+        $this->assertSame(70.0, $by_label['2026-11-01']['average']);
+        $this->assertSame(1, $by_label['2026-11-02']['count']);
+        $this->assertSame(90.0, $by_label['2026-11-02']['average']);
+
+        $month = $this->invoke_private('score_report', array(array(
+            'range' => 'month',
+            'group' => 'month',
+            'scope' => 'posts',
+            'now' => '2026-11-05 12:00:00',
+        )));
+        $this->assertSame(3, $month['count']);
+        $this->assertSame(76.7, $month['average']);
+        $this->assertSame(3, $month['series'][0]['count']);
+
+        $published = $this->invoke_private('score_report', array(array(
+            'range' => 'all',
+            'group' => 'day',
+            'scope' => 'published',
+            'now' => '2026-11-05 12:00:00',
+        )));
+        $this->assertSame(2, $published['count']);
+        $this->assertSame(70.0, $published['average']);
+
+        $chart = $this->invoke_private('render_score_chart', array($day));
+        $this->assertStringContainsString('Average review score chart', $chart);
+        $this->assertStringContainsString('2026-11-01', $chart);
+        $this->assertStringContainsString('polyline', $chart);
+    }
+
+    public function test_score_report_range_excludes_older_days() {
+        $this->insert_scored_queue_item('published', 40, 40, '2026-10-01 10:00:00');
+        $this->insert_scored_queue_item('published', 80, 80, '2026-11-04 10:00:00');
+        $week = $this->invoke_private('score_report', array(array(
+            'range' => '7d',
+            'group' => 'day',
+            'scope' => 'posts',
+            'now' => '2026-11-05 12:00:00',
+        )));
+        $this->assertSame(1, $week['count']);
+        $this->assertSame(80.0, $week['average']);
+        $this->assertSame(0, $week['distribution']['0-49']);
+    }
 }

@@ -109,6 +109,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Auto-publish | When checked, passing items go live with no draft step |
 | When to create a draft | Minimum review score, pass vs pass+revise, similarity cap, and grounded/useful/new/flag gates |
 | After rewrite: SEO tests | Minimum SEO score, max readability errors, and required focus keyphrase / social markup. The plugin fills Rank Math, Yoast and AIOSEO fields on the draft |
+| Scores | Average review and SEO scores for drafts/published items, graphed by day, week, or month |
 
 The API-key section has its own save action so the secret is not included in the ordinary WordPress settings payload. The other configuration values are saved together with **Save settings**.
 
