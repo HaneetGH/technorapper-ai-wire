@@ -1,8 +1,8 @@
 # TechnoRapper AI Wire
 
-A WordPress plugin that turns configured RSS/Atom items into source-attributed, AI-assisted editorial drafts. Each item passes a writer and a separate editorial review. Only passing items become **WordPress drafts**; a human remains responsible for publishing.
+A WordPress plugin that turns configured RSS/Atom items into source-attributed, AI-assisted editorial drafts or published posts. Each item passes a writer and a separate editorial review. Passing items become **WordPress drafts** by default. Turn on **Publish immediately** if you want live posts with no draft step.
 
-> **Safety default:** this plugin does not auto-publish. AI review is a quality gate, not a guarantee of factual accuracy or legal clearance.
+> **Safety default:** auto-publish is off. AI review is a quality gate, not a guarantee of factual accuracy or legal clearance.
 
 For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md).
 
@@ -29,8 +29,8 @@ flowchart TD
     L -- Yes --> M["Independent reviewer checks claims,<br/>novelty, usefulness and policy flags"]
     M --> N{"Review passes every gate?"}
     N -- No --> N1["Quarantine; no post is created"]
-    N -- Yes --> O["Sanitize output and insert WP draft"]
-    O --> P["Human editor reviews and publishes"]
+    N -- Yes --> O["Sanitize output and insert WP draft or publish"]
+    O --> P["Human editor reviews drafts, or the post is already live"]
     P --> Q["Published article emits GA4 event"]
     P --> R["3-second visible-read tracker"]
     R --> S["Signed REST request"]
@@ -49,7 +49,7 @@ flowchart TD
 | Assignment | Stable A/B assignment from the source key | Retries keep the same experiment and variant |
 | Generation | Writer produces title, lede, body, category and tags | Source content is treated as untrusted input |
 | Review | Separate model evaluates factual consistency, novelty, usefulness and policy flags | Fail closed: only explicit passing output proceeds |
-| Draft creation | Sanitized content is inserted as a WordPress draft | No automatic publication |
+| Draft or publish | Sanitized content is inserted as a WordPress draft, or published when auto-publish is on | Auto-publish is off unless enabled |
 | Measurement | GA4 event plus first-party 3-second visible-read counter | Signed REST payload, per-session browser dedupe, no IP storage |
 | Analysis | WordPress dashboard and GA4 Explore | Do not infer revenue or SEO lift from draft counts or a small sample |
 
@@ -77,7 +77,7 @@ flowchart TD
 
 The plugin release is **not considered production-validated until the staging acceptance checklist has passed on the target WordPress host**. Version 0.2.0 adds background enqueueing for manual runs, scheduled bounded retries, permanent-vs-transient API error handling, an idempotent draft recovery path, atomic stale-lock deletion/heartbeat handling, and an atomic database-backed public-view rate limiter. The schema migration creates the rate-limit table without dropping existing queue/view data.
 
-Automated WordPress integration tests now exercise selected critical paths. They do not prove the production host's cron runner, outbound networking, database upgrade behavior on a copy of the live database, proxy/IP configuration, or end-to-end analytics. Keep auto-publishing disabled (it is not implemented) and complete the staging runbook before enabling scheduled processing.
+Automated WordPress integration tests now exercise selected critical paths. They do not prove the production host's cron runner, outbound networking, database upgrade behavior on a copy of the live database, proxy/IP configuration, or end-to-end analytics. Leave auto-publish off until review and SEO gates look right on real feeds, then complete the staging runbook before enabling scheduled processing.
 
 ## Install and configure
 
@@ -86,7 +86,7 @@ Automated WordPress integration tests now exercise selected critical paths. They
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
 4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
 5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to enqueue a background run. WP-Cron (preferably triggered by a real system cron) executes it.
-6. Inspect **AI Wire → Queue & usage**, review generated drafts in WordPress, and publish manually only after editorial approval.
+6. Inspect **AI Wire → Queue & usage**. With the default **Save as draft** setting, review generated drafts in WordPress and publish manually. With **Publish immediately**, passing items go live.
 
 ### Dashboard configuration reference
 
@@ -97,7 +97,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | OpenAI API key | Credential used for writer and reviewer requests; saved separately from ordinary settings |
 | Automatic processing schedule | Hourly, every 3, 6 or 12 hours, daily, or manual-only |
 | RSS/Atom feeds | One feed URL per line, optionally followed by `| Feed label` |
-| Maximum drafts per day | Daily draft creation cap; `0` pauses draft creation |
+| Maximum posts per day | Daily draft and auto-published post cap; `0` pauses creation |
 | Maximum items per run | Caps the number of queued retries and new feed items processed in one scheduled/manual run (1–100) |
 | Monthly API budget | Local estimated USD spend ceiling; `0` stops AI calls |
 | Monthly token limit | Combined monthly input/output token ceiling; `0` stops AI calls |
@@ -106,7 +106,8 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Writer and reviewer models | Model selection for the two editorial passes |
 | Independent web search | Optional reviewer corroboration and associated search charges |
 | Editorial A/B experiment | Enables/disables stable A/B writer assignment and sets the experiment ID |
-| When to create a draft | Minimum review score, pass vs pass+revise, similarity cap, and grounded/useful/new/flag gates |
+| When to create a draft | Minimum review score, pass vs pass+revise, similarity cap, grounded/useful/new/flag gates, and save as draft vs publish immediately |
+| After rewrite: SEO tests | Minimum SEO score, max readability errors, and required focus keyphrase / social markup. The plugin fills Rank Math, Yoast and AIOSEO fields on the draft |
 
 The API-key section has its own save action so the secret is not included in the ordinary WordPress settings payload. The other configuration values are saved together with **Save settings**.
 
@@ -116,12 +117,12 @@ The API-key section has its own save action so the secret is not included in the
 - Start with 1–3 trusted feeds and a daily cap of 1–3 drafts.
 - Set a low monthly API budget and token ceiling; raise only after observing real usage.
 - Leave optional web search disabled until you have validated its cost and review output.
-- Keep drafts-only workflow. Do not bypass the human editorial review.
+- Keep **Save as draft** until you have reviewed real output. Turn on **Publish immediately** only when you want posts live with no draft step.
 - Use a unique experiment ID for each materially different experiment. Do not rename an experiment midway through a reporting window.
 
 ## Spend, rate and volume controls
 
-- The daily cap counts drafts created by this plugin on the current UTC day. Set it to `0` to pause draft creation.
+- The daily cap counts drafts and auto-published posts created by this plugin on the current UTC day. Set it to `0` to pause creation.
 - The per-run cap limits total existing `waiting_budget` retries plus newly discovered items attempted in one run. It is a workload/burst control, separate from the daily draft cap.
 - Monthly USD and token limits use this plugin's recorded API usage and pre-request estimates. They are not provider-side hard limits and do not cap other apps using the same API project/key.
 - Configure a provider-side project budget/rate limit as a second independent control.
@@ -161,7 +162,7 @@ The API-key section has its own save action so the secret is not included in the
 2. Save one test feed and run the queue manually.
 3. Verify the source item is stored once, with an experiment ID and A/B variant.
 4. Verify writer and reviewer outcomes are visible in the queue.
-5. Confirm a passing item becomes a **draft**, not a published post; confirm a rejected item is quarantined.
+5. With **Save as draft**, confirm a passing item becomes a **draft**, not a published post. With **Publish immediately**, confirm it goes live. Confirm a rejected item is quarantined.
 6. Re-run the same feed and confirm the source key prevents duplicate queue items.
 7. Test budget exhaustion and verify no further AI calls are made by the plugin.
 8. Publish a test article. Verify GA4 event `tr_ai_wire_article_view` in DebugView/Realtime and a first-party count after a visible 3-second read.
