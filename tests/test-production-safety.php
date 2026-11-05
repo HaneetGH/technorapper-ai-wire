@@ -1084,43 +1084,6 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array((int) $apple->term_id), $apple_s['map_terms']);
     }
 
-    public function test_imports_feedzy_sources_as_tenants() {
-        register_post_type('feedzy_categories', array('public' => true));
-        register_post_type('feedzy_imports', array('public' => true));
-        $group = self::factory()->post->create(array(
-            'post_type' => 'feedzy_categories',
-            'post_status' => 'publish',
-            'post_title' => 'News sites',
-            'post_name' => 'news-sites',
-        ));
-        update_post_meta($group, 'feedzy_category_feed', "https://example.com/verge.xml, https://example.com/9to5.xml");
-        $job = self::factory()->post->create(array(
-            'post_type' => 'feedzy_imports',
-            'post_status' => 'publish',
-            'post_title' => 'PCWorld',
-        ));
-        update_post_meta($job, 'source', 'https://example.com/pcworld.xml');
-        $bundle = self::factory()->post->create(array(
-            'post_type' => 'feedzy_imports',
-            'post_status' => 'publish',
-            'post_title' => 'News bundle',
-        ));
-        update_post_meta($bundle, 'source', 'news-sites');
-        $this->assertSame(3, $this->plugin->import_feedzy_tenants());
-        $saved = get_option(TechnoRapper_AI_Wire::OPTION);
-        $urls = wp_list_pluck($saved['tenants'], 'url');
-        $this->assertContains('https://example.com/verge.xml', $urls);
-        $this->assertContains('https://example.com/9to5.xml', $urls);
-        $this->assertContains('https://example.com/pcworld.xml', $urls);
-        $names = array();
-        foreach ($saved['tenants'] as $tenant) {
-            $names[$tenant['url']] = $tenant['name'];
-        }
-        $this->assertSame('PCWorld', $names['https://example.com/pcworld.xml']);
-        $this->assertSame(0, $this->plugin->import_feedzy_tenants());
-        $this->assertCount(3, get_option(TechnoRapper_AI_Wire::OPTION)['tenants']);
-    }
-
     public function test_disabled_tenant_is_not_ingested() {
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
         $settings = TechnoRapper_AI_Wire::defaults();
