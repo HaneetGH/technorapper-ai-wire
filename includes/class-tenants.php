@@ -179,6 +179,140 @@ trait TechnoRapper_AI_Wire_Tenants {
         return $s;
     }
 
+    public function maybe_import_feedzy_feeds() {
+        if (!is_admin() || !current_user_can('manage_options')) {
+            return;
+        }
+        $this->import_feedzy_tenants();
+    }
+
+    public function import_feedzy_request() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to import Feedzy feeds.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_import_feedzy');
+        $added = $this->import_feedzy_tenants();
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-tenants&feedzy_imported=1&feedzy_added=' . (int) $added . '#tr-tenants'));
+        exit;
+    }
+
+    public function import_feedzy_tenants() {
+        $sources = $this->discover_feedzy_sources();
+        if (!$sources) {
+            return 0;
+        }
+        $s = $this->settings();
+        $tenants = is_array($s['tenants'] ?? null) ? $s['tenants'] : array();
+        $seen = array();
+        foreach ($tenants as $tenant) {
+            if (!empty($tenant['url'])) {
+                $seen[$tenant['url']] = true;
+            }
+        }
+        $added = 0;
+        foreach ($sources as $source) {
+            if (isset($seen[$source['url']])) {
+                continue;
+            }
+            $tenant = $this->sanitize_tenant(array_merge($this->tenant_defaults(), array(
+                'url' => $source['url'],
+                'name' => $source['name'],
+                'enabled' => 1,
+                'pin_to_homepage' => $s['pin_to_homepage'] ?? 1,
+                'map_post_type' => $s['map_post_type'] ?? 'post',
+                'map_taxonomy' => $s['map_taxonomy'] ?? 'category',
+                'map_terms' => array(),
+                'map_auto_desk' => 1,
+                'map_post_status' => $s['map_post_status'] ?? 'auto',
+                'map_title' => $s['map_title'] ?? 'rewrite',
+                'map_date' => $s['map_date'] ?? 'now',
+                'map_content' => $s['map_content'] ?? 'rewrite',
+            )));
+            if (!$tenant) {
+                continue;
+            }
+            $tenants[] = $tenant;
+            $seen[$tenant['url']] = true;
+            $added++;
+        }
+        if ($added > 0) {
+            $s['tenants'] = $tenants;
+            $s['feeds'] = $this->feeds_from_tenants($tenants);
+            update_option(self::OPTION, $s, false);
+        }
+        return $added;
+    }
+
+    public function discover_feedzy_sources() {
+        if (!function_exists('get_posts') || !function_exists('get_post_meta')) {
+            return array();
+        }
+        $named = array();
+        $by_slug = array();
+        foreach ($this->feedzy_posts('feedzy_categories') as $post) {
+            $urls = $this->split_feedzy_urls(get_post_meta($post->ID, 'feedzy_category_feed', true));
+            $by_slug[strtolower($post->post_name)] = $urls;
+            $by_slug[strtolower($post->post_title)] = $urls;
+            foreach ($urls as $url) {
+                $named[$url] = $post->post_title;
+            }
+        }
+        foreach ($this->feedzy_posts('feedzy_imports') as $post) {
+            if (get_post_meta($post->ID, '__feedzy_source_type', true) === 'amazon') {
+                continue;
+            }
+            $source = (string) get_post_meta($post->ID, 'source', true);
+            $urls = $this->split_feedzy_urls($source);
+            if (!$urls) {
+                $key = strtolower(trim($source));
+                if ($key !== '' && isset($by_slug[$key])) {
+                    $urls = $by_slug[$key];
+                }
+            }
+            foreach ($urls as $url) {
+                if (!isset($named[$url]) || trim((string) $named[$url]) === '') {
+                    $named[$url] = $post->post_title;
+                }
+            }
+        }
+        $out = array();
+        foreach ($named as $url => $name) {
+            $out[] = array(
+                'url' => $url,
+                'name' => sanitize_text_field($name),
+            );
+        }
+        return $out;
+    }
+
+    private function feedzy_posts($post_type) {
+        $posts = get_posts(array(
+            'post_type' => $post_type,
+            'post_status' => array('publish', 'draft', 'private'),
+            'posts_per_page' => 200,
+            'orderby' => 'ID',
+            'order' => 'ASC',
+            'suppress_filters' => true,
+        ));
+        return is_array($posts) ? $posts : array();
+    }
+
+    private function split_feedzy_urls($raw) {
+        $raw = str_replace(array("\r\n", "\r", "\n", ';'), ',', (string) $raw);
+        $out = array();
+        foreach (explode(',', $raw) as $part) {
+            $part = trim($part);
+            if ($part === '' || !preg_match('#^https?://#i', $part)) {
+                continue;
+            }
+            $url = esc_url_raw($part, array('http', 'https'));
+            if ($url !== '' && preg_match('#^https?://#i', $url) && !in_array($url, $out, true)) {
+                $out[] = $url;
+            }
+        }
+        return $out;
+    }
+
     private function render_tenant_fields($group, $tenant, $is_new = false) {
         $tenant = wp_parse_args(is_array($tenant) ? $tenant : array(), $this->tenant_defaults());
         $base = self::OPTION . '[' . $group . ']';

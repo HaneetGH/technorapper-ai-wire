@@ -85,7 +85,7 @@ Automated WordPress integration tests now exercise selected critical paths. They
 2. Activate **TechnoRapper AI Wire**. The plugin creates/updates its queue and view tables and schedules its initial processing run.
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
 4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
-5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to fetch new items immediately, then rewrite/review them in that same request. Scheduled runs still use WP-Cron.
+5. Save the remaining configuration using **Save settings**. If Feedzy is already importing on this site, AI Wire copies those feed URLs into tenants (or use **Import Feedzy feeds**). Use **Fetch feeds and process queue now** to fetch new items immediately, then rewrite/review them in that same request. Scheduled runs still use WP-Cron.
 6. Inspect **AI Wire → Queue & usage**. Passing items go live when **Auto-publish** is checked (the default). Uncheck it to keep drafts. Use **Stop current run**, **Clear unfinished**, **Clean board**, or a row **Delete** to halt work or empty the queue. WordPress posts stay.
 
 ### Dashboard configuration reference
@@ -96,7 +96,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 |---|---|
 | OpenAI API key | Credential used for writer and reviewer requests; saved separately from ordinary settings |
 | Automatic processing schedule | Hourly, every 3, 6 or 12 hours, daily, or manual-only |
-| Feed tenants | Each RSS/Atom feed is onboarded as its own tenant, with its own name, homepage On/Off, and content mapping |
+| Feed tenants | Each RSS/Atom feed is onboarded as its own tenant, with its own name, homepage On/Off, and content mapping. Feedzy import jobs and feed groups on the same site are copied in automatically |
 | Maximum posts per day | Daily draft and auto-published post cap; `0` pauses creation |
 | Maximum items per run | Caps the number of queued retries and new feed items processed in one scheduled/manual run (1–100) |
 | Monthly API budget | Local estimated USD spend ceiling; `0` stops AI calls |

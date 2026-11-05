@@ -17,12 +17,23 @@ trait TechnoRapper_AI_Wire_Admin {
             return;
         }
         $s = $this->settings();
+        $feedzy_sources = $this->discover_feedzy_sources();
         $dashboard_key = get_option(self::API_KEY_OPTION, '');
         $key_ready = (bool) $this->api_key();
         $key_managed_in_dashboard = is_string($dashboard_key) && $dashboard_key !== '';
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
+            <?php
+            if (isset($_GET['feedzy_imported'])) :
+                $added = absint($_GET['feedzy_added'] ?? 0);
+                ?>
+                <div class="notice notice-success is-dismissible"><p><?php echo $added > 0
+                    ? esc_html(sprintf(_n('Imported %d Feedzy feed as an AI Wire tenant.', 'Imported %d Feedzy feeds as AI Wire tenants.', $added, 'technorapper-ai-wire'), $added))
+                    : esc_html__('No new Feedzy feeds to add. They may already be onboarded.', 'technorapper-ai-wire'); ?></p></div>
+                <?php
+            endif;
+            ?>
             <p>Feed items are rewritten, reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead.</p>
             <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
                 <h2>1. OpenAI API connection</h2>
@@ -50,6 +61,11 @@ trait TechnoRapper_AI_Wire_Admin {
                 <table class="form-table" role="presentation">
                     <tr><th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th><td><select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]"><?php foreach (array('hourly' => 'Every hour', 'every_3_hours' => 'Every 3 hours', 'every_6_hours' => 'Every 6 hours', 'every_12_hours' => 'Every 12 hours', 'daily' => 'Once per day', 'manual' => 'Manual only (disable scheduled runs)') as $frequency => $label) : ?><option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p></td></tr>
                     <tr><th colspan="2" id="tr-tenants"><h2 style="margin:12px 0 0;">Feed tenants</h2><p class="description">Each RSS/Atom feed is its own tenant. Onboard one source at a time with its own homepage and content mapping. Disabled tenants are not fetched.</p></th></tr>
+                    <?php if ($feedzy_sources) : ?>
+                    <tr><th scope="row">Feedzy feeds</th><td>
+                        <p><?php echo esc_html(sprintf(_n('%d Feedzy source is on this site.', '%d Feedzy sources are on this site.', count($feedzy_sources), 'technorapper-ai-wire'), count($feedzy_sources))); ?> Missing ones are copied into AI Wire automatically, including when you fetch the queue.</p>
+                    </td></tr>
+                    <?php endif; ?>
                     <tr><th scope="row">Onboard a tenant</th><td><?php $this->render_tenant_fields('new_tenant', array_merge($this->tenant_defaults(), array('pin_to_homepage' => $s['pin_to_homepage'], 'map_post_type' => $s['map_post_type'], 'map_taxonomy' => $s['map_taxonomy'], 'map_terms' => $s['map_terms'], 'map_auto_desk' => $s['map_auto_desk'], 'map_post_status' => $s['map_post_status'], 'map_title' => $s['map_title'], 'map_date' => $s['map_date'], 'map_content' => $s['map_content'])), true); ?><p class="description">Save settings to add this feed as a tenant. Leave the URL blank if you are only editing tenants below.</p></td></tr>
                     <?php foreach (array_values((array) ($s['tenants'] ?? array())) as $index => $tenant) : ?>
                     <tr><th scope="row"><?php echo esc_html($tenant['name'] !== '' ? $tenant['name'] : $tenant['url']); ?></th><td><?php $this->render_tenant_fields('tenants][' . (int) $index, $tenant, false); ?></td></tr>
@@ -118,6 +134,14 @@ trait TechnoRapper_AI_Wire_Admin {
                 </table>
                 <?php submit_button('Save settings'); ?>
             </form>
+            <?php if ($feedzy_sources) : ?>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <input type="hidden" name="action" value="tr_ai_wire_import_feedzy">
+                <?php wp_nonce_field('tr_ai_wire_import_feedzy'); ?>
+                <p class="description">Copy every Feedzy import job and feed group URL into AI Wire tenants. Existing tenants are kept. Category and tags still come from the source document.</p>
+                <?php submit_button('Import Feedzy feeds', 'secondary'); ?>
+            </form>
+            <?php endif; ?>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_run_now">
                 <?php wp_nonce_field('tr_ai_wire_run_now'); ?>
