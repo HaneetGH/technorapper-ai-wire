@@ -8,6 +8,9 @@ trait TechnoRapper_AI_Wire_Abilities {
         if (!function_exists('wp_register_ability_category')) {
             return;
         }
+        if (function_exists('wp_has_ability_category') && wp_has_ability_category(self::ABILITY_CATEGORY)) {
+            return;
+        }
         wp_register_ability_category(self::ABILITY_CATEGORY, array(
             'label' => __('TechnoRapper AI Wire', 'technorapper-ai-wire'),
             'description' => __('Abilities for inspecting and operating AI Wire feed tenants, the rewrite queue, runs, usage, and scores.', 'technorapper-ai-wire'),
@@ -31,12 +34,12 @@ trait TechnoRapper_AI_Wire_Abilities {
                 'execute_callback' => array($this, $ability['callback']),
                 'permission_callback' => array($this, 'ability_permission'),
                 'meta' => array(
+                    'public' => true,
                     'show_in_rest' => true,
                     'annotations' => array(
                         'readonly' => !empty($ability['readonly']),
                         'destructive' => !empty($ability['destructive']),
                         'idempotent' => !empty($ability['idempotent']),
-                        'instructions' => isset($ability['instructions']) ? $ability['instructions'] : '',
                     ),
                 ),
             );

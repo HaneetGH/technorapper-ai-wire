@@ -36,11 +36,14 @@ class Test_TechnoRapper_AI_Wire_Abilities extends WP_UnitTestCase {
         if (!function_exists('wp_register_ability') || !class_exists('WP_Ability')) {
             $this->markTestSkipped('Abilities API requires WordPress 6.9+');
         }
-        if (!function_exists('wp_get_ability') || !wp_get_ability('tr-ai-wire/list-tenants')) {
-            do_action('wp_abilities_api_categories_init');
-            do_action('wp_abilities_api_init');
+        if (function_exists('wp_has_ability') && wp_has_ability('tr-ai-wire/list-tenants')) {
+            return;
         }
-        $this->assertNotNull(wp_get_ability('tr-ai-wire/list-tenants'));
+        if (function_exists('wp_has_ability_category') && !wp_has_ability_category('tr-ai-wire')) {
+            do_action('wp_abilities_api_categories_init');
+        }
+        do_action('wp_abilities_api_init');
+        $this->assertTrue(function_exists('wp_has_ability') && wp_has_ability('tr-ai-wire/list-tenants'));
     }
 
     public function test_mcp_connect_card_renders_endpoint_and_prompts() {
