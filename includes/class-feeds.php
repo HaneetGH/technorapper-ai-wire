@@ -100,6 +100,7 @@ trait TechnoRapper_AI_Wire_Feeds {
         }
         $this->maybe_upgrade_schema();
         $this->maybe_backfill_home_media();
+        $this->import_feedzy_tenants();
         $foreground = !empty($args['foreground']);
         if (!function_exists('fetch_feed')) {
             require_once ABSPATH . WPINC . '/feed.php';
