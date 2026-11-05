@@ -231,6 +231,24 @@ flowchart LR
 
 **Important:** CI now boots WordPress and tests selected database/API/queue paths, but it is not a substitute for a staging rollout. It does not reproduce your live hosting stack, reverse proxy/Cloudflare behavior, real feed providers, real OpenAI account limits, system-cron reliability, concurrent traffic under load, or browser analytics configuration. Complete the staging acceptance checklist and observe a controlled canary before calling a release production-validated.
 
+## Plugin layout
+
+The installable plugin is no longer one 3,000-line file. `technorapper-ai-wire.php` is the bootstrap (plugin header, loads, hooks). Behavior lives in `includes/`:
+
+| File | Responsibility |
+|---|---|
+| `class-plugin.php` | Main class, constants, constructor |
+| `class-schema.php` | Tables, activation, one-time upgrades |
+| `class-settings.php` | Defaults, sanitizing, API key |
+| `class-tenants.php` | Per-feed tenant onboard and mapping |
+| `class-admin.php` | Settings, queue, scores, and experiment screens |
+| `class-queue.php` | Queue rows, locks, stop/delete/clean |
+| `class-feeds.php` | RSS/Atom fetch and ingest |
+| `class-ai.php` | Writer/reviewer prompts and API calls |
+| `class-seo.php` | Rewrite SEO tests and meta |
+| `class-publisher.php` | WordPress posts, homepage, featured images |
+| `class-scores.php` | Score graph |
+
 ## Development checks
 
 Run syntax checks and WordPress integration tests locally (after installing the WordPress test library and PHPUnit):
