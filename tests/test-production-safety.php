@@ -1138,8 +1138,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('featured snippet', $writer);
         $this->assertStringContainsString('editorial desk', $writer);
         $this->assertStringContainsString('FAQ', $reviewer);
-        $this->assertStringContainsString('82-89', $reviewer);
-        $this->assertStringContainsString('Do not deduct below 80', $reviewer);
+        $this->assertStringContainsString('85-92', $reviewer);
+        $this->assertStringContainsString('Do not deduct below 85', $reviewer);
+        $this->assertStringContainsString('fact_flags must be an empty array', $reviewer);
+        $this->assertStringContainsString('do not park a publishable article at 78-84', strtolower($reviewer));
+        $this->assertStringContainsString('labeled analysis', strtolower($writer));
         $this->assertStringContainsString('none were supplied', $reviewer);
         $this->assertStringContainsString('that is not a failure', $writer);
         $this->assertStringContainsString('Never use News or Technology', $writer);
@@ -1157,6 +1160,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             array('title' => 'A useful technology update'),
         ));
         $this->assertStringContainsString('none supplied. Do not lower the score', $input);
+        $this->assertStringContainsString('Publish gate: 85', $input);
+        $this->assertStringContainsString('fact_flags as []', $input);
     }
 
     public function test_writer_input_and_draft_include_internal_links() {
@@ -1313,6 +1318,125 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $settings = TechnoRapper_AI_Wire::defaults();
         $settings['draft_min_score'] = 70;
         $this->assertFalse($this->invoke_private('should_force_publish_retry', array($item, $rewrite, $review, $settings)));
+    }
+
+    public function test_retry_rescores_a_score_and_fact_flag_hold() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_min_score'] = 85;
+        $settings['draft_block_fact_flags'] = 1;
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 84,
+                'fact_flags' => array('Could not independently verify the launch date'),
+                'policy_flags' => array(),
+                'pragmatism' => array(
+                    'is_new' => true,
+                    'is_useful' => true,
+                    'is_grounded' => true,
+                    'similarity_risk' => 'low',
+                ),
+            )),
+            'error_text' => 'Held for editorial review: score 84 < 85, fact flags',
+        ), array('id' => $id));
+        $calls = 0;
+        $callback = function ($preempt, $args, $url) use (&$calls) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $payload = json_decode($args['body'], true);
+            $system = $payload['input'][0]['content'][0]['text'] ?? '';
+            $user = $payload['input'][1]['content'][0]['text'] ?? '';
+            $this->assertStringContainsString('fact_flags must be an empty array', $system);
+            $this->assertStringContainsString('Publish gate: 85', $user);
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array(
+                    'output' => array(array(
+                        'type' => 'message',
+                        'content' => array(array(
+                            'type' => 'output_text',
+                            'text' => wp_json_encode(array(
+                                'verdict' => 'pass',
+                                'score' => 88,
+                                'fact_flags' => array(),
+                                'policy_flags' => array(),
+                                'pragmatism' => array(
+                                    'is_new' => true,
+                                    'is_useful' => true,
+                                    'is_grounded' => true,
+                                    'similarity_risk' => 'low',
+                                ),
+                            )),
+                        )),
+                    )),
+                    'usage' => array('input_tokens' => 20, 'output_tokens' => 30),
+                )),
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $this->invoke_private('retry_queue_item', array($id));
+        remove_filter('pre_http_request', $callback, 10);
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, review_json FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame(1, $calls);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $review = json_decode($row['review_json'], true);
+        $this->assertSame(88, (int) $review['score']);
+        $this->assertSame(array(), $review['fact_flags']);
+    }
+
+    public function test_retry_publishes_a_clearing_score_without_another_review_call() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_min_score'] = 85;
+        $settings['draft_block_fact_flags'] = 1;
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'fact_flags' => array(),
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $calls = 0;
+        $callback = function ($preempt, $args, $url) use (&$calls) {
+            if (strpos($url, 'api.openai.com/v1/responses') !== false) {
+                $calls++;
+            }
+            return $preempt;
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $this->invoke_private('retry_queue_item', array($id));
+        remove_filter('pre_http_request', $callback, 10);
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame(0, $calls);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
     }
 
     public function test_run_keeps_a_quarantined_score_hold() {

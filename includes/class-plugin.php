@@ -15,7 +15,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
 
-    const VERSION = '0.2.25';
+    const VERSION = '0.2.26';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
