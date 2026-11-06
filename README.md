@@ -4,7 +4,7 @@ A WordPress plugin that turns configured RSS/Atom items into source-attributed, 
 
 > AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
 
-For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md).
+For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For what a generated featured-image pass would add to the OpenAI bill, see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md).
 
 ## End-to-end pipeline
 
@@ -133,6 +133,7 @@ The API-key section has its own save action so the secret is not included in the
 - Configure a provider-side project budget/rate limit as a second independent control.
 - Cost estimates depend on the model rates configured in the source. Verify current provider pricing and update the rate table before changing model IDs or pricing.
 - The optional web-search review adds search-tool and token charges.
+- The plugin does not generate featured images. Adding that pass would dominate the text bill; see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md) before raising the monthly budget.
 - If the API call or review fails, the item is held in the queue; inspect errors before retrying. Budget-held items are retried by later runs when budget becomes available.
 
 ## A/B experiments and analytics
@@ -195,7 +196,7 @@ The API-key section has its own save action so the secret is not included in the
 ## Known limitations and operational caveats
 
 - The reviewer is an AI quality gate, not a fact-checking guarantee. Web corroboration can help but cannot certify accuracy.
-- Featured images use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`). The plugin does not copy that file into the WordPress media library. Items with no image URL are skipped. Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
+- Featured images use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`). The plugin does not copy that file into the WordPress media library and does not generate a replacement. Items with no image URL are skipped. Cost of adding a generated-image pass is documented in [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
 - WP-Cron is traffic-triggered unless backed by a host system cron.
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.
