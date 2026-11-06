@@ -28,6 +28,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'draft_block_policy_flags' => 1,
             'draft_block_fact_flags' => 0,
             'auto_publish' => 1,
+            'social_distribution_enabled' => 0,
             'seo_min_score' => 50,
             'seo_max_readability_errors' => 3,
             'seo_require_keyphrase' => 1,
@@ -116,6 +117,7 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['draft_block_policy_flags'] = empty($input['draft_block_policy_flags']) ? 0 : 1;
         $out['draft_block_fact_flags'] = empty($input['draft_block_fact_flags']) ? 0 : 1;
         $out['auto_publish'] = empty($input['auto_publish']) ? 0 : 1;
+        $out['social_distribution_enabled'] = empty($input['social_distribution_enabled']) ? 0 : 1;
         $out['seo_min_score'] = min(100, max(0, absint($input['seo_min_score'] ?? $defaults['seo_min_score'])));
         $out['seo_max_readability_errors'] = min(20, max(0, absint($input['seo_max_readability_errors'] ?? $defaults['seo_max_readability_errors'])));
         $out['seo_require_keyphrase'] = empty($input['seo_require_keyphrase']) ? 0 : 1;
