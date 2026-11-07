@@ -288,8 +288,9 @@ trait TechnoRapper_AI_Wire_AI {
     private function ai_json($model, $system, $user, $s, $web_search) {
         $key = $this->api_key();
         $estimated_input = (int) ceil((strlen($system) + strlen($user)) / 3.5) + ($web_search ? 8000 : 0);
-        if (!$this->can_spend($model, $estimated_input, $s, $web_search)) {
-            return new WP_Error('tr_ai_wire_limit', 'Monthly API token or spending limit reached; item held for later.');
+        $block = $this->spend_block_reason($model, $estimated_input, $s, $web_search);
+        if ($block !== '') {
+            return new WP_Error('tr_ai_wire_limit', $block);
         }
         $payload = array(
             'model' => $model,
@@ -369,15 +370,36 @@ trait TechnoRapper_AI_Wire_AI {
     }
 
     private function can_spend($model, $estimated_input_tokens, $s, $search = false) {
+        return $this->spend_block_reason($model, $estimated_input_tokens, $s, $search) === '';
+    }
+
+    /**
+     * Local AI Wire caps only. OpenAI credit balance and the provider project
+     * budget are separate and are not read here.
+     */
+    private function spend_block_reason($model, $estimated_input_tokens, $s, $search = false) {
         $u = $this->usage();
-        $estimated_total_tokens = $estimated_input_tokens + (int) $s['max_output_tokens'];
+        $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
+        $output_tokens = max(0, (int) $s['max_output_tokens']);
+        $estimated_total_tokens = max(0, (int) $estimated_input_tokens) + $output_tokens;
+        $used_tokens = (int) $u['input_tokens'] + (int) $u['output_tokens'];
         $token_limit = (int) $s['monthly_token_limit'];
-        if ($token_limit <= 0 || ($u['input_tokens'] + $u['output_tokens'] + $estimated_total_tokens) > $token_limit) {
-            return false;
+        if ($token_limit <= 0) {
+            return 'AI Wire monthly token limit is 0, so this item is held. That cap is in AI Wire settings, not the OpenAI credit balance. Set Monthly token limit above 0.';
+        }
+        if (($used_tokens + $estimated_total_tokens) > $token_limit) {
+            return 'AI Wire monthly token limit reached (' . $used_tokens . ' used + ' . $estimated_total_tokens . ' reserved > ' . $token_limit . '). OpenAI can still show remaining credit. Raise Monthly token limit in AI Wire settings.';
         }
         $budget = (float) $s['monthly_budget_usd'];
-        $reserve = $this->estimate_call_cost($model, $estimated_input_tokens, (int) $s['max_output_tokens'], $search);
-        return $budget > 0 && ((float) $u['cost_usd'] + $reserve) <= $budget;
+        $reserve = $this->estimate_call_cost($model, max(0, (int) $estimated_input_tokens), $output_tokens, $search);
+        $spent = (float) $u['cost_usd'];
+        if ($budget <= 0) {
+            return 'AI Wire monthly API budget is $0, so this item is held. That cap is in AI Wire settings, not the OpenAI credit balance. Set Monthly API budget above 0.';
+        }
+        if (($spent + $reserve) > ($budget + 0.000001)) {
+            return 'AI Wire monthly API budget reached ($' . number_format($spent, 4, '.', '') . ' used + $' . number_format($reserve, 4, '.', '') . ' reserved > $' . number_format($budget, 2, '.', '') . '). OpenAI can still show remaining credit. Raise Monthly API budget in AI Wire settings.';
+        }
+        return '';
     }
 
     private function record_usage($model, $response, $search_calls = 0) {
