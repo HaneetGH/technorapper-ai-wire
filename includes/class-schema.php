@@ -122,6 +122,10 @@ trait TechnoRapper_AI_Wire_Schema {
         self::enable_daily_volume_once();
     }
 
+    public function maybe_raise_token_ceiling() {
+        self::raise_token_ceiling_once();
+    }
+
     public static function enable_daily_volume_once() {
         if (get_option('tr_ai_wire_daily_350_on') === '1') {
             return;
@@ -143,6 +147,27 @@ trait TechnoRapper_AI_Wire_Schema {
             update_option(self::OPTION, $opt, false);
         }
         update_option('tr_ai_wire_daily_350_on', '1', false);
+    }
+
+    public static function raise_token_ceiling_once() {
+        if (get_option('tr_ai_wire_token_ceiling_on') === '1') {
+            return;
+        }
+        $opt = get_option(self::OPTION, array());
+        if (!is_array($opt)) {
+            $opt = array();
+        }
+        $next = (int) self::defaults()['monthly_token_limit'];
+        if (array_key_exists('monthly_token_limit', $opt)) {
+            $limit = absint($opt['monthly_token_limit']);
+            // The shipped 1,000,000 ceiling is a few dimes of GPT-6 Luna, so a
+            // normal week of calls held the queue while provider credit remained.
+            if ($limit > 0 && $limit <= 1000000 && $next > $limit) {
+                $opt['monthly_token_limit'] = $next;
+                update_option(self::OPTION, $opt, false);
+            }
+        }
+        update_option('tr_ai_wire_token_ceiling_on', '1', false);
     }
 
     private static function schedule_cron() {

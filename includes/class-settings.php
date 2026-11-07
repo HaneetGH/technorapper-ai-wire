@@ -11,7 +11,9 @@ trait TechnoRapper_AI_Wire_Settings {
             'max_posts_per_day' => 0,
             'max_items_per_run' => 10,
             'monthly_budget_usd' => 5,
-            'monthly_token_limit' => 1000000,
+            // 200M tokens is about $20–$100 of GPT-6 Luna. The old 1M default
+            // is only $0.10–$0.50, so the queue held items while OpenAI credit remained.
+            'monthly_token_limit' => 200000000,
             'max_output_tokens' => 4000,
             'max_source_chars' => 12000,
             'writer_model' => 'gpt-6-luna',

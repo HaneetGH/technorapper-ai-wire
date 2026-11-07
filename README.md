@@ -100,7 +100,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Maximum posts per day | Daily draft and auto-published post cap; `0` pauses creation |
 | Maximum items per run | Caps the number of queued retries and new feed items processed in one scheduled/manual run (1–100) |
 | Monthly API budget | Local estimated USD spend ceiling; `0` stops AI calls |
-| Monthly token limit | Combined monthly input/output token ceiling; `0` stops AI calls |
+| Monthly token limit | This plugin's combined monthly input/output token ceiling. Separate from the OpenAI credit balance and project budget. Default is 200,000,000. `0` stops AI calls |
 | Maximum output tokens | Per AI pass output ceiling |
 | Maximum source characters | Source text truncation limit before AI processing |
 | Writer and reviewer models | Model selection for the two editorial passes |
@@ -129,7 +129,7 @@ The API-key section has its own save action so the secret is not included in the
 
 - The daily cap counts drafts and auto-published posts created by this plugin on the current UTC day. Set it to `0` to pause creation.
 - The per-run cap limits total existing `waiting_budget` retries plus newly discovered items attempted in one run. It is a workload/burst control, separate from the daily draft cap.
-- Monthly USD and token limits use this plugin's recorded API usage and pre-request estimates. They are not provider-side hard limits and do not cap other apps using the same API project/key.
+- Monthly USD and token limits use this plugin's recorded API usage and pre-request estimates. They are not provider-side hard limits and do not cap other apps using the same API project/key. A token ceiling of 1,000,000 holds GPT-6 Luna after roughly a million tokens (well under a dollar) even when the OpenAI credit balance remains. The default ceiling is 200,000,000 so the dollar budget is what stops spending. Existing installs still on a positive ceiling of 1,000,000 or less are raised once.
 - Configure a provider-side project budget/rate limit as a second independent control.
 - Cost estimates depend on the model rates configured in the source. Verify current provider pricing and update the rate table before changing model IDs or pricing.
 - The optional web-search review adds search-tool and token charges.

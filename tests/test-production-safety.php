@@ -19,6 +19,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     public function tear_down() {
         remove_all_filters('pre_http_request');
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
+        delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
         parent::tear_down();
     }
 
@@ -492,6 +493,34 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(5, (int) $again['max_items_per_run']);
     }
 
+    public function test_existing_installs_raise_low_token_ceiling_once() {
+        delete_option('tr_ai_wire_token_ceiling_on');
+        update_option(TechnoRapper_AI_Wire::OPTION, array(
+            'monthly_token_limit' => 1000000,
+            'feeds' => 'https://example.com/feed.xml',
+        ), false);
+        TechnoRapper_AI_Wire::raise_token_ceiling_once();
+        $saved = get_option(TechnoRapper_AI_Wire::OPTION);
+        $this->assertSame(200000000, (int) $saved['monthly_token_limit']);
+        $this->assertSame('https://example.com/feed.xml', $saved['feeds']);
+        $saved['monthly_token_limit'] = 5000000;
+        update_option(TechnoRapper_AI_Wire::OPTION, $saved, false);
+        TechnoRapper_AI_Wire::raise_token_ceiling_once();
+        $this->assertSame(5000000, (int) get_option(TechnoRapper_AI_Wire::OPTION)['monthly_token_limit']);
+    }
+
+    public function test_zero_token_ceiling_stays_paused() {
+        delete_option('tr_ai_wire_token_ceiling_on');
+        update_option(TechnoRapper_AI_Wire::OPTION, array(
+            'monthly_token_limit' => 0,
+            'feeds' => 'https://example.com/feed.xml',
+        ), false);
+        TechnoRapper_AI_Wire::raise_token_ceiling_once();
+        $saved = get_option(TechnoRapper_AI_Wire::OPTION);
+        $this->assertSame(0, (int) $saved['monthly_token_limit']);
+        $this->assertSame('https://example.com/feed.xml', $saved['feeds']);
+    }
+
     public function test_revise_review_creates_a_draft_for_human_editing() {
         $id = $this->create_queue_item();
         global $wpdb;
@@ -604,6 +633,48 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $settings['monthly_budget_usd'] = 5;
         $settings['monthly_token_limit'] = 0;
         $this->assertFalse($this->invoke_private('can_spend', array('gpt-6-luna', 100, $settings, false)));
+        $this->assertStringContainsString('token limit is 0', $this->invoke_private('spend_block_reason', array('gpt-6-luna', 100, $settings, false)));
+    }
+
+    public function test_recorded_luna_usage_under_provider_balance_can_still_spend() {
+        update_option('tr_ai_wire_usage_' . gmdate('Ym'), array(
+            'input_tokens' => 400000,
+            'output_tokens' => 287632,
+            'search_calls' => 0,
+            'cost_usd' => 0.24,
+        ), false);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $this->assertSame(200000000, (int) $settings['monthly_token_limit']);
+        $this->assertTrue($this->invoke_private('can_spend', array('gpt-6-luna', 8000, $settings, false)));
+        $this->assertSame('', $this->invoke_private('spend_block_reason', array('gpt-6-luna', 8000, $settings, false)));
+    }
+
+    public function test_low_token_ceiling_names_plugin_counts() {
+        update_option('tr_ai_wire_usage_' . gmdate('Ym'), array(
+            'input_tokens' => 900000,
+            'output_tokens' => 80000,
+            'search_calls' => 0,
+            'cost_usd' => 0.24,
+        ), false);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['monthly_token_limit'] = 1000000;
+        $reason = $this->invoke_private('spend_block_reason', array('gpt-6-luna', 50000, $settings, false));
+        $this->assertStringContainsString('980000 used + 54000 reserved > 1000000', $reason);
+        $this->assertStringContainsString('OpenAI can still show remaining credit', $reason);
+        $this->assertFalse($this->invoke_private('can_spend', array('gpt-6-luna', 50000, $settings, false)));
+    }
+
+    public function test_dollar_ceiling_names_plugin_amounts() {
+        update_option('tr_ai_wire_usage_' . gmdate('Ym'), array(
+            'input_tokens' => 1000,
+            'output_tokens' => 1000,
+            'search_calls' => 0,
+            'cost_usd' => 4.99,
+        ), false);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $reason = $this->invoke_private('spend_block_reason', array('gpt-6.1-terra', 200000, $settings, true));
+        $this->assertStringContainsString('AI Wire monthly API budget reached ($4.9900 used + $0.2300 reserved > $5.00)', $reason);
+        $this->assertFalse($this->invoke_private('can_spend', array('gpt-6.1-terra', 200000, $settings, true)));
     }
 
     public function test_public_view_endpoint_enforces_atomic_rate_limit() {
