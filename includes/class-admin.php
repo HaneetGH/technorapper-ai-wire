@@ -10,6 +10,7 @@ trait TechnoRapper_AI_Wire_Admin {
         add_submenu_page('tr-ai-wire', 'Queue & usage', 'Queue & usage', 'manage_options', 'tr-ai-wire-queue', array($this, 'queue_page'));
         add_submenu_page('tr-ai-wire', 'Scores', 'Scores', 'manage_options', 'tr-ai-wire-scores', array($this, 'scores_page'));
         add_submenu_page('tr-ai-wire', 'A/B experiments', 'A/B experiments', 'manage_options', 'tr-ai-wire-experiments', array($this, 'experiments_page'));
+        add_submenu_page('tr-ai-wire', 'Social distribution', 'Social distribution', 'manage_options', 'tr-ai-wire-social', array($this, 'social_distribution_page'));
     }
 
     public function settings_page() {
@@ -23,6 +24,7 @@ trait TechnoRapper_AI_Wire_Admin {
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
+            <?php if (!empty($_GET['social_credentials_saved'])) : ?><div class="notice notice-success is-dismissible"><p>Social publishing connections saved.</p></div><?php endif; ?>
             <p>Feed items are rewritten, reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead.</p>
             <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
                 <h2>1. OpenAI API connection</h2>
@@ -44,7 +46,23 @@ trait TechnoRapper_AI_Wire_Admin {
                 </form>
                 <p class="description">A server-level constant can still be used as a fallback if no dashboard key is saved.</p>
             </div>
-            <h2>2. Feed, editorial and processing settings</h2>
+            <?php $social_credentials = $this->social_credentials(); ?>
+            <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+                <h2>2. Social publishing connections</h2>
+                <p>X: <?php echo !empty($social_credentials['x_user_access_token']) ? '<strong>access token saved</strong>' : '<strong>not connected</strong>'; ?> · Instagram: <?php echo !empty($social_credentials['instagram_user_access_token']) && !empty($social_credentials['instagram_user_id']) ? '<strong>access token and account ID saved</strong>' : '<strong>not connected</strong>'; ?></p>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="tr_ai_wire_save_social_credentials">
+                    <?php wp_nonce_field('tr_ai_wire_save_social_credentials'); ?>
+                    <p><label for="tr-x-token"><strong>X user access token</strong></label><br><input id="tr-x-token" name="social[x_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Paste an X user token with post and media write access'); ?>"></p>
+                    <?php if (!empty($social_credentials['x_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_x_user_access_token" value="1"> Remove saved X token</label></p><?php endif; ?>
+                    <p><label for="tr-ig-token"><strong>Instagram Page access token</strong></label><br><input id="tr-ig-token" name="social[instagram_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['instagram_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Paste a Page token for the linked Professional account'); ?>"></p>
+                    <?php if (!empty($social_credentials['instagram_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_instagram_user_access_token" value="1"> Remove saved Instagram token</label></p><?php endif; ?>
+                    <p><label for="tr-ig-user-id"><strong>Instagram Professional account ID</strong></label><br><input id="tr-ig-user-id" name="social[instagram_user_id]" type="text" class="regular-text" inputmode="numeric" value="<?php echo esc_attr($social_credentials['instagram_user_id']); ?>"></p>
+                    <p class="description">Tokens are stored separately in a non-autoloaded WordPress option and are never displayed after saving. The X user token needs post and media write permissions. Instagram needs a Business or Creator account linked to a Facebook Page and a Page token with Instagram publishing permissions. Tokens may expire and need replacement.</p>
+                    <?php submit_button('Save social connections', 'secondary', 'submit', false); ?>
+                </form>
+            </div>
+            <h2>3. Feed, editorial and processing settings</h2>
             <form method="post" action="options.php">
                 <?php settings_fields('tr_ai_wire'); ?>
                 <table class="form-table" role="presentation">
@@ -56,7 +74,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <?php endforeach; ?>
                     <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="2000" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. 350 is the daily target. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row">Auto-publish</th><td><label><input id="tr-auto-publish" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]" value="1" <?php checked($s['auto_publish'], 1); ?>> <strong>Publish posts automatically</strong> — no draft and no Publish button. Passing items go live. Rejected items stay quarantined.</label></td></tr>
-                    <tr><th scope="row">Social distribution</th><td><label><input id="tr-social-distribution" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[social_distribution_enabled]" value="1" <?php checked($s['social_distribution_enabled'], 1); ?>> <strong>Enable automatic social distribution</strong></label><p class="description">Off by default. When enabled, published AI Wire articles can be sent to configured social accounts. Keep this off until X and Instagram publishing are configured and tested.</p></td></tr>
+                    <tr><th scope="row">Social distribution</th><td><label><input id="tr-social-distribution" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[social_distribution_enabled]" value="1" <?php checked($s['social_distribution_enabled'], 1); ?>> <strong>Enable automatic social distribution</strong></label><p class="description">Off by default. Only future AI Wire articles published after enabling are queued. Turning it off pauses queued work. See the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Social distribution queue</a> for delivery status.</p><p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="10" name="<?php echo esc_attr(self::OPTION); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per connected platform.</span></p><p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Estimated budget gate for image-generation calls. Set to 0 to pause new social images.</span></p><p class="description">Images use GPT Image 2 low quality plus a TechnoRapper title card. The local budget estimates $0.006 per image including a small prompt allowance; X API charges are separate.</p></td></tr>
                     <tr><th scope="row">Show on homepage</th><td>
                         <fieldset>
                             <label style="display:block;margin:0 0 8px;"><input id="tr-pin-home-on" type="radio" name="<?php echo esc_attr(self::OPTION); ?>[pin_to_homepage]" value="1" <?php checked(!empty($s['pin_to_homepage']), true); ?>> <strong>On</strong> — assign a desk, featured image, and sticky flag so the post can appear on the home board.</label>

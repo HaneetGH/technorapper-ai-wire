@@ -14,20 +14,23 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_SEO;
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
+    use TechnoRapper_AI_Wire_Social;
 
-    const VERSION = '0.2.26';
+    const VERSION = '0.2.27';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
     const OPTION = 'tr_ai_wire_settings';
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
+    const SOCIAL_CREDENTIALS_OPTION = 'tr_ai_wire_social_credentials';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
+    const SOCIAL_CRON_HOOK = 'tr_ai_wire_process_social_queue';
     const TABLE_SUFFIX = 'tr_ai_wire_items';
     const API_URL = 'https://api.openai.com/v1/responses';
     const SEARCH_CALL_USD = 0.01;
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
     const PROCESSING_LOCK_TTL = 2700;
-    const SCHEMA_VERSION = '6';
+    const SCHEMA_VERSION = '7';
     const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
 
     private $table;
@@ -50,6 +53,10 @@ final class TechnoRapper_AI_Wire {
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
+        add_action('wp_after_insert_post', array($this, 'queue_social_for_post'), 50, 4);
+        add_action(self::SOCIAL_CRON_HOOK, array($this, 'process_social_queue'));
+        add_action('admin_post_tr_ai_wire_save_social_credentials', array($this, 'save_social_credentials'));
+        add_action('admin_post_tr_ai_wire_retry_social_item', array($this, 'retry_social_item'));
         add_action('admin_post_tr_ai_wire_run_now', array($this, 'run_now'));
         add_action('admin_post_tr_ai_wire_retry_item', array($this, 'retry_item'));
         add_action('admin_post_tr_ai_wire_stop_run', array($this, 'stop_run'));

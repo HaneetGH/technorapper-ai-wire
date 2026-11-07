@@ -29,6 +29,8 @@ trait TechnoRapper_AI_Wire_Settings {
             'draft_block_fact_flags' => 0,
             'auto_publish' => 1,
             'social_distribution_enabled' => 0,
+            'social_daily_limit' => 10,
+            'social_image_budget_usd' => 5,
             'seo_min_score' => 50,
             'seo_max_readability_errors' => 3,
             'seo_require_keyphrase' => 1,
@@ -70,6 +72,9 @@ trait TechnoRapper_AI_Wire_Settings {
         $new_frequency = $value['cron_frequency'] ?? 'hourly';
         if ($old_frequency !== $new_frequency) {
             self::schedule_cron();
+        }
+        if (empty($old_value['social_distribution_enabled']) && !empty($value['social_distribution_enabled']) && !wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
+            wp_schedule_single_event(time() + 5, self::SOCIAL_CRON_HOOK);
         }
     }
 
@@ -118,6 +123,8 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['draft_block_fact_flags'] = empty($input['draft_block_fact_flags']) ? 0 : 1;
         $out['auto_publish'] = empty($input['auto_publish']) ? 0 : 1;
         $out['social_distribution_enabled'] = empty($input['social_distribution_enabled']) ? 0 : 1;
+        $out['social_daily_limit'] = min(10, max(1, absint($input['social_daily_limit'] ?? $defaults['social_daily_limit'])));
+        $out['social_image_budget_usd'] = min(10000, max(0, (float) ($input['social_image_budget_usd'] ?? $defaults['social_image_budget_usd'])));
         $out['seo_min_score'] = min(100, max(0, absint($input['seo_min_score'] ?? $defaults['seo_min_score'])));
         $out['seo_max_readability_errors'] = min(20, max(0, absint($input['seo_max_readability_errors'] ?? $defaults['seo_max_readability_errors'])));
         $out['seo_require_keyphrase'] = empty($input['seo_require_keyphrase']) ? 0 : 1;
