@@ -22,7 +22,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          VERSION="$(grep -m1 '^\s*\* Version:' technorapper-ai-wire.php | sed 's/.*Version:[[:space:]]*//' | tr -d '[:space:]')"
+          VERSION="$(grep -m1 '^\s*\* Version:' technorapper-ai-wire.php | sed -E 's/.*Version:[[:space:]]*//; s/[^0-9.].*$//' | tr -d '[:space:]')"
           if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
             echo "Could not read a plugin Version from technorapper-ai-wire.php"
             exit 1
