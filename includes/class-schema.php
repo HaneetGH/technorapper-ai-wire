@@ -11,7 +11,7 @@ trait TechnoRapper_AI_Wire_Schema {
         }
         self::schedule_cron();
         $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
-        if (!empty($settings['social_distribution_enabled'])) {
+        if (!empty($settings['social_distribution_enabled']) && self::social_credentials_connected()) {
             if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
                 wp_schedule_single_event(time() + 300, self::SOCIAL_CRON_HOOK);
             }

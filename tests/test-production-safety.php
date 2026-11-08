@@ -20,6 +20,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('pre_http_request');
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
         delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK);
         parent::tear_down();
@@ -2069,8 +2070,28 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertFalse($view['can_refresh']);
     }
 
+    public function test_site_context_job_does_not_run_without_social_credentials() {
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 1)), false);
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
+        $this->assertFalse(TechnoRapper_AI_Wire::social_credentials_connected());
+        $this->assertFalse($this->plugin->queue_site_context_job(true));
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK));
+        $this->plugin->process_site_context();
+        $record = get_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION, array());
+        $this->assertNotSame('running', $record['status'] ?? '');
+        $view = $this->plugin->site_context_view();
+        $this->assertSame('idle', $view['state']);
+        $this->assertSame('Connect X or Instagram first', $view['title']);
+        $this->assertFalse($view['can_refresh']);
+    }
+
     public function test_enabling_social_queues_a_site_context_job() {
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 1)), false);
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
+            'x_user_access_token' => 'x-token',
+            'instagram_user_access_token' => '',
+            'instagram_user_id' => '',
+        ), false);
         $this->assertTrue($this->plugin->queue_site_context_job(true));
         $record = get_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         $this->assertSame('queued', $record['status']);
@@ -2103,6 +2124,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'profile' => $profile,
         ), false);
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 1)), false);
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
+            'x_user_access_token' => 'x-token',
+            'instagram_user_access_token' => '',
+            'instagram_user_id' => '',
+        ), false);
         $this->assertFalse($this->plugin->site_context_needs_refresh());
         $view = $this->plugin->site_context_view();
         $this->assertSame('ready', $view['state']);

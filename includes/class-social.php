@@ -27,6 +27,20 @@ trait TechnoRapper_AI_Wire_Social {
         ));
     }
 
+    public static function social_credentials_connected($credentials = null) {
+        if (!is_array($credentials)) {
+            $credentials = wp_parse_args(get_option(self::SOCIAL_CREDENTIALS_OPTION, array()), array(
+                'x_user_access_token' => '',
+                'instagram_user_access_token' => '',
+                'instagram_user_id' => '',
+            ));
+        }
+        if (!empty($credentials['x_user_access_token'])) {
+            return true;
+        }
+        return !empty($credentials['instagram_user_access_token']) && !empty($credentials['instagram_user_id']);
+    }
+
     public function save_social_credentials() {
         if (!current_user_can('manage_options')) {
             wp_die(esc_html__('You are not allowed to manage social publishing credentials.', 'technorapper-ai-wire'));
@@ -53,11 +67,13 @@ trait TechnoRapper_AI_Wire_Social {
         } else {
             update_option(self::SOCIAL_CREDENTIALS_OPTION, $next, false);
         }
-        if (!empty($this->settings()['social_distribution_enabled'])) {
+        $now_connected = self::social_credentials_connected($next);
+        $was_connected = self::social_credentials_connected($current);
+        if (!empty($this->settings()['social_distribution_enabled']) && $now_connected) {
             if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
                 wp_schedule_single_event(time() + 5, self::SOCIAL_CRON_HOOK);
             }
-            $this->queue_site_context_job(false);
+            $this->queue_site_context_job(!$was_connected);
         }
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire&social_credentials_saved=1'));
         exit;
@@ -122,6 +138,9 @@ trait TechnoRapper_AI_Wire_Social {
 
     public function queue_site_context_job($force = false) {
         $settings = $this->settings();
+        if (!self::social_credentials_connected()) {
+            return false;
+        }
         if (empty($settings['social_distribution_enabled']) && !$force) {
             return false;
         }
@@ -144,18 +163,28 @@ trait TechnoRapper_AI_Wire_Social {
             wp_die(esc_html__('You are not allowed to refresh site context.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_refresh_site_context');
-        $this->queue_site_context_job(true);
+        $queued = self::social_credentials_connected() && $this->queue_site_context_job(true);
         $page = sanitize_key($_POST['redirect_page'] ?? 'tr-ai-wire');
         if ($page !== 'tr-ai-wire-social') {
             $page = 'tr-ai-wire';
         }
-        wp_safe_redirect(admin_url('admin.php?page=' . $page . '&site_context=learning'));
+        $url = admin_url('admin.php?page=' . $page);
+        if ($queued) {
+            $url = add_query_arg('site_context', 'learning', $url);
+        }
+        wp_safe_redirect($url);
         exit;
     }
 
     public function process_site_context() {
         $settings = $this->settings();
-        if (empty($settings['social_distribution_enabled'])) {
+        if (empty($settings['social_distribution_enabled']) || !self::social_credentials_connected()) {
+            $record = $this->site_context_record();
+            if (in_array((string) ($record['status'] ?? ''), array('queued', 'running'), true) && empty($record['completed_at'])) {
+                $record['status'] = 'idle';
+                $record['error'] = '';
+                $this->save_site_context_record($record);
+            }
             return;
         }
         $record = $this->site_context_record();
@@ -292,7 +321,12 @@ trait TechnoRapper_AI_Wire_Social {
         $needs = $this->site_context_needs_refresh($record);
         $status = (string) ($record['status'] ?? 'idle');
         $enabled = !empty($this->settings()['social_distribution_enabled']);
-        if (!$enabled) {
+        $connected = self::social_credentials_connected();
+        if (!$connected) {
+            $state = 'idle';
+            $title = 'Connect X or Instagram first';
+            $body = 'Onboard a social account in the connections card. Until then we do not run the site-context job and we do not spend OpenAI tokens on social copy or images.';
+        } elseif (!$enabled) {
             $state = 'idle';
             $title = 'We will understand this site when social is on';
             $body = 'Turn on Social distribution and AI Wire will read this WordPress site — name, desks, recent stories, and voice — so every later social post stays in your context.';
@@ -331,7 +365,7 @@ trait TechnoRapper_AI_Wire_Social {
             'body' => $body,
             'last' => $last,
             'needs_refresh' => $needs || $state === 'idle' || $state === 'error' || $state === 'stale',
-            'can_refresh' => $enabled,
+            'can_refresh' => $enabled && $connected,
         );
     }
 
