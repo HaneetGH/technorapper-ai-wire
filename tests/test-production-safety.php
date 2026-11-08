@@ -2486,5 +2486,247 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(10, has_action(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK, array($this->plugin, 'process_site_context')));
         $this->assertSame(10, has_action(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK, array($this->plugin, 'process_social_queue')));
         $this->assertSame(50, has_action('wp_after_insert_post', array($this->plugin, 'queue_social_for_post')));
+        $this->assertSame(12, has_action('init', array($this->plugin, 'maybe_requeue_instagram_quota_field_failures')));
+    }
+
+    private function create_social_jpeg_attachment() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            return 0;
+        }
+        $upload = wp_upload_bits('technorapper-social-test-' . wp_generate_uuid4() . '.jpg', null, $jpeg);
+        if (!empty($upload['error'])) {
+            return 0;
+        }
+        $attachment_id = wp_insert_attachment(array(
+            'post_mime_type' => 'image/jpeg',
+            'post_title' => 'Social graphic',
+            'post_status' => 'inherit',
+        ), $upload['file'], 0, true);
+        if (is_wp_error($attachment_id)) {
+            return 0;
+        }
+        update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+        return (int) $attachment_id;
+    }
+
+    public function test_social_queue_page_shows_generated_image() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to preview social graphics.');
+        }
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'AI Power Politics: What Voter Backlash Could Mean for Big Tech',
+        ));
+        $copy = array(
+            'hook' => 'When AI becomes a campaign issue, the stakes go beyond technology.',
+            'on_image_headline' => 'When Big Tech Becomes Politics',
+            'on_image_subhead' => 'Voters are rewriting the AI story',
+            'instagram' => 'When AI becomes a campaign issue, the stakes go beyond technology.',
+            'instagram_alt' => 'Editorial graphic about AI and politics',
+        );
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'copy_json' => wp_json_encode($copy),
+            'error_text' => '(#100) Tried accessing nonexisting field (content_publishing_limit)',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $image_url = wp_get_attachment_url($attachment_id);
+        $this->assertStringContainsString('Generated graphic / result', $html);
+        $this->assertStringContainsString('Generated graphic', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-preview-image', $html);
+        $this->assertNotFalse($image_url);
+        $this->assertStringContainsString($image_url, $html);
+        $this->assertStringContainsString('When Big Tech Becomes Politics', $html);
+        $this->assertStringContainsString('branded social card', $html);
+        $this->assertStringContainsString('Instagram could not read the daily publishing quota', $html);
+        $this->assertStringContainsString('Retry this platform post', $html);
+    }
+
+    public function test_social_queue_page_shows_placeholder_before_image_exists() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Waiting for graphic',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Graphic not generated yet', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-preview-empty', $html);
+    }
+
+    public function test_social_queue_image_id_falls_back_to_post_meta() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to preview social graphics.');
+        }
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Fallback graphic'));
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        $found = $this->invoke_private('social_queue_image_id', array(
+            array('image_attachment_id' => 0),
+            get_post($post_id),
+        ));
+        $this->assertSame($attachment_id, $found);
+    }
+
+    public function test_instagram_missing_quota_field_still_publishes() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required for the social publish path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'IG quota field missing',
+            'post_excerpt' => 'Quota edge is optional.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 34);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg) {
+            if (strpos((string) $url, 'api.openai.com/v1/responses') !== false) {
+                return $this->openai_json_http(array('hook' => 'Hook', 'on_image_headline' => 'Headline', 'instagram_caption' => 'Caption'));
+            }
+            if (strpos((string) $url, 'api.openai.com/v1/images/generations') !== false) {
+                return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => wp_json_encode(array(
+                        'error' => array(
+                            'message' => '(#100) Tried accessing nonexisting field (content_publishing_limit)',
+                            'type' => 'OAuthException',
+                            'code' => 100,
+                        ),
+                    )),
+                    'response' => array('code' => 400, 'message' => 'Bad Request'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-media-1'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-container-1'));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/abc/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id, remote_url FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertSame('ig-media-1', $row['remote_id']);
+        $this->assertSame('https://www.instagram.com/p/abc/', $row['remote_url']);
+    }
+
+    public function test_instagram_quota_field_needs_review_is_requeued_and_published() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the Instagram retry path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Stuck IG quota field',
+            'post_excerpt' => 'This never reached Instagram.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 35);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Hook',
+            'on_image_headline' => 'Headline',
+            'x' => 'X text',
+            'instagram' => 'Instagram caption',
+            'instagram_alt' => 'Alt',
+        )));
+        $other_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Ambiguous other'));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'error_text' => '(#100) Tried accessing nonexisting field (content_publishing_limit)',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $other_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Instagram did not return a media ID.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => wp_json_encode(array(
+                        'error' => array(
+                            'message' => '(#100) Tried accessing nonexisting field (content_publishing_limit)',
+                            'type' => 'OAuthException',
+                            'code' => 100,
+                        ),
+                    )),
+                    'response' => array('code' => 400, 'message' => 'Bad Request'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-media-retry'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-container-retry'));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/retry/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+
+        $this->plugin->process_social_queue();
+        $fixed = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
+        $other = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $other_id), ARRAY_A);
+        $this->assertSame('published', $fixed['status']);
+        $this->assertSame('ig-media-retry', $fixed['remote_id']);
+        $this->assertSame('needs_review', $other['status']);
+        $this->assertStringContainsString('did not return a media ID', (string) $other['error_text']);
     }
 }
