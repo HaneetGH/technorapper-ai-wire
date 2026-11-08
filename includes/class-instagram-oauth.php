@@ -66,7 +66,7 @@ final class TechnoRapper_AI_Wire_Instagram_OAuth {
             self::redirect_with_error('Could not create the Instagram authorization URL.');
         }
 
-        wp_safe_redirect($url);
+        wp_redirect($url, 302, 'TechnoRapper AI Wire');
         exit;
     }
 
@@ -219,6 +219,11 @@ final class TechnoRapper_AI_Wire_Instagram_OAuth {
     public static function admin_notice() {
         if (!current_user_can('manage_options') || !self::is_ai_wire_page()) {
             return;
+        }
+
+        if (!empty($_GET['instagram_connect_error'])) {
+            $message = sanitize_text_field(wp_unslash($_GET['instagram_connect_error']));
+            echo '<div class="notice notice-error is-dismissible"><p><strong>Instagram connection failed:</strong> ' . esc_html($message) . '</p></div>';
         }
 
         if (!empty($_GET['instagram_connected'])) {
