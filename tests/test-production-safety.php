@@ -22,7 +22,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
         delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
+        delete_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'));
+        delete_option('tr_ai_wire_social_worker_lock');
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK);
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
         parent::tear_down();
     }
 
@@ -30,6 +33,58 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $reflection = new ReflectionMethod('TechnoRapper_AI_Wire', $method);
         $reflection->setAccessible(true);
         return $reflection->invokeArgs($this->plugin, $args);
+    }
+
+    private function onboard_social($platforms = array('x')) {
+        $credentials = array(
+            'x_user_access_token' => in_array('x', $platforms, true) ? 'x-token' : '',
+            'instagram_user_access_token' => in_array('instagram', $platforms, true) ? 'ig-token' : '',
+            'instagram_user_id' => in_array('instagram', $platforms, true) ? '17841400000000000' : '',
+        );
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+        )), false);
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, $credentials, false);
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+    }
+
+    private function openai_json_http($payload) {
+        return array(
+            'headers' => array(),
+            'body' => wp_json_encode(array(
+                'output' => array(array(
+                    'type' => 'message',
+                    'content' => array(array('type' => 'output_text', 'text' => wp_json_encode($payload))),
+                )),
+                'usage' => array('input_tokens' => 20, 'output_tokens' => 30),
+            )),
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'cookies' => array(),
+            'filename' => null,
+        );
+    }
+
+    private function tiny_jpeg_bytes() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            return '';
+        }
+        $im = imagecreatetruecolor(64, 96);
+        imagefilledrectangle($im, 0, 0, 63, 95, imagecolorallocate($im, 9, 20, 43));
+        ob_start();
+        imagejpeg($im, null, 80);
+        $bytes = ob_get_clean();
+        imagedestroy($im);
+        return is_string($bytes) ? $bytes : '';
+    }
+
+    private function mock_http_ok($body) {
+        return array(
+            'headers' => array(),
+            'body' => is_string($body) ? $body : wp_json_encode($body),
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'cookies' => array(),
+            'filename' => null,
+        );
     }
 
     private function draft_settings() {
@@ -2029,9 +2084,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     }
 
     public function test_zero_social_image_budget_blocks_generation() {
+        $this->onboard_social(array('x'));
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Budget test'));
-        $settings = TechnoRapper_AI_Wire::defaults();
-        $settings['social_image_budget_usd'] = 0;
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_image_budget_usd' => 0,
+        ));
         $result = $this->invoke_private('generate_social_image_locked', array(get_post($post_id), $settings, array()));
         $this->assertWPError($result);
         $this->assertSame('tr_ai_wire_social_image_budget', $result->get_error_code());
@@ -2058,7 +2116,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Article stays itself'));
         update_post_meta($post_id, '_tr_ai_wire_source_image', 'https://cdn.example.com/photo.jpg');
         $this->assertSame('https://cdn.example.com/photo.jpg', $this->invoke_private('display_image_url', array($post_id)));
-        $this->assertSame(0, (int) get_post_thumbnail_id($post_id));
+        $this->assertSame(0, $this->invoke_private('real_thumbnail_id', array($post_id)));
     }
 
     public function test_site_context_needs_refresh_until_a_successful_read() {
@@ -2141,5 +2199,279 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         update_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION, $stale, false);
         $this->assertTrue($this->plugin->site_context_needs_refresh());
         $this->assertSame('stale', $this->plugin->site_context_view()['state']);
+    }
+
+    public function test_incomplete_instagram_credentials_are_not_onboarded() {
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
+            'x_user_access_token' => '',
+            'instagram_user_access_token' => 'ig-token',
+            'instagram_user_id' => '',
+        ), false);
+        $this->assertFalse(TechnoRapper_AI_Wire::social_credentials_connected());
+        $this->assertSame(array(), TechnoRapper_AI_Wire::connected_social_platforms());
+    }
+
+    public function test_force_refresh_does_not_run_when_social_is_off() {
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
+            'x_user_access_token' => 'x-token',
+            'instagram_user_access_token' => '',
+            'instagram_user_id' => '',
+        ), false);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 0)), false);
+        $this->assertFalse($this->plugin->queue_site_context_job(true));
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK));
+    }
+
+    public function test_enabling_social_without_credentials_does_not_schedule_jobs() {
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK);
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
+        $old = TechnoRapper_AI_Wire::defaults();
+        $new = $old;
+        $new['social_distribution_enabled'] = 1;
+        $this->plugin->settings_updated($old, $new);
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK));
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
+    }
+
+    public function test_disconnected_social_makes_no_openai_or_platform_http_calls() {
+        $openai = 0;
+        $platform = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$openai, &$platform) {
+            if (strpos((string) $url, 'openai.com') !== false) {
+                $openai++;
+            }
+            if (strpos((string) $url, 'api.x.com') !== false || strpos((string) $url, 'graph.facebook.com') !== false) {
+                $platform++;
+            }
+            return new WP_Error('blocked', 'HTTP blocked in test');
+        }, 10, 3);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 1)), false);
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'No social spend'));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 77);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        $this->plugin->process_site_context();
+        $this->plugin->process_social_queue();
+        $this->invoke_private('generate_social_copy', array(get_post($post_id), TechnoRapper_AI_Wire::defaults()));
+        $this->invoke_private('generate_social_image_locked', array(get_post($post_id), TechnoRapper_AI_Wire::defaults(), array()));
+        $this->assertSame(0, $openai);
+        $this->assertSame(0, $platform);
+        global $wpdb;
+        $this->assertSame(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+    }
+
+    public function test_queue_only_connected_platforms() {
+        $this->onboard_social(array('x', 'instagram'));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Both networks'));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 21);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        global $wpdb;
+        $platforms = $wpdb->get_col($wpdb->prepare("SELECT platform FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d ORDER BY platform", $post_id));
+        $this->assertSame(array('instagram', 'x'), $platforms);
+    }
+
+    public function test_switch_off_pauses_queued_delivery() {
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Paused post'));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 22);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 0)), false);
+        add_filter('pre_http_request', function () {
+            return new WP_Error('blocked', 'should not run');
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $status = $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $post_id));
+        $this->assertSame('queued', $status);
+    }
+
+    public function test_daily_unique_article_cap_still_allows_second_platform() {
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 1,
+        )), false);
+        global $wpdb;
+        $table = $wpdb->prefix . 'tr_ai_wire_social';
+        $now = gmdate('Y-m-d H:i:s');
+        $first = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'First of day'));
+        $second = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Second of day'));
+        $wpdb->insert($table, array('post_id' => $first, 'platform' => 'x', 'status' => 'published', 'created_at' => $now, 'updated_at' => $now));
+        $wpdb->insert($table, array('post_id' => $first, 'platform' => 'instagram', 'status' => 'queued', 'created_at' => $now, 'updated_at' => $now));
+        $wpdb->insert($table, array('post_id' => $second, 'platform' => 'x', 'status' => 'queued', 'created_at' => $now, 'updated_at' => $now));
+        $this->assertSame(1, $this->invoke_private('social_published_today'));
+        $this->assertTrue($this->invoke_private('social_post_published_today', array($first)));
+        $this->assertFalse($this->invoke_private('social_post_published_today', array($second)));
+    }
+
+    public function test_site_context_job_stores_profile_from_openai() {
+        $this->onboard_social(array('x'));
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, 'api.openai.com/v1/responses') === false) {
+                return new WP_Error('blocked', 'Unexpected URL ' . $url);
+            }
+            return $this->openai_json_http(array(
+                'site_name' => 'TechnoRapper',
+                'one_line' => 'India tech desk for phones and AI.',
+                'audience' => 'People who follow mobiles and AI.',
+                'desks' => array('AI', 'Android'),
+                'voice' => 'Editorial, not hype.',
+                'priorities' => array('What changed', 'Who in India is affected'),
+                'avoid' => array('Fake reviews'),
+                'cta_style' => 'Read the full story on TechnoRapper',
+                'visual_style' => 'Navy cyan magazine art',
+            ));
+        }, 10, 3);
+        $this->plugin->process_site_context();
+        $record = get_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
+        $this->assertSame('ready', $record['status']);
+        $this->assertSame('TechnoRapper', $record['profile']['site_name']);
+        $this->assertSame('ready', $this->plugin->site_context_view()['state']);
+        $this->assertNotSame('', $this->plugin->site_context_view()['last']);
+    }
+
+    public function test_x_worker_publishes_without_replacing_featured_image() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required for the social publish path.');
+        }
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Chip news for X',
+            'post_excerpt' => 'A phone chip just got faster.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 31);
+        update_post_meta($post_id, '_tr_ai_wire_source_image', 'https://cdn.example.com/photo.jpg');
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+
+        $copy_payload = array(
+            'hook' => 'This chip changes phones',
+            'on_image_headline' => 'Faster phone chip',
+            'on_image_subhead' => 'Charging just got serious',
+            'cta' => 'Read the full story on TechnoRapper',
+            'visual_brief' => 'Symbolic chip glow',
+            'x_text' => 'A phone chip just got faster.',
+            'instagram_caption' => 'A phone chip just got faster.',
+            'instagram_alt' => 'Editorial chip graphic',
+            'hashtags' => array('AI', 'Android'),
+        );
+        add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg, $copy_payload) {
+            if (strpos((string) $url, 'api.openai.com/v1/responses') !== false) {
+                return $this->openai_json_http($copy_payload);
+            }
+            if (strpos((string) $url, 'api.openai.com/v1/images/generations') !== false) {
+                return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+            }
+            if (strpos((string) $url, 'media/upload/initialize') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'media-1')));
+            }
+            if (strpos((string) $url, '/append') !== false) {
+                return $this->mock_http_ok(array());
+            }
+            if (strpos((string) $url, '/finalize') !== false) {
+                return $this->mock_http_ok(array('data' => array('processing_info' => array('state' => 'succeeded'))));
+            }
+            if (strpos((string) $url, 'api.x.com/2/tweets') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => '12345')));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id, image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertSame('12345', $row['remote_id']);
+        $this->assertGreaterThan(0, (int) $row['image_attachment_id']);
+        $this->assertSame('1', (string) get_post_meta((int) $row['image_attachment_id'], '_tr_ai_wire_social_asset', true));
+        $this->assertSame(0, $this->invoke_private('real_thumbnail_id', array($post_id)));
+        $this->assertNotSame((int) $row['image_attachment_id'], $this->invoke_private('real_thumbnail_id', array($post_id)));
+        $this->assertSame('https://cdn.example.com/photo.jpg', $this->invoke_private('display_image_url', array($post_id)));
+    }
+
+    public function test_ambiguous_x_response_goes_to_needs_review() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required for the social publish path.');
+        }
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Ambiguous X'));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 32);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg) {
+            if (strpos((string) $url, 'api.openai.com/v1/responses') !== false) {
+                return $this->openai_json_http(array('hook' => 'Hook', 'on_image_headline' => 'Headline', 'x_text' => 'Text', 'instagram_caption' => 'Caption'));
+            }
+            if (strpos((string) $url, 'api.openai.com/v1/images/generations') !== false) {
+                return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+            }
+            if (strpos((string) $url, 'media/upload/initialize') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'media-1')));
+            }
+            if (strpos((string) $url, '/append') !== false || strpos((string) $url, '/finalize') !== false) {
+                return $this->mock_http_ok(array('data' => array('processing_info' => array('state' => 'succeeded'))));
+            }
+            if (strpos((string) $url, 'api.x.com/2/tweets') !== false) {
+                return new WP_Error('http_request_failed', 'Connection reset after X may have accepted the tweet.');
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $post_id), ARRAY_A);
+        $this->assertSame('needs_review', $row['status']);
+        $this->assertNotEmpty($row['error_text']);
+    }
+
+    public function test_instagram_quota_full_stays_queued() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required for the social publish path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'IG quota'));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 33);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg) {
+            if (strpos((string) $url, 'api.openai.com/v1/responses') !== false) {
+                return $this->openai_json_http(array('hook' => 'Hook', 'on_image_headline' => 'Headline', 'instagram_caption' => 'Caption'));
+            }
+            if (strpos((string) $url, 'api.openai.com/v1/images/generations') !== false) {
+                return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('data' => array(array('quota_usage' => 100, 'config' => array('quota_total' => 100)))));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
+        $this->assertSame('queued', $row['status']);
+        $this->assertStringContainsString('quota', strtolower((string) $row['error_text']));
+    }
+
+    public function test_social_copy_uses_site_context_cta() {
+        $this->onboard_social(array('x'));
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION, array(
+            'status' => 'ready',
+            'started_at' => gmdate('Y-m-d H:i:s'),
+            'completed_at' => gmdate('Y-m-d H:i:s'),
+            'fingerprint' => 'abc',
+            'error' => '',
+            'profile' => array('cta_style' => 'Read it on this desk', 'site_name' => 'Desk'),
+        ), false);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Context CTA'));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(), get_post($post_id)));
+        $this->assertSame('Read it on this desk', $copy['cta']);
+        $this->assertStringContainsString('Read it on this desk', $copy['instagram']);
+    }
+
+    public function test_context_and_social_hooks_are_registered() {
+        $this->assertSame(10, has_action(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK, array($this->plugin, 'process_site_context')));
+        $this->assertSame(10, has_action(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK, array($this->plugin, 'process_social_queue')));
+        $this->assertSame(50, has_action('wp_after_insert_post', array($this->plugin, 'queue_social_for_post')));
     }
 }

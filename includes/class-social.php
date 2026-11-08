@@ -27,7 +27,7 @@ trait TechnoRapper_AI_Wire_Social {
         ));
     }
 
-    public static function social_credentials_connected($credentials = null) {
+    public static function connected_social_platforms($credentials = null) {
         if (!is_array($credentials)) {
             $credentials = wp_parse_args(get_option(self::SOCIAL_CREDENTIALS_OPTION, array()), array(
                 'x_user_access_token' => '',
@@ -35,10 +35,22 @@ trait TechnoRapper_AI_Wire_Social {
                 'instagram_user_id' => '',
             ));
         }
+        $platforms = array();
         if (!empty($credentials['x_user_access_token'])) {
-            return true;
+            $platforms[] = 'x';
         }
-        return !empty($credentials['instagram_user_access_token']) && !empty($credentials['instagram_user_id']);
+        if (!empty($credentials['instagram_user_access_token']) && !empty($credentials['instagram_user_id'])) {
+            $platforms[] = 'instagram';
+        }
+        return $platforms;
+    }
+
+    public static function social_credentials_connected($credentials = null) {
+        return (bool) self::connected_social_platforms($credentials);
+    }
+
+    public function social_distribution_ready() {
+        return !empty($this->settings()['social_distribution_enabled']) && self::social_credentials_connected();
     }
 
     public function save_social_credentials() {
@@ -137,11 +149,7 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     public function queue_site_context_job($force = false) {
-        $settings = $this->settings();
-        if (!self::social_credentials_connected()) {
-            return false;
-        }
-        if (empty($settings['social_distribution_enabled']) && !$force) {
+        if (!$this->social_distribution_ready()) {
             return false;
         }
         $record = $this->site_context_record();
@@ -163,7 +171,7 @@ trait TechnoRapper_AI_Wire_Social {
             wp_die(esc_html__('You are not allowed to refresh site context.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_refresh_site_context');
-        $queued = self::social_credentials_connected() && $this->queue_site_context_job(true);
+        $queued = $this->queue_site_context_job(true);
         $page = sanitize_key($_POST['redirect_page'] ?? 'tr-ai-wire');
         if ($page !== 'tr-ai-wire-social') {
             $page = 'tr-ai-wire';
@@ -178,7 +186,7 @@ trait TechnoRapper_AI_Wire_Social {
 
     public function process_site_context() {
         $settings = $this->settings();
-        if (empty($settings['social_distribution_enabled']) || !self::social_credentials_connected()) {
+        if (!$this->social_distribution_ready()) {
             $record = $this->site_context_record();
             if (in_array((string) ($record['status'] ?? ''), array('queued', 'running'), true) && empty($record['completed_at'])) {
                 $record['status'] = 'idle';
@@ -267,6 +275,9 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function learn_site_context($snapshot, $s) {
+        if (!$this->social_distribution_ready()) {
+            return new WP_Error('tr_ai_wire_social_not_ready', 'Connect a social account and enable Social distribution before spending OpenAI tokens on site context.');
+        }
         $system = 'You study one WordPress publisher so later social posts stay in that site\'s context. Use only the supplied snapshot. Do not invent coverage areas, products, or a different brand. Return JSON only.';
         $user = 'Read this WordPress site and describe what it is, who it is for, and what later social copy should prioritize. '
             . 'Priorities should match the live desks and recent stories, not a generic newsroom. Voice should match a technology editorial desk, not an ad agency. '
@@ -413,14 +424,7 @@ trait TechnoRapper_AI_Wire_Social {
         if (empty($settings['social_distribution_enabled'])) {
             return;
         }
-        $credentials = $this->social_credentials();
-        $platforms = array();
-        if (!empty($credentials['x_user_access_token'])) {
-            $platforms[] = 'x';
-        }
-        if (!empty($credentials['instagram_user_access_token']) && !empty($credentials['instagram_user_id'])) {
-            $platforms[] = 'instagram';
-        }
+        $platforms = self::connected_social_platforms();
         if (!$platforms) {
             return;
         }
@@ -467,16 +471,13 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function process_social_queue_locked() {
         $settings = $this->settings();
-        if (empty($settings['social_distribution_enabled'])) {
+        if (!$this->social_distribution_ready()) {
             return;
         }
         if ($this->site_context_needs_refresh()) {
             $this->queue_site_context_job(false);
         }
         $credentials = $this->social_credentials();
-        if (empty($credentials['x_user_access_token']) && (empty($credentials['instagram_user_access_token']) || empty($credentials['instagram_user_id']))) {
-            return;
-        }
         $limit = min(10, max(1, (int) ($settings['social_daily_limit'] ?? 10)));
         if ($this->social_published_today() >= $limit) {
             global $wpdb;
@@ -654,6 +655,9 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function generate_social_copy($post, $s) {
+        if (!$this->social_distribution_ready()) {
+            return new WP_Error('tr_ai_wire_social_not_ready', 'Connect a social account and enable Social distribution before spending OpenAI tokens on social copy.');
+        }
         $snapshot = $this->social_article_snapshot($post);
         $profile = $this->site_context_profile();
         $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this site';
@@ -778,6 +782,9 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function generate_social_image_locked($post, $settings, $copy = array()) {
+        if (!$this->social_distribution_ready()) {
+            return new WP_Error('tr_ai_wire_social_not_ready', 'Connect a social account and enable Social distribution before spending OpenAI tokens on social images.');
+        }
         $month_key = 'tr_ai_wire_social_image_usage_' . gmdate('Ym');
         $usage = (float) get_option($month_key, 0);
         $budget = (float) ($settings['social_image_budget_usd'] ?? 0);

@@ -100,7 +100,7 @@ Current plugin compatibility declared in `technorapper-ai-wire.php`: WordPress 6
 - The larger implementation and documentation changes are currently uncommitted in `/private/tmp/technorapper-ai-wire-pr`, on a detached checkout at that PR head. The local changes include a new `includes/class-social.php`, schema/hooks/settings/admin changes, cost and README updates, and schema expectation updates in `tests/test-production-safety.php`.
 - Keep working on **PR #39**. The user explicitly requires changes through a PR and does not want direct changes to `main`. Do not open a second PR for this feature.
 - Before committing, create a local branch tracking `origin/codex/opt-in-social-distribution`, inspect the diff, then commit and push the feature to update PR #39. Update the PR title/body so it describes the complete feature, not just the switch. Keep it draft until staging API credentials and a canary have been reviewed.
-- No automated tests or PHP lints have been run in this work session. `git diff --check` passed at the last review. Do not describe the implementation as tested or production-ready.
+- WordPress PHPUnit coverage now includes onboarding gates (no OpenAI/platform HTTP without X or Instagram), site-context storage, unique-article daily cap, switch-off pause, mocked X publish, ambiguous X → needs_review, Instagram quota deferral, and “social asset is not the featured image”. Staging canary with live tokens is still required before production enablement.
 - The project mirror's `sources/` folder is synced reference material and must remain read-only.
 
 ## Current implementation shape in the worktree
