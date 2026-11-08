@@ -1083,6 +1083,10 @@ trait TechnoRapper_AI_Wire_Social {
         if (!$image_url || !wp_http_validate_url($image_url)) {
             return new WP_Error('tr_ai_wire_ig_image_url', 'The Instagram image must have a public HTTP(S) Media Library URL.');
         }
+        $credentials = $this->instagram_resolve_publish_credentials($credentials);
+        if (is_wp_error($credentials)) {
+            return $credentials;
+        }
         $base = 'https://graph.facebook.com/' . self::INSTAGRAM_GRAPH_VERSION . '/' . rawurlencode($credentials['instagram_user_id']);
         $limit = $this->instagram_publish_limit($credentials);
         if (is_wp_error($limit)) {
@@ -1172,6 +1176,97 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_instagram_http', sanitize_text_field($data['error']['message'] ?? ('Instagram API returned HTTP ' . $status . '.')));
         }
         return is_array($data) ? $data : array();
+    }
+
+    private function instagram_graph_get($path, $token, $query = array()) {
+        $query = is_array($query) ? $query : array();
+        $query['access_token'] = $token;
+        $url = add_query_arg($query, 'https://graph.facebook.com/' . self::INSTAGRAM_GRAPH_VERSION . '/' . ltrim((string) $path, '/'));
+        $response = wp_remote_get($url, array('timeout' => 30));
+        if (is_wp_error($response)) {
+            return new WP_Error('tr_ai_wire_instagram_http', $response->get_error_message());
+        }
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || !empty($data['error'])) {
+            return new WP_Error('tr_ai_wire_instagram_http', sanitize_text_field($data['error']['message'] ?? ('Instagram API returned HTTP ' . $status . '.')));
+        }
+        return is_array($data) ? $data : array();
+    }
+
+    private function instagram_missing_object_help($ig_id) {
+        $ig_id = preg_replace('/[^0-9]/', '', (string) $ig_id);
+        $label = $ig_id !== '' ? 'account ' . $ig_id : 'this Instagram account';
+        return 'Instagram rejected this token for ' . $label . '. Paste the TechnoRapper Page access_token from Graph API Explorer GET me/accounts — the token inside the TechnoRapper object — not the User Token at the top of the page. Then retry.';
+    }
+
+    private function instagram_is_missing_object_error($message) {
+        $message = (string) $message;
+        return stripos($message, 'does not exist') !== false
+            || stripos($message, 'missing permissions') !== false
+            || stripos($message, 'unsupported post request') !== false;
+    }
+
+    private function instagram_persist_resolved_credentials($credentials) {
+        $current = $this->social_credentials();
+        $current['instagram_user_access_token'] = (string) ($credentials['instagram_user_access_token'] ?? '');
+        $current['instagram_user_id'] = preg_replace('/[^0-9]/', '', (string) ($credentials['instagram_user_id'] ?? ''));
+        update_option(self::SOCIAL_CREDENTIALS_OPTION, $current, false);
+    }
+
+    private function instagram_resolve_publish_credentials($credentials) {
+        $token = (string) ($credentials['instagram_user_access_token'] ?? '');
+        $ig_id = preg_replace('/[^0-9]/', '', (string) ($credentials['instagram_user_id'] ?? ''));
+        if ($token === '' || $ig_id === '') {
+            return new WP_Error('tr_ai_wire_ig_missing_token', 'The Instagram access token or account ID is no longer configured.');
+        }
+        $probe = $this->instagram_graph_get($ig_id, $token, array('fields' => 'id,username'));
+        if (!is_wp_error($probe) && !empty($probe['id'])) {
+            return $credentials;
+        }
+        $me = $this->instagram_graph_get('me', $token, array('fields' => 'id,name,instagram_business_account'));
+        if (!is_wp_error($me) && !empty($me['instagram_business_account']['id'])) {
+            $linked = preg_replace('/[^0-9]/', '', (string) $me['instagram_business_account']['id']);
+            if ($linked !== '') {
+                $credentials['instagram_user_id'] = $linked;
+                if ($linked !== $ig_id) {
+                    $this->instagram_persist_resolved_credentials($credentials);
+                }
+                return $credentials;
+            }
+        }
+        $accounts = $this->instagram_graph_get('me/accounts', $token, array(
+            'fields' => 'name,id,access_token,instagram_business_account',
+            'limit' => 100,
+        ));
+        $pages = (!is_wp_error($accounts) && !empty($accounts['data']) && is_array($accounts['data'])) ? $accounts['data'] : array();
+        $matched = null;
+        $ig_pages = array();
+        foreach ($pages as $page) {
+            $page_ig = preg_replace('/[^0-9]/', '', (string) ($page['instagram_business_account']['id'] ?? ''));
+            if ($page_ig === '' || empty($page['access_token'])) {
+                continue;
+            }
+            $ig_pages[] = $page;
+            if ($page_ig === $ig_id) {
+                $matched = $page;
+                break;
+            }
+        }
+        if (!$matched && count($ig_pages) === 1) {
+            $matched = $ig_pages[0];
+        }
+        if ($matched) {
+            $credentials['instagram_user_access_token'] = (string) $matched['access_token'];
+            $credentials['instagram_user_id'] = preg_replace('/[^0-9]/', '', (string) $matched['instagram_business_account']['id']);
+            $this->instagram_persist_resolved_credentials($credentials);
+            return $credentials;
+        }
+        $probe_message = is_wp_error($probe) ? $probe->get_error_message() : '';
+        if ($this->instagram_is_missing_object_error($probe_message)) {
+            return new WP_Error('tr_ai_wire_ig_token_mismatch', $this->instagram_missing_object_help($ig_id));
+        }
+        return is_wp_error($probe) ? $probe : new WP_Error('tr_ai_wire_ig_token_mismatch', $this->instagram_missing_object_help($ig_id));
     }
 
     private function instagram_publish_limit($credentials) {
@@ -1347,6 +1442,13 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if (stripos($error, 'nonexisting field') !== false && stripos($error, 'content_publishing_limit') !== false) {
             return 'Instagram could not read the daily publishing quota for this token. The branded graphic was still generated. Confirm it is not already live, then retry — the next attempt will skip that quota check and try to publish.';
+        }
+        if ($this->instagram_is_missing_object_error($error)) {
+            $ig_id = '';
+            if (preg_match('/(\d{10,})/', $error, $matches)) {
+                $ig_id = $matches[1];
+            }
+            return $this->instagram_missing_object_help($ig_id);
         }
         return $error;
     }
