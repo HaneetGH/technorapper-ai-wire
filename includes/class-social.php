@@ -487,6 +487,7 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $table = $this->social_table();
         $wpdb->query("UPDATE {$table} SET status = 'needs_review', error_text = 'The worker stopped before recording an outcome. Check the platform before retrying.' WHERE status = 'processing' AND updated_at < UTC_TIMESTAMP() - INTERVAL 15 MINUTE");
+        $this->requeue_instagram_prepublish_quota_failures();
         $rows = $wpdb->get_results("SELECT * FROM {$table} WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1", ARRAY_A);
         foreach ((array) $rows as $row) {
             if (empty($this->settings()['social_distribution_enabled'])) {
@@ -1153,12 +1154,52 @@ trait TechnoRapper_AI_Wire_Social {
         $status = (int) wp_remote_retrieve_response_code($response);
         $data = json_decode(wp_remote_retrieve_body($response), true);
         if ($status < 200 || $status >= 300 || !empty($data['error'])) {
-            return new WP_Error('tr_ai_wire_ig_quota', sanitize_text_field($data['error']['message'] ?? ('Could not read Instagram publishing quota (HTTP ' . $status . ').')));
+            $message = sanitize_text_field($data['error']['message'] ?? ('Could not read Instagram publishing quota (HTTP ' . $status . ').'));
+            $code = (int) ($data['error']['code'] ?? 0);
+            // content_publishing_limit is an optional pre-check of Instagram's
+            // rolling 24-hour post cap. It is not the publish call. If this
+            // Page token cannot read that edge, skip it and try to publish.
+            if ($this->instagram_quota_check_is_optional_failure($message, $code)) {
+                return array();
+            }
+            return new WP_Error('tr_ai_wire_ig_quota', $message);
         }
         if (isset($data['data'][0]) && is_array($data['data'][0])) {
             return $data['data'][0];
         }
         return is_array($data) ? $data : array();
+    }
+
+    private function instagram_quota_check_is_optional_failure($message, $code = 0) {
+        if ((int) $code === 100) {
+            return true;
+        }
+        $message = (string) $message;
+        return stripos($message, 'nonexisting field') !== false
+            || stripos($message, 'content_publishing_limit') !== false;
+    }
+
+    public function maybe_requeue_instagram_quota_field_failures() {
+        if (!$this->social_distribution_ready()) {
+            return 0;
+        }
+        $updated = $this->requeue_instagram_prepublish_quota_failures();
+        if ($updated > 0 && !wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
+            wp_schedule_single_event(time() + 5, self::SOCIAL_CRON_HOOK);
+        }
+        return $updated;
+    }
+
+    private function requeue_instagram_prepublish_quota_failures() {
+        global $wpdb;
+        $table = $this->social_table();
+        $like = '%' . $wpdb->esc_like('content_publishing_limit') . '%';
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET status = 'queued', error_text = NULL, remote_id = '', remote_url = '', updated_at = %s WHERE platform = 'instagram' AND status = 'needs_review' AND error_text LIKE %s",
+            current_time('mysql', true),
+            $like
+        ));
+        return is_int($updated) ? $updated : 0;
     }
 
     private function instagram_media_permalink($media_id, $token) {
@@ -1228,6 +1269,126 @@ trait TechnoRapper_AI_Wire_Social {
         exit;
     }
 
+    private function social_queue_copy($row, $post) {
+        $copy = array();
+        if (!empty($row['copy_json'])) {
+            $decoded = json_decode($row['copy_json'], true);
+            if (is_array($decoded)) {
+                $copy = $decoded;
+            }
+        } elseif ($post instanceof WP_Post) {
+            $meta_copy = json_decode((string) get_post_meta($post->ID, '_tr_ai_wire_social_copy', true), true);
+            if (is_array($meta_copy)) {
+                $copy = $meta_copy;
+            }
+        }
+        return $copy;
+    }
+
+    private function social_queue_image_id($row, $post) {
+        $image_id = (int) ($row['image_attachment_id'] ?? 0);
+        if ($image_id > 0 && wp_attachment_is_image($image_id)) {
+            return $image_id;
+        }
+        if ($post instanceof WP_Post) {
+            $fallback = (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_id', true);
+            if ($fallback > 0 && wp_attachment_is_image($fallback)) {
+                return $fallback;
+            }
+        }
+        return 0;
+    }
+
+    private function social_status_copy($status) {
+        $map = array(
+            'queued' => 'Waiting. The worker generates the branded graphic, then tries to post it.',
+            'processing' => 'In progress: generating the graphic or talking to the platform.',
+            'published' => 'Posted on this platform.',
+            'needs_review' => 'The platform response was unclear. Confirm this is not already live, then retry so you do not double-post.',
+        );
+        $status = sanitize_key((string) $status);
+        return isset($map[$status]) ? $map[$status] : '';
+    }
+
+    private function social_error_copy($error) {
+        $error = trim((string) $error);
+        if ($error === '') {
+            return '';
+        }
+        if (stripos($error, 'nonexisting field') !== false && stripos($error, 'content_publishing_limit') !== false) {
+            return 'Instagram could not read the daily publishing quota for this token. The branded graphic was still generated. Confirm it is not already live, then retry — the next attempt will skip that quota check and try to publish.';
+        }
+        return $error;
+    }
+
+    private function social_queue_caption($row, $copy) {
+        $platform = (string) ($row['platform'] ?? '');
+        if ($platform === 'instagram' && !empty($copy['instagram'])) {
+            return (string) $copy['instagram'];
+        }
+        if ($platform === 'x' && !empty($copy['x'])) {
+            return (string) $copy['x'];
+        }
+        if (!empty($copy['hook'])) {
+            return (string) $copy['hook'];
+        }
+        return '';
+    }
+
+    private function render_social_queue_creative($row, $post, $copy) {
+        $image_id = $this->social_queue_image_id($row, $post);
+        $caption = $this->social_queue_caption($row, $copy);
+        $error = $this->social_error_copy((string) ($row['error_text'] ?? ''));
+        $status = sanitize_key((string) ($row['status'] ?? ''));
+        echo '<div class="tr-ai-wire-social-item">';
+        echo '<div class="tr-ai-wire-social-preview">';
+        if ($image_id > 0) {
+            $full = wp_get_attachment_url($image_id);
+            echo '<a class="tr-ai-wire-social-preview-link" href="' . esc_url($full ? $full : get_edit_post_link($image_id)) . '" target="_blank" rel="noopener">';
+            echo wp_get_attachment_image($image_id, 'medium', false, array(
+                'class' => 'tr-ai-wire-social-preview-image',
+                'alt' => (string) ($copy['instagram_alt'] ?? $copy['on_image_headline'] ?? 'Generated social graphic'),
+            ));
+            echo '<span class="tr-ai-wire-social-preview-label">Generated graphic</span></a>';
+        } else {
+            echo '<div class="tr-ai-wire-social-preview-empty">Graphic not generated yet. The worker creates it before posting.</div>';
+        }
+        echo '</div><div class="tr-ai-wire-social-copy">';
+        if (!empty($copy['on_image_headline'])) {
+            echo '<p class="tr-ai-wire-social-headline"><strong>' . esc_html($copy['on_image_headline']) . '</strong></p>';
+        }
+        if (!empty($copy['on_image_subhead'])) {
+            echo '<p class="tr-ai-wire-social-subhead">' . esc_html($copy['on_image_subhead']) . '</p>';
+        }
+        if (!empty($copy['hook']) && (empty($copy['on_image_headline']) || $copy['hook'] !== $copy['on_image_headline'])) {
+            echo '<p class="description">' . esc_html($copy['hook']) . '</p>';
+        }
+        if ($caption !== '') {
+            echo '<p class="tr-ai-wire-social-caption">' . esc_html(wp_trim_words($caption, 36, '…')) . '</p>';
+        }
+        $status_copy = $this->social_status_copy($status);
+        if ($status_copy !== '') {
+            echo '<p class="description">' . esc_html($status_copy) . '</p>';
+        }
+        if (!empty($row['remote_url'])) {
+            echo '<p><a href="' . esc_url($row['remote_url']) . '" target="_blank" rel="noopener">View live post</a></p>';
+        } elseif (!empty($row['remote_id'])) {
+            echo '<p>Published media ID: ' . esc_html($row['remote_id']) . '</p>';
+        }
+        if ($error !== '') {
+            echo '<p class="tr-ai-wire-social-error">' . esc_html($error) . '</p>';
+        }
+        if ($status === 'needs_review') {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) (int) $row['id']) . '">';
+            wp_nonce_field('tr_ai_wire_retry_social_item_' . (int) $row['id']);
+            echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I checked that it is not already published</label><br>';
+            echo '<button class="button button-secondary">Retry this platform post</button></form>';
+        }
+        echo '</div></div>';
+    }
+
     public function social_distribution_page() {
         if (!current_user_can('manage_options')) {
             return;
@@ -1239,13 +1400,40 @@ trait TechnoRapper_AI_Wire_Social {
         ?>
         <div class="wrap">
             <h1>Social distribution</h1>
+            <style>
+                .tr-ai-wire-social-item{display:flex;gap:16px;align-items:flex-start;max-width:920px;}
+                .tr-ai-wire-social-preview{flex:0 0 132px;}
+                .tr-ai-wire-social-preview-link{display:block;text-decoration:none;}
+                .tr-ai-wire-social-preview-image{display:block;width:120px;height:auto;border-radius:8px;background:#09142b;border:1px solid #c3c4c7;}
+                .tr-ai-wire-social-preview-label{display:block;margin-top:6px;font-size:12px;color:#50575e;}
+                .tr-ai-wire-social-preview-empty{width:120px;min-height:150px;padding:12px;border:1px dashed #c3c4c7;border-radius:8px;background:#f6f7f7;color:#646970;font-size:12px;}
+                .tr-ai-wire-social-copy{min-width:0;}
+                .tr-ai-wire-social-headline,.tr-ai-wire-social-subhead,.tr-ai-wire-social-caption{margin:0 0 6px;}
+                .tr-ai-wire-social-caption{white-space:pre-wrap;color:#1d2327;}
+                .tr-ai-wire-social-error{color:#b32d2e;margin:8px 0;}
+                .tr-ai-wire-social-status{display:inline-block;padding:2px 8px;border-radius:999px;background:#dcdcde;font-size:12px;text-transform:lowercase;}
+                .tr-ai-wire-social-status.is-published{background:#c6e1c6;}
+                .tr-ai-wire-social-status.is-needs_review{background:#f0c33c;}
+                .tr-ai-wire-social-status.is-processing{background:#c5d9ed;}
+            </style>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <?php $this->render_site_context_card('tr-ai-wire-social'); ?>
             <p>Automatic distribution is <?php echo !empty($settings['social_distribution_enabled']) ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Turning it off pauses queued work. Today: <?php echo esc_html((string) $this->social_published_today()); ?> / <?php echo esc_html((string) (int) ($settings['social_daily_limit'] ?? 10)); ?> articles distributed.</p>
             <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated.</p>
-            <table class="widefat striped"><thead><tr><th>Queued</th><th>Article</th><th>Platform</th><th>Status</th><th>Creative / result</th></tr></thead><tbody>
-            <?php if (!$rows) : ?><tr><td colspan="5">No social items have been queued.</td></tr><?php else : foreach ($rows as $row) : $post = get_post((int) $row['post_id']); $copy = array(); if (!empty($row['copy_json'])) { $decoded_copy = json_decode($row['copy_json'], true); if (is_array($decoded_copy)) { $copy = $decoded_copy; } } elseif ($post) { $meta_copy = json_decode((string) get_post_meta($post->ID, '_tr_ai_wire_social_copy', true), true); if (is_array($meta_copy)) { $copy = $meta_copy; } } ?>
-                <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php if ($post) : ?><a href="<?php echo esc_url(get_edit_post_link($post->ID)); ?>"><?php echo esc_html($post->post_title); ?></a><?php endif; ?></td><td><?php echo esc_html($row['platform']); ?></td><td><?php echo esc_html($row['status']); ?></td><td><?php if (!empty($copy['on_image_headline'])) : ?><strong><?php echo esc_html($copy['on_image_headline']); ?></strong><?php if (!empty($copy['hook'])) : ?><br><?php echo esc_html($copy['hook']); ?><?php endif; ?><br><?php endif; ?><?php if ($row['remote_url']) : ?><a href="<?php echo esc_url($row['remote_url']); ?>" target="_blank" rel="noopener">View post</a><?php elseif ($row['remote_id']) : ?>Published media ID: <?php echo esc_html($row['remote_id']); ?><?php endif; ?><?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['status'] === 'needs_review') : ?><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;"><input type="hidden" name="action" value="tr_ai_wire_retry_social_item"><input type="hidden" name="item_id" value="<?php echo esc_attr((string) (int) $row['id']); ?>"><?php wp_nonce_field('tr_ai_wire_retry_social_item_' . (int) $row['id']); ?><label><input type="checkbox" name="confirmed_not_published" value="1" required> I checked that it is not already published</label><br><button class="button button-secondary">Retry this platform post</button></form><?php endif; ?></td></tr>
+            <p class="description">Each row is one platform post for a published AI Wire article. The graphic on the right is the branded social card — not the article featured image. The worker generates that card, writes a caption, then tries to publish it.</p>
+            <table class="widefat striped"><thead><tr><th>Queued</th><th>Article</th><th>Platform</th><th>Status</th><th>Generated graphic / result</th></tr></thead><tbody>
+            <?php if (!$rows) : ?><tr><td colspan="5">No social items have been queued.</td></tr><?php else : foreach ($rows as $row) :
+                $post = get_post((int) $row['post_id']);
+                $copy = $this->social_queue_copy($row, $post);
+                $status = sanitize_key((string) ($row['status'] ?? ''));
+                ?>
+                <tr>
+                    <td><?php echo esc_html($row['created_at']); ?></td>
+                    <td><?php if ($post) : ?><a href="<?php echo esc_url(get_edit_post_link($post->ID)); ?>"><?php echo esc_html($post->post_title); ?></a><?php endif; ?></td>
+                    <td><?php echo esc_html($row['platform']); ?></td>
+                    <td><span class="tr-ai-wire-social-status is-<?php echo esc_attr($status); ?>"><?php echo esc_html($status); ?></span></td>
+                    <td><?php $this->render_social_queue_creative($row, $post, $copy); ?></td>
+                </tr>
             <?php endforeach; endif; ?>
             </tbody></table>
         </div>

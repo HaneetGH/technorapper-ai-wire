@@ -16,7 +16,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Social;
 
-    const VERSION = '0.2.31';
+    const VERSION = '0.2.32';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -63,6 +63,7 @@ final class TechnoRapper_AI_Wire {
         add_action('wp_after_insert_post', array($this, 'queue_social_for_post'), 50, 4);
         add_action(self::SOCIAL_CRON_HOOK, array($this, 'process_social_queue'));
         add_action(self::SOCIAL_CONTEXT_CRON_HOOK, array($this, 'process_site_context'));
+        add_action('init', array($this, 'maybe_requeue_instagram_quota_field_failures'), 12);
         add_action('admin_post_tr_ai_wire_save_social_credentials', array($this, 'save_social_credentials'));
         add_action('admin_post_tr_ai_wire_retry_social_item', array($this, 'retry_social_item'));
         add_action('admin_post_tr_ai_wire_refresh_site_context', array($this, 'refresh_site_context_request'));
