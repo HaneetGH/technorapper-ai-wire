@@ -4,7 +4,7 @@ A WordPress plugin that turns configured RSS/Atom items into source-attributed, 
 
 > AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
 
-For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For the social distribution diagrams, decisions and AI handoff, see [Social Distribution Implementation Handoff](docs/SOCIAL-DISTRIBUTION-HANDOFF.md). For image-cost assumptions, see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md).
+For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For post-publication X/Instagram distribution, see [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md) and [Social Distribution Implementation Handoff](docs/SOCIAL-DISTRIBUTION-HANDOFF.md). For image-cost assumptions, see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md).
 
 ## End-to-end pipeline
 
@@ -119,11 +119,11 @@ The API-key section has its own save action so the secret is not included in the
 
 ## Automatic social distribution
 
-Social distribution is **off by default**. In the **Social publishing connections** card on the AI Wire settings page, save the X user access token and/or the Instagram Page access token plus Instagram Professional account ID. Then enable **Social distribution** in the settings form. Only AI Wire articles that publish after the switch is enabled are queued. Turning the switch off pauses queued delivery; it does not delete queue history or remove posts already published on a social network.
+Social distribution is **off by default**. In the **Social publishing connections** card on the AI Wire settings page, save the X user access token and/or the Instagram Page access token plus Instagram Professional account ID. Then enable **Social distribution** in the settings form. Enabling it queues a background job that reads this WordPress site (name, tagline, desks, recent stories) so later social copy stays in the site's context. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (after 14 days, or if the site identity changed). Only AI Wire articles that publish after the switch is enabled are queued. Turning the switch off pauses queued delivery; it does not delete queue history or remove posts already published on a social network.
 
-- X requires a user access token for the account that will post, with post and media write permissions. The worker uploads the generated image and creates a post containing the approved social title/description and article link.
+- X requires a user access token for the account that will post, with post and media write permissions. The worker uploads the branded graphic and posts a hook-led caption plus the article URL.
 - Instagram requires a Business or Creator account linked to a Facebook Page, a Page access token with Instagram publishing permissions, and the Instagram Professional account ID. Meta fetches the generated image from the public WordPress Media URL. The worker reads the account's quota from Meta, creates a media container, waits for image processing, then publishes it. If the account is at its rolling quota, the item stays queued and is checked again later.
-- Each published article gets one portrait GPT Image 2 low image that the renderer crops and brands as a 4:5 TechnoRapper card. The same image is reused for X and Instagram. AI Wire stores the image in the WordPress Media Library. The default social-image budget is $5/month; the plugin reserves an estimated $0.006 per image and stops requesting images at the configured ceiling. This estimate is separate from the Writer/Reviewer text budget and is not a provider invoice. X API charges are also separate.
+- After publish, a social copy pass writes a scroll-stopping hook, on-image headline, captions, and a visual brief from the approved article (no second research pass). GPT Image 2 low creates the artwork; PHP GD overlays TechnoRapper branding, the hook headline, a supporting line, and a read-the-story CTA. The same 4:5 card is reused on X and Instagram and is stored as a social asset, never as the article featured image. Default social-image budget is $5/month at about $0.006 per image. That estimate is separate from Writer/Reviewer spend and from X API charges.
 - The daily cap is for unique articles; each one can create one post on each connected platform. Distribution uses WP-Cron, so configure a host system cron for reliable delivery. Platform errors are held for review to avoid automatic duplicate posting when a network response is ambiguous. The queue screen provides a manual retry action that requires confirming the post is not already live.
 - Tokens are saved in a separate non-autoloaded option and are never shown again in the settings form. Tokens can expire or be revoked and may need replacement. This first version uses manually supplied tokens rather than a platform OAuth connection flow.
 - The WordPress host must have PHP GD enabled so the generated art can be cropped and branded with the TechnoRapper title card. A TrueType font improves title rendering; GD's built-in font is used as a fallback.
@@ -264,6 +264,7 @@ The installable plugin is no longer one 3,000-line file. `technorapper-ai-wire.p
 | `class-ai.php` | Writer/reviewer prompts and API calls |
 | `class-seo.php` | Rewrite SEO tests and meta |
 | `class-publisher.php` | WordPress posts, homepage, featured images |
+| `class-social.php` | Post-publish X/Instagram queue, social copy, branded graphic |
 | `class-scores.php` | Score graph |
 | `class-social.php` | Social credentials, generated branded image, X/Instagram queue and publishing |
 

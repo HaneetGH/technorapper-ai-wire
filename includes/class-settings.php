@@ -75,8 +75,11 @@ trait TechnoRapper_AI_Wire_Settings {
         if ($old_frequency !== $new_frequency) {
             self::schedule_cron();
         }
-        if (empty($old_value['social_distribution_enabled']) && !empty($value['social_distribution_enabled']) && !wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
-            wp_schedule_single_event(time() + 5, self::SOCIAL_CRON_HOOK);
+        if (empty($old_value['social_distribution_enabled']) && !empty($value['social_distribution_enabled'])) {
+            if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
+                wp_schedule_single_event(time() + 5, self::SOCIAL_CRON_HOOK);
+            }
+            $this->queue_site_context_job(true);
         }
     }
 

@@ -11,7 +11,7 @@ Verify current [OpenAI image pricing](https://developers.openai.com/api/docs/pri
 
 Article featured images remain the RSS item's own photo URL (enclosure, media thumbnail, Open Graph image, or `<img src>`). The article pipeline does not copy that file into the WordPress media library; items with no image URL are skipped. The Writer's `featured_image_alt` remains a caption, not a picture.
 
-When Social distribution is enabled and a configured account is connected, a generated-image layer runs after the article publishes, requests a portrait image, crops and brands it as a 4:5 JPEG, stores it in WordPress Media, and reuses it for configured platforms. The returned image payload is saved locally; the plugin does not depend on a temporary remote image URL.
+When Social distribution is enabled and a configured account is connected, a copy pass writes a hook, on-image headline, captions and a visual brief from the published article. Then the image layer requests a portrait illustration, overlays that post info as a 4:5 TechnoRapper card, stores it as a social asset (never the article featured image), and reuses it for configured platforms. The returned image payload is saved locally; the plugin does not depend on a temporary remote image URL. Copy generation is a small Luna JSON call (~$0.001) and is billed against the Writer/Reviewer budget, not the social image budget.
 
 ## What you already pay (text)
 

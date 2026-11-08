@@ -19,7 +19,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     public function tear_down() {
         remove_all_filters('pre_http_request');
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK);
         parent::tear_down();
     }
 
@@ -72,11 +74,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $wpdb->prefix . 'tr_ai_wire_items',
             $wpdb->prefix . 'tr_ai_wire_views',
             $wpdb->prefix . 'tr_ai_wire_view_limits',
+            $wpdb->prefix . 'tr_ai_wire_social',
         );
         foreach ($expected as $table) {
             $this->assert_plugin_table_exists($table);
         }
-        $this->assertSame('7', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('8', get_option('tr_ai_wire_schema_version'));
+        $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_social LIKE 'copy_json'"));
         $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_items LIKE 'source_published_at'"));
     }
 
@@ -142,7 +146,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $row = $wpdb->get_row($wpdb->prepare("SELECT id, source_title FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame((string) $id, (string) $row['id']);
         $this->assertSame('Source title', $row['source_title']);
-        $this->assertSame('7', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('8', get_option('tr_ai_wire_schema_version'));
         $this->assert_plugin_table_exists($wpdb->prefix . 'tr_ai_wire_view_limits');
     }
 
@@ -291,7 +295,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         update_option('tr_ai_wire_schema_version', '4');
         $this->plugin->maybe_upgrade_schema();
-        $this->assertSame('7', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('8', get_option('tr_ai_wire_schema_version'));
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         wp_unschedule_event(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args), TechnoRapper_AI_Wire::CRON_HOOK, $args);
     }
@@ -1955,5 +1959,161 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $count);
         $last = get_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         $this->assertSame('cleaned', $last['reason']);
+    }
+
+    public function test_social_queue_stays_off_by_default() {
+        $this->assertSame(0, (int) TechnoRapper_AI_Wire::defaults()['social_distribution_enabled']);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Chip news'));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 99);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        global $wpdb;
+        $count = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social");
+        $this->assertSame(0, $count);
+    }
+
+    public function test_social_queue_starts_only_after_publish_when_enabled() {
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 1)), false);
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
+            'x_user_access_token' => 'x-token',
+            'instagram_user_access_token' => '',
+            'instagram_user_id' => '',
+        ), false);
+        $draft_id = $this->factory()->post->create(array('post_status' => 'draft', 'post_title' => 'Draft chip'));
+        update_post_meta($draft_id, '_tr_ai_wire_queue_id', 11);
+        $this->plugin->queue_social_for_post($draft_id, get_post($draft_id), false, null);
+
+        $plain_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Manual post'));
+        $this->plugin->queue_social_for_post($plain_id, get_post($plain_id), false, null);
+
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Published chip',
+            'post_excerpt' => 'A phone just got faster wireless charging.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 12);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), true, get_post($post_id));
+
+        global $wpdb;
+        $rows = $wpdb->get_results("SELECT post_id, platform, status FROM {$wpdb->prefix}tr_ai_wire_social", ARRAY_A);
+        $this->assertCount(1, $rows);
+        $this->assertSame((string) $post_id, (string) $rows[0]['post_id']);
+        $this->assertSame('x', $rows[0]['platform']);
+        $this->assertSame('queued', $rows[0]['status']);
+    }
+
+    public function test_social_copy_puts_hook_on_image_and_url_in_captions() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Qualcomm pushes into data centers',
+            'post_excerpt' => 'The chipmaker wants a larger share of AI servers this year.',
+        ));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(
+            'hook' => 'Your next phone chip has a server cousin',
+            'on_image_headline' => 'Qualcomm wants the data center',
+            'on_image_subhead' => 'AI servers are the new battleground',
+            'cta' => 'Read the full story on TechnoRapper',
+            'x_text' => 'Qualcomm is chasing AI servers, not just phones.',
+            'instagram_caption' => "Your next phone chip has a server cousin\n\nWhat changed: a bigger data-center push.",
+            'hashtags' => array('AI', 'Qualcomm', 'bad tag!'),
+        ), get_post($post_id)));
+        $permalink = get_permalink($post_id);
+        $this->assertSame('Qualcomm wants the data center', $copy['on_image_headline']);
+        $this->assertSame('Your next phone chip has a server cousin', $copy['hook']);
+        $this->assertStringContainsString($permalink, $copy['x']);
+        $this->assertStringContainsString($permalink, $copy['instagram']);
+        $this->assertContains('ai', $copy['hashtags']);
+        $this->assertContains('qualcomm', $copy['hashtags']);
+        $this->assertStringContainsString('Read the full story on TechnoRapper', $copy['instagram']);
+    }
+
+    public function test_zero_social_image_budget_blocks_generation() {
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Budget test'));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['social_image_budget_usd'] = 0;
+        $result = $this->invoke_private('generate_social_image_locked', array(get_post($post_id), $settings, array()));
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_social_image_budget', $result->get_error_code());
+        $this->assertSame(0, (int) get_post_thumbnail_id($post_id));
+    }
+
+    public function test_branded_social_image_is_not_the_featured_image() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg') || !function_exists('imagecreatefromstring')) {
+            $this->markTestSkipped('GD is required to render social cards.');
+        }
+        $im = imagecreatetruecolor(64, 96);
+        $bg = imagecolorallocate($im, 9, 20, 43);
+        imagefilledrectangle($im, 0, 0, 63, 95, $bg);
+        ob_start();
+        imagejpeg($im, null, 80);
+        $bytes = ob_get_clean();
+        imagedestroy($im);
+        $branded = $this->invoke_private('brand_social_image', array($bytes, array(
+            'on_image_headline' => 'Stop scrolling',
+            'on_image_subhead' => 'This chip changes laptops',
+            'cta' => 'Read the full story on TechnoRapper',
+        )));
+        $this->assertTrue(is_string($branded) && $branded !== '');
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Article stays itself'));
+        update_post_meta($post_id, '_tr_ai_wire_source_image', 'https://cdn.example.com/photo.jpg');
+        $this->assertSame('https://cdn.example.com/photo.jpg', $this->invoke_private('display_image_url', array($post_id)));
+        $this->assertSame(0, (int) get_post_thumbnail_id($post_id));
+    }
+
+    public function test_site_context_needs_refresh_until_a_successful_read() {
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
+        $this->assertTrue($this->plugin->site_context_needs_refresh());
+        $view = $this->plugin->site_context_view();
+        $this->assertSame('idle', $view['state']);
+        $this->assertSame('', $view['last']);
+        $this->assertFalse($view['can_refresh']);
+    }
+
+    public function test_enabling_social_queues_a_site_context_job() {
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 1)), false);
+        $this->assertTrue($this->plugin->queue_site_context_job(true));
+        $record = get_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
+        $this->assertSame('queued', $record['status']);
+        $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK));
+        $view = $this->plugin->site_context_view();
+        $this->assertSame('learning', $view['state']);
+        $this->assertSame('We are understanding you', $view['title']);
+        $this->assertTrue($view['can_refresh']);
+    }
+
+    public function test_ready_site_context_is_current_until_fingerprint_or_age_changes() {
+        $profile = $this->invoke_private('sanitize_site_context_profile', array(array(
+            'site_name' => 'TechnoRapper',
+            'one_line' => 'AI, mobiles, gadgets, and India tech news.',
+            'audience' => 'People who follow phones and AI.',
+            'desks' => array('AI', 'Android'),
+            'voice' => 'Editorial desk, not hype.',
+            'priorities' => array('Explain what changed', 'Who in India is affected'),
+            'avoid' => array('Fake reviews'),
+            'cta_style' => 'Read the full story on TechnoRapper',
+            'visual_style' => 'Navy and cyan magazine art',
+        ), array('name' => 'TechnoRapper', 'tagline' => 'Tech news')));
+        $snapshot = $this->invoke_private('gather_site_context_snapshot');
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION, array(
+            'status' => 'ready',
+            'started_at' => gmdate('Y-m-d H:i:s', time() - 60),
+            'completed_at' => gmdate('Y-m-d H:i:s'),
+            'fingerprint' => $this->invoke_private('site_context_fingerprint', array($snapshot)),
+            'error' => '',
+            'profile' => $profile,
+        ), false);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 1)), false);
+        $this->assertFalse($this->plugin->site_context_needs_refresh());
+        $view = $this->plugin->site_context_view();
+        $this->assertSame('ready', $view['state']);
+        $this->assertNotSame('', $view['last']);
+        $this->assertFalse($view['needs_refresh']);
+        $this->assertStringContainsString('AI, mobiles, gadgets, and India tech news.', $view['body']);
+
+        $stale = get_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
+        $stale['completed_at'] = gmdate('Y-m-d H:i:s', time() - 20 * DAY_IN_SECONDS);
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION, $stale, false);
+        $this->assertTrue($this->plugin->site_context_needs_refresh());
+        $this->assertSame('stale', $this->plugin->site_context_view()['state']);
     }
 }

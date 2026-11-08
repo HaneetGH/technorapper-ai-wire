@@ -2,7 +2,7 @@
 
 **Updated:** 8 November 2026
 **Repository:** [HaneetGH/technorapper-ai-wire](https://github.com/HaneetGH/technorapper-ai-wire)
-**Active PR:** [#39 — Add opt-in control for social distribution](https://github.com/HaneetGH/technorapper-ai-wire/pull/39)
+**Active PR:** this branch — social creative pipeline (hook graphic + captions + X/Instagram). See also [#39](https://github.com/HaneetGH/technorapper-ai-wire/pull/39).
 
 ## Flow diagrams
 
@@ -25,8 +25,8 @@ flowchart TD
     L --> M[WP-Cron worker; one row per run]
     M --> N{Daily unique-article cap reached?}
     N -->|Yes, new article| O[Defer to next UTC day]
-    N -->|No, or second platform for today's article| P[Reuse or generate one 4:5 social image]
-    P --> Q[Add TechnoRapper title card; save to WordPress Media]
+    N -->|No, or second platform for today's article| P[Write hook, on-image headline, captions]
+    P --> Q[Generate illustration; overlay post info; save social asset]
     Q --> R{Destination}
     R -->|X| S[Upload image; create X post with caption and article URL]
     R -->|Instagram| T[Check rolling quota; create container; wait; publish]
@@ -69,12 +69,13 @@ stateDiagram-v2
 Build an opt-in distribution feature for up to **10 unique AI Wire articles per UTC day** on X and Instagram. Use one branded image per article and reuse it on every configured destination. The existing article writer and independent reviewer remain the editorial source of truth; do not add a second article-writing agent or regenerate article copy for social.
 
 - The main **Social distribution** switch defaults to off. Off means no new social queue work; it does not unpublish or alter existing WordPress articles.
+- Enabling the switch queues a site-context job. It uses the same Writer model to read this WordPress site (name, tagline, desks, about page, recent stories) and stores a profile later social copy/graphics must follow. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (14 days, or if the site identity fingerprint changed).
 - Credentials are configured before enabling. Only destinations with complete credentials receive a queue row.
 - Only AI Wire-created WordPress `post` articles are eligible. Their `_tr_ai_wire_queue_id` post meta is the source marker.
 - Only articles that publish after the switch is enabled are queued. Drafts can be queued if they are later published while the switch is on. Do not backfill old posts in this first version.
 - Turning the switch off pauses pending delivery. Turning it on resumes pending rows.
 - Daily limit is **unique articles**, so an article's X and Instagram rows both count as one article. The setting is clamped to 1–10.
-- One generated image is cached on the article and reused across both networks. If budget is zero or exhausted, do not generate a social image or publish a post without the branded image.
+- One social copy package (hook, on-image headline, captions) is generated from the published article, then one branded graphic with that post info on the image. The graphic is cached and reused across both networks. If the image budget is zero or exhausted, do not generate a social image or publish a post without the branded graphic.
 - Do not automatically repeat a platform publish when the response is ambiguous. Mark it for review; require an administrator to confirm the post is not already live before retrying.
 
 ## Repository context
@@ -88,7 +89,8 @@ Read these files first:
 3. [`docs/IMAGE-GENERATION-COST.md`](IMAGE-GENERATION-COST.md): article image versus social image, current local estimate, and budget assumptions.
 4. `includes/class-publisher.php`: AI Wire article creation and `_tr_ai_wire_queue_id` metadata.
 5. `includes/class-admin.php`, `includes/class-settings.php`, `includes/class-schema.php`, and `includes/class-plugin.php`: dashboard, settings sanitization, schema upgrade, and hooks.
-6. `includes/class-social.php`: current local implementation of credentials, queue worker, image generation/branding, X and Instagram publishing, retries, and queue UI.
+6. `includes/class-social.php`: credentials, queue worker, social copy, branded graphic, X and Instagram publishing, retries, and queue UI.
+7. [`docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md`](SOCIAL-DISTRIBUTION-ARCHITECTURE.md): editorial vs distribution boundary.
 
 Current plugin compatibility declared in `technorapper-ai-wire.php`: WordPress 6.2+ and PHP 7.4+. The social image renderer additionally requires PHP GD. A TrueType font is optional; the renderer has a built-in GD font fallback.
 
@@ -109,7 +111,7 @@ The local implementation is already intended to provide:
 - Separate non-autoloaded credentials option for the X user token and Instagram token/account ID. Save/remove actions are capability-checked and nonce-protected; the secret is not redisplayed.
 - A new `tr_ai_wire_social` database table with a unique `(post_id, platform)` key, independent row states, attempts, image attachment ID, remote ID/URL, and error text. Schema version is bumped from 6 to 7.
 - `wp_after_insert_post` queueing for published AI Wire posts and a single-event WP-Cron consumer. The consumer processes one destination row per run under a worker lock to reduce daily-cap races and long requests.
-- GPT Image 2 low generation in portrait format; a local 1080×1350 JPEG title card is composed with GD and saved in Media Library. Same post's image attachment is reused across platforms.
+- One Luna JSON copy pass writes hook, on-image headline, captions and visual brief. GPT Image 2 low then generates a portrait illustration; GD overlays TechnoRapper branding, headline, supporting line and CTA as a 1080×1350 JPEG social asset. Same attachment is reused across platforms and is never the article featured image.
 - A separate local monthly social-image estimate at `$0.006` per image, with `$5` default budget. This is a conservative app-side estimate, not an OpenAI provider-side hard cap or invoice.
 - X v2 media initialize/append/finalize/status followed by post creation with media and a link. X media calls/posts incur X plan or usage charges outside the image budget.
 - Instagram Graph API container creation/status/publish; an account quota lookup; the public Media Library URL; caption and alt text.

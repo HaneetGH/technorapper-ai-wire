@@ -11,8 +11,13 @@ trait TechnoRapper_AI_Wire_Schema {
         }
         self::schedule_cron();
         $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
-        if (!empty($settings['social_distribution_enabled']) && !wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
-            wp_schedule_single_event(time() + 300, self::SOCIAL_CRON_HOOK);
+        if (!empty($settings['social_distribution_enabled'])) {
+            if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
+                wp_schedule_single_event(time() + 300, self::SOCIAL_CRON_HOOK);
+            }
+            if (!wp_next_scheduled(self::SOCIAL_CONTEXT_CRON_HOOK)) {
+                wp_schedule_single_event(time() + 15, self::SOCIAL_CONTEXT_CRON_HOOK);
+            }
         }
         self::enable_auto_publish_once();
         self::enable_detailed_output_once();
@@ -80,6 +85,7 @@ trait TechnoRapper_AI_Wire_Schema {
             status varchar(24) NOT NULL DEFAULT 'queued',
             attempts smallint(5) unsigned NOT NULL DEFAULT 0,
             image_attachment_id bigint(20) unsigned NULL,
+            copy_json longtext NULL,
             remote_id varchar(128) NOT NULL DEFAULT '',
             remote_url text NULL,
             error_text text NULL,
@@ -97,6 +103,7 @@ trait TechnoRapper_AI_Wire_Schema {
         // Clear every scheduled instance, not only the next occurrence.
         wp_clear_scheduled_hook(self::CRON_HOOK);
         wp_clear_scheduled_hook(self::SOCIAL_CRON_HOOK);
+        wp_clear_scheduled_hook(self::SOCIAL_CONTEXT_CRON_HOOK);
     }
 
     public function maybe_upgrade_schema() {
