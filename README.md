@@ -229,7 +229,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 
 ## CI and release pipeline
 
-GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1 and 8.3 and a WordPress integration suite on PHP 8.2 and 8.3 with MySQL. Integration tests cover schema creation and v4→v5 upgrade preservation, lease heartbeat/ownership fencing, draft idempotency after an interrupted queue update, separate Writer/Reviewer queue stages, retry scheduling, API authentication error classification and public-view rate limiting. Release packaging is gated on the WordPress integration suite. A separate release workflow builds a WordPress-installable ZIP (with the plugin directory at the archive root), generates a SHA-256 checksum, and uploads both as a workflow artifact. Pushing a `v*` tag also publishes those files as a GitHub Release. Production deployment remains a deliberate manual action; this repository does not hold WordPress credentials.
+GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1 and 8.3 and a WordPress integration suite on PHP 8.2 and 8.3 with MySQL. Integration tests cover schema creation and v4→v5 upgrade preservation, lease heartbeat/ownership fencing, draft idempotency after an interrupted queue update, separate Writer/Reviewer queue stages, retry scheduling, API authentication error classification and public-view rate limiting. Release packaging is gated on the WordPress integration suite. A separate release workflow builds a WordPress-installable ZIP (with the plugin directory at the archive root), generates a SHA-256 checksum, and uploads both as a workflow artifact. Merging to `main` creates a `v*` tag from the plugin `Version` header when that tag does not already exist. Pushing a `v*` tag publishes the ZIP as a GitHub Release. Production deployment remains a deliberate manual action; this repository does not hold WordPress credentials.
 
 ```mermaid
 flowchart LR
@@ -245,8 +245,8 @@ flowchart LR
     H --> C
     G -- Yes --> I["Review diff + staging acceptance"]
     I --> J["Merge to main"]
-    J --> K["Post-merge CI"]
-    K --> L["Tag v* or run release workflow"]
+    J --> K["Post-merge CI + auto v* tag"]
+    K --> L["Release workflow on v* tag"]
     L --> M["Build installable ZIP + SHA-256"]
     M --> N["GitHub Release asset"]
     N --> O["Manual staging / production install"]
@@ -284,4 +284,4 @@ Run syntax checks and WordPress integration tests locally (after installing the 
 find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
 ```
 
-The repository's GitHub Actions workflow runs the same check across the PHP matrix. To create a release, push a version tag such as `v0.2.0`; download the ZIP and checksum from the GitHub Release page, verify the checksum, then install the ZIP on staging. Keep secrets out of fixtures and logs, and test schema changes against a copy of production data before release.
+The repository's GitHub Actions workflow runs the same check across the PHP matrix. Merging to `main` tags `v{plugin Version}` when that tag is new, which builds the ZIP. Download the ZIP and checksum from the GitHub Release page, verify the checksum, then install the ZIP on staging. Keep secrets out of fixtures and logs, and test schema changes against a copy of production data before release.
