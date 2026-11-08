@@ -4,7 +4,7 @@ A WordPress plugin that turns configured RSS/Atom items into source-attributed, 
 
 > AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
 
-For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For the social distribution diagrams, decisions and AI handoff, see [Social Distribution Implementation Handoff](docs/SOCIAL-DISTRIBUTION-HANDOFF.md). For image-cost assumptions, see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md).
+For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For post-publication X/Instagram distribution, see [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md) and [Social Distribution Implementation Handoff](docs/SOCIAL-DISTRIBUTION-HANDOFF.md). For image-cost assumptions, see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md).
 
 ## End-to-end pipeline
 
@@ -75,6 +75,8 @@ flowchart TD
 
 ## Production-readiness status
 
+Upload the plugin zip in wp-admin and activate it. A fresh install stays **paused**: no API key, no feeds, schedule Manual only, daily cap `0`, and Social distribution **off**. Raise the daily cap and add a key only when you are ready to process. Social credentials and the social switch are later work; they do not run on activate.
+
 The plugin release is **not considered production-validated until the staging acceptance checklist has passed on the target WordPress host**. Version 0.2.0 adds background enqueueing for manual runs, scheduled bounded retries, permanent-vs-transient API error handling, an idempotent draft recovery path, atomic stale-lock deletion/heartbeat handling, and an atomic database-backed public-view rate limiter. The schema migration creates the rate-limit table without dropping existing queue/view data.
 
 Automated WordPress integration tests now exercise selected critical paths. They do not prove the production host's cron runner, outbound networking, database upgrade behavior on a copy of the live database, proxy/IP configuration, or end-to-end analytics. Auto-publish is on; uncheck it if you want a human publish step. Complete the staging runbook before enabling a busy schedule.
@@ -100,7 +102,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Maximum posts per day | Daily draft and auto-published post cap; `0` pauses creation |
 | Maximum items per run | Caps the number of queued retries and new feed items processed in one scheduled/manual run (1–100) |
 | Monthly API budget | Local estimated USD spend ceiling; `0` stops AI calls |
-| Monthly token limit | Combined monthly input/output token ceiling; `0` stops AI calls |
+| Monthly token limit | This plugin's combined monthly input/output token ceiling. Separate from the OpenAI credit balance and project budget. Default is 200,000,000. `0` stops AI calls |
 | Maximum output tokens | Per AI pass output ceiling |
 | Maximum source characters | Source text truncation limit before AI processing |
 | Writer and reviewer models | Model selection for the two editorial passes |
@@ -119,11 +121,17 @@ The API-key section has its own save action so the secret is not included in the
 
 ## Automatic social distribution
 
-Social distribution is **off by default**. For Instagram, add `TR_AI_WIRE_META_APP_ID`, `TR_AI_WIRE_META_APP_SECRET`, `TR_AI_WIRE_META_CONFIG_ID`, and `TR_AI_WIRE_INSTAGRAM_USERNAME` to `wp-config.php`, then use **Connect @techno.rapper with Meta** in the AI Wire settings page. The Unified Login configuration supplies the Instagram publishing permissions and returns the system-user token used by the worker. For X, save the X user access token as before. Then enable **Social distribution** in the settings form. Only AI Wire articles that publish after the switch is enabled are queued. Turning the switch off pauses queued delivery; it does not delete queue history or remove posts already published on a social network.
+Social distribution is **off by default**. Onboard it in this order:
 
-- X requires a user access token for the account that will post, with post and media write permissions. The worker uploads the generated image and creates a post containing the approved social title/description and article link.
+1. In **Onboard social publishing**, save an X user access token and/or an Instagram Page access token plus Instagram Professional account ID. One platform is enough.
+2. Enable **Social distribution** in the settings form.
+3. Only then does a background job read this WordPress site (name, tagline, desks, recent stories) so later social copy stays in the site's context. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (after 14 days, or if the site identity changed).
+
+If no social account is connected, the context job does not run and no OpenAI tokens are spent on social copy or images. PHPUnit covers that gate, plus mocked X publish, Instagram quota deferral, and the rule that a social graphic is never the article featured image. A live staging canary is still required before production enablement. Only AI Wire articles that publish after the switch is enabled are queued. Turning the switch off pauses queued delivery; it does not delete queue history or remove posts already published on a social network.
+
+- X requires a user access token for the account that will post, with post and media write permissions. The worker uploads the branded graphic and posts a hook-led caption plus the article URL.
 - Instagram requires a Professional Business or Creator account and a Meta Unified Login configuration containing the Instagram publishing permissions. The OAuth callback stores the resulting system-user token and Instagram Professional account ID in a non-autoloaded WordPress option. Meta fetches the generated image from the public WordPress Media URL. The worker reads the account's quota from Meta, creates a media container, waits for image processing, then publishes it. If the account is at its rolling quota, the item stays queued and is checked again later.
-- Each published article gets one portrait GPT Image 2 low image that the renderer crops and brands as a 4:5 TechnoRapper card. The same image is reused for X and Instagram. AI Wire stores the image in the WordPress Media Library. The default social-image budget is $5/month; the plugin reserves an estimated $0.006 per image and stops requesting images at the configured ceiling. This estimate is separate from the Writer/Reviewer text budget and is not a provider invoice. X API charges are also separate.
+- After publish, a social copy pass writes a scroll-stopping hook, on-image headline, captions, and a visual brief from the approved article (no second research pass). GPT Image 2 low creates the artwork; PHP GD overlays TechnoRapper branding, the hook headline, a supporting line, and a read-the-story CTA. The same 4:5 card is reused on X and Instagram and is stored as a social asset, never as the article featured image. Default social-image budget is $5/month at about $0.006 per image. That estimate is separate from Writer/Reviewer spend and from X API charges.
 - The daily cap is for unique articles; each one can create one post on each connected platform. Distribution uses WP-Cron, so configure a host system cron for reliable delivery. Platform errors are held for review to avoid automatic duplicate posting when a network response is ambiguous. The queue screen provides a manual retry action that requires confirming the post is not already live.
 - Social credentials are saved in a separate non-autoloaded option and are never shown again in the settings form. Instagram is connected through the Meta Unified Login authorization-code flow; X remains manually configured. Instagram OAuth state is short-lived and the callback validates it before saving the token.
 - The WordPress host must have PHP GD enabled so the generated art can be cropped and branded with the TechnoRapper title card. A TrueType font improves title rendering; GD's built-in font is used as a fallback.
@@ -144,7 +152,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 
 - The daily cap counts drafts and auto-published posts created by this plugin on the current UTC day. Set it to `0` to pause creation.
 - The per-run cap limits total existing `waiting_budget` retries plus newly discovered items attempted in one run. It is a workload/burst control, separate from the daily draft cap.
-- Monthly USD and token limits use this plugin's recorded API usage and pre-request estimates. They are not provider-side hard limits and do not cap other apps using the same API project/key.
+- Monthly USD and token limits use this plugin's recorded API usage and pre-request estimates. They are not provider-side hard limits and do not cap other apps using the same API project/key. A token ceiling of 1,000,000 holds GPT-6 Luna after roughly a million tokens (well under a dollar) even when the OpenAI credit balance remains. The default ceiling is 200,000,000 so the dollar budget is what stops spending. Existing installs still on a positive ceiling of 1,000,000 or less are raised once.
 - Configure a provider-side project budget/rate limit as a second independent control.
 - Cost estimates depend on the model rates configured in the source. Verify current provider pricing and update the rate table before changing model IDs or pricing.
 - The optional web-search review adds search-tool and token charges.
@@ -221,7 +229,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 
 ## CI and release pipeline
 
-GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1 and 8.3 and a WordPress integration suite on PHP 8.2 and 8.3 with MySQL. Integration tests cover schema creation and v4→v5 upgrade preservation, lease heartbeat/ownership fencing, draft idempotency after an interrupted queue update, separate Writer/Reviewer queue stages, retry scheduling, API authentication error classification and public-view rate limiting. Release packaging is gated on the WordPress integration suite. A separate release workflow builds a WordPress-installable ZIP (with the plugin directory at the archive root), generates a SHA-256 checksum, and uploads both as a workflow artifact. Pushing a `v*` tag also publishes those files as a GitHub Release. Production deployment remains a deliberate manual action; this repository does not hold WordPress credentials.
+GitHub Actions runs PHP syntax checks on PHP 7.4, 8.1 and 8.3 and a WordPress integration suite on PHP 8.2 and 8.3 with MySQL. Integration tests cover schema creation and v4→v5 upgrade preservation, lease heartbeat/ownership fencing, draft idempotency after an interrupted queue update, separate Writer/Reviewer queue stages, retry scheduling, API authentication error classification and public-view rate limiting. Release packaging is gated on the WordPress integration suite. A separate release workflow builds a WordPress-installable ZIP (with the plugin directory at the archive root), generates a SHA-256 checksum, and uploads both as a workflow artifact. Merging to `main` creates a `v*` tag from the plugin `Version` header when that tag does not already exist. Pushing a `v*` tag publishes the ZIP as a GitHub Release. Production deployment remains a deliberate manual action; this repository does not hold WordPress credentials.
 
 ```mermaid
 flowchart LR
@@ -237,8 +245,8 @@ flowchart LR
     H --> C
     G -- Yes --> I["Review diff + staging acceptance"]
     I --> J["Merge to main"]
-    J --> K["Post-merge CI"]
-    K --> L["Tag v* or run release workflow"]
+    J --> K["Post-merge CI + auto v* tag"]
+    K --> L["Release workflow on v* tag"]
     L --> M["Build installable ZIP + SHA-256"]
     M --> N["GitHub Release asset"]
     N --> O["Manual staging / production install"]
@@ -264,6 +272,7 @@ The installable plugin is no longer one 3,000-line file. `technorapper-ai-wire.p
 | `class-ai.php` | Writer/reviewer prompts and API calls |
 | `class-seo.php` | Rewrite SEO tests and meta |
 | `class-publisher.php` | WordPress posts, homepage, featured images |
+| `class-social.php` | Post-publish X/Instagram queue, social copy, branded graphic |
 | `class-scores.php` | Score graph |
 | `class-social.php` | Social credentials, generated branded image, X/Instagram queue and publishing |
 
@@ -275,4 +284,4 @@ Run syntax checks and WordPress integration tests locally (after installing the 
 find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
 ```
 
-The repository's GitHub Actions workflow runs the same check across the PHP matrix. To create a release, push a version tag such as `v0.2.0`; download the ZIP and checksum from the GitHub Release page, verify the checksum, then install the ZIP on staging. Keep secrets out of fixtures and logs, and test schema changes against a copy of production data before release.
+The repository's GitHub Actions workflow runs the same check across the PHP matrix. Merging to `main` tags `v{plugin Version}` when that tag is new, which builds the ZIP. Download the ZIP and checksum from the GitHub Release page, verify the checksum, then install the ZIP on staging. Keep secrets out of fixtures and logs, and test schema changes against a copy of production data before release.
