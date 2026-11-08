@@ -129,8 +129,8 @@ These are **worktree intentions, not verified release behavior**. Review the act
 
 ### Instagram
 
-- Requires a Professional Business or Creator account and the correct Meta app permissions. The current UI expects an Instagram Professional account ID and manually supplied access token; there is no OAuth onboarding flow in version one.
-- Meta must be able to fetch the generated JPEG from a publicly reachable WordPress Media URL. A private, hotlink-blocked, or temporary URL will fail.
+- Requires a Professional Business or Creator account and a Meta Unified Login configuration with `instagram_content_publish` (and any optional permissions actually needed). Add the Meta app ID, app secret, configuration ID, and expected Instagram username to `wp-config.php`, then authorize from AI Wire's Social publishing connections card.
+- The OAuth callback is `wp-admin/admin-post.php?action=tr_ai_wire_instagram_oauth_callback`; register that exact HTTPS URL as the Meta redirect URL. Meta must also be able to fetch the generated JPEG from a publicly reachable WordPress Media URL. A private, hotlink-blocked, or temporary URL will fail.
 - Publishing is a container workflow: create the image container, poll `status_code` until finished, then call `media_publish`. The [Meta Instagram API collection](https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api) and [content publishing guide](https://developers.facebook.com/docs/instagram-platform/content-publishing/) are references.
 - Read live quota before submission. The quota endpoint returns usage and a nested configuration; use `quota_usage` against `config.quota_total`. Meta documentation can differ by endpoint/version, so trust the account's response and let Meta enforce the final limit. Quota exhaustion should defer the item, not create a duplicate or fail silently.
 - URLs in ordinary Instagram captions are text, not clickable post links.
