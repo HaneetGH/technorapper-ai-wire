@@ -10,6 +10,10 @@ trait TechnoRapper_AI_Wire_Schema {
             add_option(self::OPTION, self::defaults());
         }
         self::schedule_cron();
+        $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        if (!empty($settings['social_distribution_enabled']) && !wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
+            wp_schedule_single_event(time() + 300, self::SOCIAL_CRON_HOOK);
+        }
         self::enable_auto_publish_once();
         self::enable_detailed_output_once();
         self::enable_daily_volume_once();
@@ -68,12 +72,31 @@ trait TechnoRapper_AI_Wire_Schema {
             KEY window_started (window_started)
         ) {$charset};";
         dbDelta($limits_sql);
+        $social_table = $wpdb->prefix . 'tr_ai_wire_social';
+        $social_sql = "CREATE TABLE {$social_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            post_id bigint(20) unsigned NOT NULL,
+            platform varchar(16) NOT NULL,
+            status varchar(24) NOT NULL DEFAULT 'queued',
+            attempts smallint(5) unsigned NOT NULL DEFAULT 0,
+            image_attachment_id bigint(20) unsigned NULL,
+            remote_id varchar(128) NOT NULL DEFAULT '',
+            remote_url text NULL,
+            error_text text NULL,
+            created_at datetime NOT NULL,
+            updated_at datetime NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY post_platform (post_id, platform),
+            KEY status_created (status, created_at)
+        ) {$charset};";
+        dbDelta($social_sql);
         update_option('tr_ai_wire_schema_version', self::SCHEMA_VERSION, false);
     }
 
     public static function deactivate() {
         // Clear every scheduled instance, not only the next occurrence.
         wp_clear_scheduled_hook(self::CRON_HOOK);
+        wp_clear_scheduled_hook(self::SOCIAL_CRON_HOOK);
     }
 
     public function maybe_upgrade_schema() {

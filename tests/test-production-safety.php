@@ -76,7 +76,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         foreach ($expected as $table) {
             $this->assert_plugin_table_exists($table);
         }
-        $this->assertSame('6', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('7', get_option('tr_ai_wire_schema_version'));
         $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_items LIKE 'source_published_at'"));
     }
 
@@ -142,7 +142,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $row = $wpdb->get_row($wpdb->prepare("SELECT id, source_title FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame((string) $id, (string) $row['id']);
         $this->assertSame('Source title', $row['source_title']);
-        $this->assertSame('6', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('7', get_option('tr_ai_wire_schema_version'));
         $this->assert_plugin_table_exists($wpdb->prefix . 'tr_ai_wire_view_limits');
     }
 
@@ -291,7 +291,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         update_option('tr_ai_wire_schema_version', '4');
         $this->plugin->maybe_upgrade_schema();
-        $this->assertSame('6', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('7', get_option('tr_ai_wire_schema_version'));
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         wp_unschedule_event(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args), TechnoRapper_AI_Wire::CRON_HOOK, $args);
     }
