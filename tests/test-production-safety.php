@@ -124,6 +124,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotEmpty($columns, 'Missing plugin table: ' . $table);
     }
 
+    public function test_plugin_header_version_is_semver_and_matches_constant() {
+        $header = file_get_contents(dirname(__DIR__) . '/technorapper-ai-wire.php');
+        $this->assertTrue((bool) preg_match('/^\s*\*\s*Version:\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$/m', $header, $matches));
+        $this->assertSame(TechnoRapper_AI_Wire::VERSION, $matches[1]);
+    }
+
     public function test_activation_creates_all_required_tables() {
         global $wpdb;
         $expected = array(
