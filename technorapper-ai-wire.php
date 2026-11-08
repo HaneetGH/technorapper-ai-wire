@@ -44,6 +44,7 @@ require_once TR_AI_WIRE_DIR . 'includes/class-seo.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-publisher.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-scores.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-social.php';
+require_once TR_AI_WIRE_DIR . 'includes/class-instagram-oauth.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-plugin.php';
 
 register_activation_hook(TR_AI_WIRE_FILE, array('TechnoRapper_AI_Wire', 'activate'));
