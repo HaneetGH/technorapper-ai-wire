@@ -87,6 +87,26 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         );
     }
 
+    private function instagram_account_probe_ok() {
+        return $this->mock_http_ok(array('id' => '17841400000000000', 'username' => 'techno.rapper'));
+    }
+
+    private function graph_error_http($message, $http = 400) {
+        return array(
+            'headers' => array(),
+            'body' => wp_json_encode(array(
+                'error' => array(
+                    'message' => $message,
+                    'type' => 'OAuthException',
+                    'code' => 100,
+                ),
+            )),
+            'response' => array('code' => $http, 'message' => 'Bad Request'),
+            'cookies' => array(),
+            'filename' => null,
+        );
+    }
+
     private function draft_settings() {
         $settings = TechnoRapper_AI_Wire::defaults();
         $settings['auto_publish'] = 0;
@@ -2476,6 +2496,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (strpos((string) $url, 'api.openai.com/v1/images/generations') !== false) {
                 return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
             }
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
             if (strpos((string) $url, 'content_publishing_limit') !== false) {
                 return $this->mock_http_ok(array('data' => array(array('quota_usage' => 100, 'config' => array('quota_total' => 100)))));
             }
@@ -2634,6 +2657,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (strpos((string) $url, 'api.openai.com/v1/images/generations') !== false) {
                 return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
             }
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
             if (strpos((string) $url, 'content_publishing_limit') !== false) {
                 return array(
                     'headers' => array(),
@@ -2713,6 +2739,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
 
         add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
             if (strpos((string) $url, 'content_publishing_limit') !== false) {
                 return array(
                     'headers' => array(),
@@ -2750,5 +2779,82 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('ig-media-retry', $fixed['remote_id']);
         $this->assertSame('needs_review', $other['status']);
         $this->assertStringContainsString('did not return a media ID', (string) $other['error_text']);
+    }
+
+    public function test_instagram_user_token_is_exchanged_for_page_token() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required for the social publish path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'User token swap',
+            'post_excerpt' => 'Should publish via the Page token.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 36);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        $used_page_token = false;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg, &$used_page_token) {
+            $url = (string) $url;
+            $body = is_array($args) && isset($args['body']) && is_array($args['body']) ? $args['body'] : array();
+            if (strpos($url, 'api.openai.com/v1/responses') !== false) {
+                return $this->openai_json_http(array('hook' => 'Hook', 'on_image_headline' => 'Headline', 'instagram_caption' => 'Caption'));
+            }
+            if (strpos($url, 'api.openai.com/v1/images/generations') !== false) {
+                return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->graph_error_http("Unsupported post request. Object with ID '17841400000000000' does not exist, cannot be loaded due to missing permissions, or does not support this operation.");
+            }
+            if (strpos($url, 'me/accounts') !== false) {
+                return $this->mock_http_ok(array('data' => array(array(
+                    'name' => 'TechnoRapper',
+                    'id' => '394236317501802',
+                    'access_token' => 'page-token',
+                    'instagram_business_account' => array('id' => '17841400000000000'),
+                ))));
+            }
+            if (preg_match('#/me\?#', $url) || substr($url, -3) === '/me') {
+                return $this->mock_http_ok(array('id' => 'user-1', 'name' => 'Haneet'));
+            }
+            if (strpos($url, 'content_publishing_limit') !== false) {
+                return $this->graph_error_http('(#100) Tried accessing nonexisting field (content_publishing_limit)');
+            }
+            if (strpos($url, '/media_publish') !== false) {
+                if (($body['access_token'] ?? '') === 'page-token') {
+                    $used_page_token = true;
+                }
+                return $this->mock_http_ok(array('id' => 'ig-media-swap'));
+            }
+            if (strpos($url, '/media') !== false) {
+                if (($body['access_token'] ?? '') === 'page-token') {
+                    $used_page_token = true;
+                }
+                return $this->mock_http_ok(array('id' => 'ig-container-swap'));
+            }
+            if (strpos($url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos($url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/swap/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertSame('ig-media-swap', $row['remote_id']);
+        $this->assertTrue($used_page_token);
+        $saved = get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
+        $this->assertSame('page-token', $saved['instagram_user_access_token']);
+    }
+
+    public function test_instagram_missing_object_error_explains_page_token() {
+        $copy = $this->invoke_private('social_error_copy', array("Unsupported post request. Object with ID '1784147964186186' does not exist, cannot be loaded due to missing permissions, or does not support this operation."));
+        $this->assertStringContainsString('Page access_token', $copy);
+        $this->assertStringContainsString('User Token', $copy);
+        $this->assertStringContainsString('1784147964186186', $copy);
     }
 }
