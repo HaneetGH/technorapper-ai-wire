@@ -165,11 +165,15 @@ trait TechnoRapper_AI_Wire_Schema {
             $opt = array();
         }
         $changed = false;
-        if (absint($opt['max_posts_per_day'] ?? 0) < self::DAILY_POST_CAP) {
+        $posts = absint($opt['max_posts_per_day'] ?? 0);
+        $items = absint($opt['max_items_per_run'] ?? 0);
+        // Fresh installs ship paused at 0 posts/day. Only raise a site that
+        // already had a positive cap below the current daily target.
+        if ($posts > 0 && $posts < self::DAILY_POST_CAP) {
             $opt['max_posts_per_day'] = self::DAILY_POST_CAP;
             $changed = true;
         }
-        if (absint($opt['max_items_per_run'] ?? 0) < self::DAILY_POST_CAP) {
+        if ($posts > 0 && $items > 0 && $items < self::DAILY_POST_CAP) {
             $opt['max_items_per_run'] = self::DAILY_POST_CAP;
             $changed = true;
         }

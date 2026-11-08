@@ -500,6 +500,19 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('', $this->invoke_private('api_key'));
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK));
+        $this->assertSame(0, (int) $settings['social_distribution_enabled']);
+    }
+
+    public function test_activation_keeps_a_fresh_install_paused() {
+        delete_option('tr_ai_wire_daily_350_on');
+        delete_option(TechnoRapper_AI_Wire::OPTION);
+        TechnoRapper_AI_Wire::activate();
+        $saved = wp_parse_args(get_option(TechnoRapper_AI_Wire::OPTION, array()), TechnoRapper_AI_Wire::defaults());
+        $this->assertSame(0, (int) $saved['max_posts_per_day']);
+        $this->assertSame(0, (int) $saved['social_distribution_enabled']);
+        $this->assertSame('manual', $saved['cron_frequency']);
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK));
     }
 
     public function test_existing_installs_turn_auto_publish_on_once() {
