@@ -9,11 +9,6 @@ if (!defined('ABSPATH')) {
  * repeats a successful post on the other.
  */
 trait TechnoRapper_AI_Wire_Social {
-    const SOCIAL_IMAGE_MODEL = 'gpt-image-2';
-    const SOCIAL_IMAGE_ESTIMATED_USD = 0.006;
-    const INSTAGRAM_GRAPH_VERSION = 'v22.0';
-    const SOCIAL_CONTEXT_TTL = 1209600;
-
     private function social_table() {
         global $wpdb;
         return $wpdb->prefix . 'tr_ai_wire_social';
