@@ -2,8 +2,9 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.27
+ * Version: 0.2.31
  * Requires at least: 6.2
+ * Tested up to: 6.8
  * Requires PHP: 7.4
  * Author: TechnoRapper
  * License: GPLv2 or later
@@ -12,6 +13,21 @@
 
 if (!defined('ABSPATH')) {
     exit;
+}
+
+if (version_compare(PHP_VERSION, '7.4.0', '<')) {
+    add_action('admin_notices', 'tr_ai_wire_php_version_notice');
+    return;
+}
+
+if (!function_exists('tr_ai_wire_php_version_notice')) {
+    function tr_ai_wire_php_version_notice() {
+        echo '<div class="notice notice-error"><p>TechnoRapper AI Wire requires PHP 7.4 or later.</p></div>';
+    }
+}
+
+if (class_exists('TechnoRapper_AI_Wire')) {
+    return;
 }
 
 define('TR_AI_WIRE_FILE', __FILE__);
@@ -27,6 +43,7 @@ require_once TR_AI_WIRE_DIR . 'includes/class-ai.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-seo.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-publisher.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-scores.php';
+require_once TR_AI_WIRE_DIR . 'includes/class-social.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-plugin.php';
 
 register_activation_hook(TR_AI_WIRE_FILE, array('TechnoRapper_AI_Wire', 'activate'));

@@ -4,7 +4,7 @@ A WordPress plugin that turns configured RSS/Atom items into source-attributed, 
 
 > AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
 
-For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For what a generated featured-image pass would add to the OpenAI bill, see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md).
+For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For post-publication X/Instagram distribution, see [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md) and [Social Distribution Implementation Handoff](docs/SOCIAL-DISTRIBUTION-HANDOFF.md). For image-cost assumptions, see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md).
 
 ## End-to-end pipeline
 
@@ -75,6 +75,8 @@ flowchart TD
 
 ## Production-readiness status
 
+Upload the plugin zip in wp-admin and activate it. A fresh install stays **paused**: no API key, no feeds, schedule Manual only, daily cap `0`, and Social distribution **off**. Raise the daily cap and add a key only when you are ready to process. Social credentials and the social switch are later work; they do not run on activate.
+
 The plugin release is **not considered production-validated until the staging acceptance checklist has passed on the target WordPress host**. Version 0.2.0 adds background enqueueing for manual runs, scheduled bounded retries, permanent-vs-transient API error handling, an idempotent draft recovery path, atomic stale-lock deletion/heartbeat handling, and an atomic database-backed public-view rate limiter. The schema migration creates the rate-limit table without dropping existing queue/view data.
 
 Automated WordPress integration tests now exercise selected critical paths. They do not prove the production host's cron runner, outbound networking, database upgrade behavior on a copy of the live database, proxy/IP configuration, or end-to-end analytics. Auto-publish is on; uncheck it if you want a human publish step. Complete the staging runbook before enabling a busy schedule.
@@ -106,6 +108,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Writer and reviewer models | Model selection for the two editorial passes |
 | Independent web search | Optional reviewer corroboration and associated search charges |
 | Editorial A/B experiment | Enables/disables stable A/B writer assignment and sets the experiment ID |
+| Social distribution | Opt-in switch, maximum daily article count (up to 10), and monthly social-image budget |
 | Auto-publish | When checked, passing items go live with no draft step |
 | Show on homepage | On puts new posts on the home board (desk, image, sticky). Off keeps them on their own link and hides them from the home feed |
 | Map content | Post type, taxonomy, optional forced terms, status, title, date, and body. Category and tags are read from the source document against live site desks; leave terms unchecked unless you want every item forced into one category |
@@ -115,6 +118,26 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Queue controls | Stop the current run, delete one item, clear unfinished items, or clean the whole board |
 
 The API-key section has its own save action so the secret is not included in the ordinary WordPress settings payload. The other configuration values are saved together with **Save settings**.
+
+## Automatic social distribution
+
+Social distribution is **off by default**. Onboard it in this order:
+
+1. In **Onboard social publishing**, save an X user access token and/or an Instagram Page access token plus Instagram Professional account ID. One platform is enough.
+2. Enable **Social distribution** in the settings form.
+3. Only then does a background job read this WordPress site (name, tagline, desks, recent stories) so later social copy stays in the site's context. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (after 14 days, or if the site identity changed).
+
+If no social account is connected, the context job does not run and no OpenAI tokens are spent on social copy or images. PHPUnit covers that gate, plus mocked X publish, Instagram quota deferral, and the rule that a social graphic is never the article featured image. A live staging canary is still required before production enablement. Only AI Wire articles that publish after the switch is enabled are queued. Turning the switch off pauses queued delivery; it does not delete queue history or remove posts already published on a social network.
+
+- X requires a user access token for the account that will post, with post and media write permissions. The worker uploads the branded graphic and posts a hook-led caption plus the article URL.
+- Instagram requires a Business or Creator account linked to a Facebook Page, a Page access token with Instagram publishing permissions, and the Instagram Professional account ID. Meta fetches the generated image from the public WordPress Media URL. The worker reads the account's quota from Meta, creates a media container, waits for image processing, then publishes it. If the account is at its rolling quota, the item stays queued and is checked again later.
+- After publish, a social copy pass writes a scroll-stopping hook, on-image headline, captions, and a visual brief from the approved article (no second research pass). GPT Image 2 low creates the artwork; PHP GD overlays TechnoRapper branding, the hook headline, a supporting line, and a read-the-story CTA. The same 4:5 card is reused on X and Instagram and is stored as a social asset, never as the article featured image. Default social-image budget is $5/month at about $0.006 per image. That estimate is separate from Writer/Reviewer spend and from X API charges.
+- The daily cap is for unique articles; each one can create one post on each connected platform. Distribution uses WP-Cron, so configure a host system cron for reliable delivery. Platform errors are held for review to avoid automatic duplicate posting when a network response is ambiguous. The queue screen provides a manual retry action that requires confirming the post is not already live.
+- Tokens are saved in a separate non-autoloaded option and are never shown again in the settings form. Tokens can expire or be revoked and may need replacement. This first version uses manually supplied tokens rather than a platform OAuth connection flow.
+- The WordPress host must have PHP GD enabled so the generated art can be cropped and branded with the TechnoRapper title card. A TrueType font improves title rendering; GD's built-in font is used as a fallback.
+- Instagram caption links are included as text; Instagram does not make ordinary caption URLs clickable. The account's bio link remains a separate editorial setting.
+
+Before production, configure test accounts and verify token scopes, app access, public image reachability, API charges, and cron execution on staging. Start with a low daily cap and image budget, review the social queue, then increase to 10 articles/day after a clean canary.
 
 ### Suggested initial production settings
 
@@ -133,7 +156,7 @@ The API-key section has its own save action so the secret is not included in the
 - Configure a provider-side project budget/rate limit as a second independent control.
 - Cost estimates depend on the model rates configured in the source. Verify current provider pricing and update the rate table before changing model IDs or pricing.
 - The optional web-search review adds search-tool and token charges.
-- The plugin does not generate featured images. Adding that pass would dominate the text bill; see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md) before raising the monthly budget.
+- RSS-derived featured-image URLs remain the article-image source. Social posts use a separate generated branded image; see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md) for estimates and assumptions.
 - If the API call or review fails, the item is held in the queue; inspect errors before retrying. Budget-held items are retried by later runs when budget becomes available.
 
 ## A/B experiments and analytics
@@ -154,6 +177,7 @@ The API-key section has its own save action so the secret is not included in the
 
 - [ ] Deploy to staging first and take a database + files backup.
 - [ ] Confirm the site is on a supported PHP version (7.4+) and WordPress 6.2+.
+- [ ] Confirm PHP GD is enabled for branded social images.
 - [ ] Confirm HTTPS, valid TLS, working outbound HTTPS requests and DNS resolution to the API/feed hosts.
 - [ ] Save the API key in the AI Wire dashboard (or use a server-level constant as a fallback); verify it is not present in the repository or public diagnostics.
 - [ ] Configure a provider-side budget and alerts in addition to plugin limits.
@@ -196,7 +220,7 @@ The API-key section has its own save action so the secret is not included in the
 ## Known limitations and operational caveats
 
 - The reviewer is an AI quality gate, not a fact-checking guarantee. Web corroboration can help but cannot certify accuracy.
-- Featured images use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`). The plugin does not copy that file into the WordPress media library and does not generate a replacement. Items with no image URL are skipped. Cost of adding a generated-image pass is documented in [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
+- Article featured images still use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`); items with no such URL are skipped by the article pipeline. The separate social-distribution path creates a generated branded image after publish when the opt-in switch and platform credentials are configured. See [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
 - WP-Cron is traffic-triggered unless backed by a host system cron.
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.
@@ -248,7 +272,9 @@ The installable plugin is no longer one 3,000-line file. `technorapper-ai-wire.p
 | `class-ai.php` | Writer/reviewer prompts and API calls |
 | `class-seo.php` | Rewrite SEO tests and meta |
 | `class-publisher.php` | WordPress posts, homepage, featured images |
+| `class-social.php` | Post-publish X/Instagram queue, social copy, branded graphic |
 | `class-scores.php` | Score graph |
+| `class-social.php` | Social credentials, generated branded image, X/Instagram queue and publishing |
 
 ## Development checks
 
