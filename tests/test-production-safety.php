@@ -2132,6 +2132,22 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $this->invoke_private('real_thumbnail_id', array($post_id)));
     }
 
+    public function test_social_copy_keeps_poster_length_headline() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Tech layoffs accelerate',
+            'post_excerpt' => 'More than 6,300 tech jobs were cut in 10 days.',
+        ));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(
+            'on_image_headline' => '6,300 tech jobs gone in 10 days. Is AI the biggest threat?',
+            'on_image_subhead' => 'Layoffs hit offices from coast to coast',
+            'visual_brief' => 'Photoreal office workers carrying boxes toward glass elevators at dusk',
+        ), get_post($post_id)));
+        $this->assertSame('6,300 tech jobs gone in 10 days. Is AI the biggest threat?', $copy['on_image_headline']);
+        $this->assertStringContainsString('Photoreal office workers', $copy['visual_brief']);
+        $this->assertSame('WHAT JUST HAPPENED IN 24 HOURS?', $this->invoke_private('social_poster_headline', array('What just happened in 24 hours?')));
+    }
+
     public function test_site_context_needs_refresh_until_a_successful_read() {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         $this->assertTrue($this->plugin->site_context_needs_refresh());
