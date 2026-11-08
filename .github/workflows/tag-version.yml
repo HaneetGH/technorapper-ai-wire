@@ -15,9 +15,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Create v* tag from plugin Version if missing
+          fetch-tags: true
+
+      - name: Create v* tag and GitHub Release if missing
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           VERSION="$(grep -m1 '^\s*\* Version:' technorapper-ai-wire.php | sed 's/.*Version:[[:space:]]*//' | tr -d '[:space:]')"
@@ -26,12 +28,35 @@ jobs:
             exit 1
           fi
           TAG="v${VERSION}"
+
+          git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" 2>/dev/null || true
           if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Tag ${TAG} already exists"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "TechnoRapper AI Wire ${TAG}"
+            git push origin "${TAG}"
+            echo "Created ${TAG}"
+          fi
+
+          # A tag push with GITHUB_TOKEN does not start release.yml. Publish
+          # the GitHub Release from this same main-push job.
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "TechnoRapper AI Wire ${TAG}"
-          git push origin "${TAG}"
-          echo "Created ${TAG}"
+
+          git checkout --detach "${TAG}"
+          mkdir -p dist/technorapper-ai-wire/includes
+          cp technorapper-ai-wire.php README.md dist/technorapper-ai-wire/
+          cp includes/*.php dist/technorapper-ai-wire/includes/
+          (cd dist && zip -r technorapper-ai-wire.zip technorapper-ai-wire && sha256sum technorapper-ai-wire.zip > technorapper-ai-wire.zip.sha256)
+
+          gh release create "${TAG}" \
+            dist/technorapper-ai-wire.zip \
+            dist/technorapper-ai-wire.zip.sha256 \
+            --title "${TAG}" \
+            --generate-notes \
+            --verify-tag
+          echo "Published GitHub Release ${TAG}"
