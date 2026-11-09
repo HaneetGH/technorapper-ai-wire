@@ -276,7 +276,7 @@ trait TechnoRapper_AI_Wire_Social {
         $system = 'You study one WordPress publisher so later social posts stay in that site\'s context. Use only the supplied snapshot. Do not invent coverage areas, products, or a different brand. Return JSON only.';
         $user = 'Read this WordPress site and describe what it is, who it is for, and what later social copy should prioritize. '
             . 'Priorities should match the live desks and recent stories, not a generic newsroom. Voice should match a technology editorial desk, not an ad agency. '
-            . 'visual_style should describe photoreal Instagram news-poster photography (lighting, setting, mood), not a navy illustration kit. '
+            . 'visual_style should describe photoreal cinematic news photography (lighting, setting, mood) for a full-bleed Instagram poster — never illustration, cartoon, navy cards, or graphic-design kits. '
             . "Site snapshot:\n" . wp_json_encode($snapshot)
             . "\nReturn JSON keys: site_name, one_line, audience, desks (array), voice, priorities (array of up to 6 short phrases), avoid (array), cta_style, visual_style.";
         $copy_settings = $s;
@@ -540,7 +540,8 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_social_post', 'The source article is no longer published.');
         }
         $copy = $this->social_copy($post, $settings);
-        $image_id = (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_id', true);
+        $force_new_image = (string) get_post_meta($post->ID, '_tr_ai_wire_social_regenerate_image', true) === '1';
+        $image_id = $force_new_image ? 0 : (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_id', true);
         if (!$image_id || !get_attached_file($image_id)) {
             $lock_name = 'tr_ai_wire_social_image_lock_' . (int) $post->ID;
             if (!add_option($lock_name, time(), '', false)) {
@@ -661,7 +662,7 @@ trait TechnoRapper_AI_Wire_Social {
         $system = 'You are the social desk for ' . $brand . '. Repackage an already-published article for X and Instagram. Do not write a new article. Use only supplied article fields plus the site context. Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. Return JSON only.';
         $user = 'Build one social package that matches this publisher\'s priorities. Principles to hit when the article supports them: hook that stops the scroll; curiosity; a feeling (stakes for a reader\'s phone/job/money, not melodrama); relatability; pattern interrupt; before/after contrast; a tiny story; useful value; a clear CTA to read the article; branding; shareability; saveability; cultural relevance when the source has it. '
             . 'on_image_headline: Instagram poster headline, 8–16 words, punchy, can include a number only if it is in the article. Written to sit in huge type on a photo. on_image_subhead: one supporting line, max 14 words. '
-            . 'visual_brief: one photoreal cinematic scene for that headline (office, phone, factory, city, device close-up). Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no letters or numbers in the artwork (type is overlaid later). '
+            . 'visual_brief: one photoreal cinematic news-poster scene that fills a vertical 4:5 frame (tight device close-up, crowded office from behind, factory, night city, server hall). Prefer dusk, night, or hard rim light. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
             . 'x_text: hook plus one curiosity or value line; do not include the URL. instagram_caption: hook, 2–4 short lines of value/story, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags for this site, no spam. instagram_alt: factual description of the graphic. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
@@ -795,16 +796,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $copy = is_array($copy) ? $copy : array();
         $headline = (string) ($copy['on_image_headline'] ?? $post->post_title);
-        $brief = (string) ($copy['visual_brief'] ?? '');
-        $profile = $this->site_context_profile();
-        $visual_style = !empty($profile['visual_style']) ? $profile['visual_style'] : 'cinematic photoreal Instagram news poster, high contrast, full-bleed photo';
-        $prompt = 'Create an original photoreal cinematic still for an Instagram news poster from ' . (!empty($profile['site_name']) ? $profile['site_name'] : 'this technology publisher') . '. '
-            . 'Art direction: ' . $visual_style . '. One clear scene that fills the frame, magazine lighting, shallow depth of field. Leave the lower third a little darker so overlay type can sit there. '
-            . 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. '
-            . 'Do not show a real celebrity, a real brand logo, a watermark, a UI screenshot, or any letters, numbers, or captions in the artwork — headline type is overlaid later. '
-            . 'Subject: ' . $headline . '. '
-            . ($brief !== '' ? 'Visual brief: ' . $brief . '. ' : '')
-            . 'Mood must stop a social-media scroll, like a viral tech news graphic.';
+        $prompt = $this->social_image_prompt($post, $copy);
         $response = wp_remote_post('https://api.openai.com/v1/images/generations', array(
             'timeout' => 120,
             'headers' => array('Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json'),
@@ -855,7 +847,97 @@ trait TechnoRapper_AI_Wire_Social {
         }
         update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field((string) ($copy['instagram_alt'] ?? $headline)));
         update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+        delete_post_meta((int) $post->ID, '_tr_ai_wire_social_regenerate_image');
         return (int) $attachment_id;
+    }
+
+    private function social_image_prompt($post, $copy = array()) {
+        $copy = is_array($copy) ? $copy : array();
+        $headline = trim((string) ($copy['on_image_headline'] ?? ($post instanceof WP_Post ? $post->post_title : '')));
+        $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
+        $profile = $this->site_context_profile();
+        $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this technology publisher';
+        $revision = ($post instanceof WP_Post) ? (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_revision', true) : 0;
+        $prompt = 'Photoreal cinematic Instagram news poster still for ' . $brand . ', vertical 4:5, full-bleed photography filling the entire frame. '
+            . 'Shot like a viral tech-news graphic: one clear real-world scene, magazine lighting, shallow depth of field, high contrast, cinematic color grade. '
+            . 'The lower 40 percent of the frame must be naturally darker and uncluttered so large white headline type can sit there later. '
+            . 'Do not draw a card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup with text. '
+            . 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. '
+            . 'No letters, numbers, captions, watermarks, or real brand logos in the artwork — headline type is overlaid later. '
+            . 'Art direction: ' . $this->social_image_art_direction($profile) . '. '
+            . 'Subject: ' . $headline . '. '
+            . ($brief !== '' ? 'Scene: ' . $brief . '. ' : '')
+            . 'Make it stop a social-media scroll.';
+        if ($revision > 0) {
+            $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story.';
+        }
+        return $prompt;
+    }
+
+    private function social_image_art_direction($profile) {
+        $default = 'cinematic photoreal news photography, dusk or night rim light, one hero subject filling the frame';
+        $style = trim((string) ($profile['visual_style'] ?? ''));
+        if ($style === '' || preg_match('/illustrat|cartoon|navy|magazine art|vector|flat design|infographic|collage|3d render/i', $style)) {
+            return $default;
+        }
+        return $style;
+    }
+
+    private function social_image_scene_brief($brief) {
+        $brief = trim((string) $brief);
+        if ($brief === '' || preg_match('/illustrat|cartoon|symbolic|navy|vector|infographic|magazine card/i', $brief)) {
+            return '';
+        }
+        return $brief;
+    }
+
+    private function forget_cached_social_image($post_id) {
+        $post_id = (int) $post_id;
+        if ($post_id < 1) {
+            return 0;
+        }
+        delete_post_meta($post_id, '_tr_ai_wire_social_image_id');
+        $revision = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision + 1);
+        update_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', '1');
+        global $wpdb;
+        $table = $this->social_table();
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET image_attachment_id = 0, updated_at = %s WHERE post_id = %d AND status IN ('queued', 'needs_review')",
+            current_time('mysql', true),
+            $post_id
+        ));
+        return is_int($updated) ? $updated : 0;
+    }
+
+    private function requeue_social_item($id, $regenerate_image = false) {
+        $id = (int) $id;
+        if ($id < 1) {
+            return false;
+        }
+        global $wpdb;
+        $table = $this->social_table();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id), ARRAY_A);
+        if (!$row || ($row['status'] ?? '') !== 'needs_review') {
+            return false;
+        }
+        if ($regenerate_image) {
+            $this->forget_cached_social_image((int) $row['post_id']);
+        }
+        $updated = $wpdb->update($table, array(
+            'status' => 'queued',
+            'error_text' => null,
+            'remote_id' => '',
+            'remote_url' => '',
+            'updated_at' => current_time('mysql', true),
+        ), array('id' => $id, 'status' => 'needs_review'));
+        if ($updated !== 1) {
+            return false;
+        }
+        if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
+            wp_schedule_single_event(time() + 5, self::SOCIAL_CRON_HOOK);
+        }
+        return true;
     }
 
     private function brand_social_image($bytes, $copy) {
@@ -1379,17 +1461,7 @@ trait TechnoRapper_AI_Wire_Social {
         if (empty($_POST['confirmed_not_published'])) {
             wp_die(esc_html__('Confirm that this item is not already live on the platform before retrying.', 'technorapper-ai-wire'));
         }
-        global $wpdb;
-        $wpdb->update($this->social_table(), array(
-            'status' => 'queued',
-            'error_text' => null,
-            'remote_id' => '',
-            'remote_url' => '',
-            'updated_at' => current_time('mysql', true),
-        ), array('id' => $id, 'status' => 'needs_review'));
-        if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
-            wp_schedule_single_event(time() + 5, self::SOCIAL_CRON_HOOK);
-        }
+        $this->requeue_social_item($id, !empty($_POST['regenerate_image']));
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social'));
         exit;
     }
@@ -1429,7 +1501,7 @@ trait TechnoRapper_AI_Wire_Social {
             'queued' => 'Waiting. The worker generates the branded graphic, then tries to post it.',
             'processing' => 'In progress: generating the graphic or talking to the platform.',
             'published' => 'Posted on this platform.',
-            'needs_review' => 'The platform response was unclear. Confirm this is not already live, then retry so you do not double-post.',
+            'needs_review' => 'The platform response was unclear. Confirm this is not already live, then retry so you do not double-post. Check Generate a new graphic if you want a different image.',
         );
         $status = sanitize_key((string) $status);
         return isset($map[$status]) ? $map[$status] : '';
@@ -1516,6 +1588,7 @@ trait TechnoRapper_AI_Wire_Social {
             echo '<input type="hidden" name="item_id" value="' . esc_attr((string) (int) $row['id']) . '">';
             wp_nonce_field('tr_ai_wire_retry_social_item_' . (int) $row['id']);
             echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I checked that it is not already published</label><br>';
+            echo '<label><input type="checkbox" name="regenerate_image" value="1"> Generate a new graphic with the stronger news-poster prompt (uses image budget; leave unchecked to reuse this preview)</label><br>';
             echo '<button class="button button-secondary">Retry this platform post</button></form>';
         }
         echo '</div></div>';
@@ -1543,6 +1616,7 @@ trait TechnoRapper_AI_Wire_Social {
                 .tr-ai-wire-social-headline,.tr-ai-wire-social-subhead,.tr-ai-wire-social-caption{margin:0 0 6px;}
                 .tr-ai-wire-social-caption{white-space:pre-wrap;color:#1d2327;}
                 .tr-ai-wire-social-error{color:#b32d2e;margin:8px 0;}
+                .tr-ai-wire-social-copy label{display:block;margin:6px 0;}
                 .tr-ai-wire-social-status{display:inline-block;padding:2px 8px;border-radius:999px;background:#dcdcde;font-size:12px;text-transform:lowercase;}
                 .tr-ai-wire-social-status.is-published{background:#c6e1c6;}
                 .tr-ai-wire-social-status.is-needs_review{background:#f0c33c;}

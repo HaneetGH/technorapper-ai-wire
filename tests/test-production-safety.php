@@ -2598,6 +2598,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('branded social card', $html);
         $this->assertStringContainsString('Instagram could not read the daily publishing quota', $html);
         $this->assertStringContainsString('Retry this platform post', $html);
+        $this->assertStringContainsString('name="regenerate_image"', $html);
+        $this->assertStringContainsString('Generate a new graphic with the stronger news-poster prompt', $html);
     }
 
     public function test_social_queue_page_shows_placeholder_before_image_exists() {
@@ -2856,5 +2858,218 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Page access_token', $copy);
         $this->assertStringContainsString('User Token', $copy);
         $this->assertStringContainsString('1784147964186186', $copy);
+    }
+
+    public function test_social_image_prompt_is_photoreal_news_poster() {
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION, array(
+            'status' => 'ready',
+            'started_at' => gmdate('Y-m-d H:i:s'),
+            'completed_at' => gmdate('Y-m-d H:i:s'),
+            'fingerprint' => 'prompt-test',
+            'error' => '',
+            'profile' => array(
+                'site_name' => 'TechnoRapper',
+                'visual_style' => 'Navy cyan magazine art',
+            ),
+        ), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Prompt article',
+        ));
+        $prompt = $this->invoke_private('social_image_prompt', array(get_post($post_id), array(
+            'on_image_headline' => '6,300 tech jobs gone',
+            'visual_brief' => 'Symbolic chip glow',
+        )));
+        $this->assertStringContainsString('Photoreal cinematic Instagram news poster', $prompt);
+        $this->assertStringContainsString('vertical 4:5', $prompt);
+        $this->assertStringContainsString('Do not draw a card', $prompt);
+        $this->assertStringContainsString('6,300 tech jobs gone', $prompt);
+        $this->assertStringContainsString('cinematic photoreal news photography', $prompt);
+        $this->assertStringNotContainsString('Navy cyan magazine art', $prompt);
+        $this->assertStringNotContainsString('Symbolic chip glow', $prompt);
+        $this->assertStringNotContainsString('regeneration attempt', $prompt);
+    }
+
+    public function test_social_image_prompt_adds_variation_after_regenerate() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Regenerate prompt',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_social_image_revision', 2);
+        $prompt = $this->invoke_private('social_image_prompt', array(get_post($post_id), array(
+            'on_image_headline' => 'Faster phone chip',
+            'visual_brief' => 'Photoreal office workers carrying boxes toward glass elevators at dusk',
+        )));
+        $this->assertStringContainsString('regeneration attempt 2', $prompt);
+        $this->assertStringContainsString('different camera angle', $prompt);
+        $this->assertStringContainsString('Photoreal office workers', $prompt);
+    }
+
+    public function test_social_retry_without_regenerate_reuses_cached_image() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social retry path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Reuse graphic',
+            'post_excerpt' => 'Keep the existing poster.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 41);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Hook',
+            'on_image_headline' => 'Headline',
+            'x' => 'X text',
+            'instagram' => 'Instagram caption',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'error_text' => 'Temporary Instagram publish failure.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($id, false)));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('queued', $row['status']);
+        $this->assertSame($attachment_id, (int) $row['image_attachment_id']);
+        $this->assertSame($attachment_id, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
+
+        $image_calls = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$image_calls) {
+            if (strpos((string) $url, 'api.openai.com/v1/images/generations') !== false) {
+                $image_calls++;
+                return new WP_Error('blocked', 'Image generation should not run on a reuse retry.');
+            }
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-media-reuse'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-container-reuse'));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/reuse/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $published = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $published['status']);
+        $this->assertSame('ig-media-reuse', $published['remote_id']);
+        $this->assertSame($attachment_id, (int) $published['image_attachment_id']);
+        $this->assertSame(0, $image_calls);
+    }
+
+    public function test_social_retry_with_regenerate_builds_a_new_image() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1 || $jpeg === '') {
+            $this->markTestSkipped('GD and uploads are required for the social regenerate path.');
+        }
+        $this->onboard_social(array('instagram', 'x'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'New graphic please',
+            'post_excerpt' => 'Retry should not reuse the old poster.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 42);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Hook',
+            'on_image_headline' => 'Faster phone chip',
+            'x' => 'X text',
+            'instagram' => 'Instagram caption',
+            'instagram_alt' => 'Alt',
+            'visual_brief' => 'Photoreal phone on a dark desk at dusk',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'error_text' => 'Temporary Instagram publish failure.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $ig_id = (int) $wpdb->insert_id;
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'queued',
+            'image_attachment_id' => $attachment_id,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($ig_id, true)));
+        $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
+        $this->assertSame(1, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
+        $ig = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $ig_id), ARRAY_A);
+        $x = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('queued', $ig['status']);
+        $this->assertSame(0, (int) $ig['image_attachment_id']);
+        $this->assertSame('queued', $x['status']);
+        $this->assertSame(0, (int) $x['image_attachment_id']);
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_social', array('status' => 'needs_review'), array('post_id' => $post_id, 'platform' => 'x'));
+
+        $prompts = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg, &$prompts) {
+            $url = (string) $url;
+            if (strpos($url, 'api.openai.com/v1/images/generations') !== false) {
+                $decoded = json_decode((string) ($args['body'] ?? ''), true);
+                $prompts[] = (string) ($decoded['prompt'] ?? '');
+                return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, 'content_publishing_limit') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-media-regen'));
+            }
+            if (strpos($url, '/media') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-container-regen'));
+            }
+            if (strpos($url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos($url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/regen/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $published = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $ig_id), ARRAY_A);
+        $this->assertSame('published', $published['status']);
+        $this->assertSame('ig-media-regen', $published['remote_id']);
+        $this->assertNotSame($attachment_id, (int) $published['image_attachment_id']);
+        $this->assertGreaterThan(0, (int) $published['image_attachment_id']);
+        $this->assertSame((int) $published['image_attachment_id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
+        $this->assertCount(1, $prompts);
+        $this->assertStringContainsString('Photoreal cinematic Instagram news poster', $prompts[0]);
+        $this->assertStringContainsString('regeneration attempt 1', $prompts[0]);
+        $this->assertStringContainsString('Photoreal phone on a dark desk at dusk', $prompts[0]);
     }
 }
