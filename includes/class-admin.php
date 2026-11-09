@@ -293,7 +293,10 @@ trait TechnoRapper_AI_Wire_Admin {
                 <span style="display:inline-block;width:12px;height:12px;background:#00a32a;margin:0 6px 0 16px;"></span> SEO score
                 <span style="display:inline-block;width:12px;height:12px;background:#c3c4c7;margin:0 6px 0 16px;"></span> Item count
                 <span style="display:inline-block;width:16px;border-top:2px dashed #dba617;margin:0 6px 0 16px;"></span> Minimum review score</p>
-            <div style="max-width:960px;"><?php echo $this->render_score_chart($report); ?></div>
+            <div style="max-width:960px;"><?php
+                $chart = $this->render_score_chart($report);
+                echo wp_kses($chart, $this->score_chart_allowed_html());
+            ?></div>
             <h2>Score bands</h2>
             <table class="widefat striped" style="max-width:480px;">
                 <thead><tr><th>Band</th><th>Items</th></tr></thead>

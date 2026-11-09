@@ -118,8 +118,13 @@ trait TechnoRapper_AI_Wire_Scores {
         } elseif ($filters['scope'] === 'quarantined') {
             $where[] = "status = 'quarantined'";
         }
-        $sql = "SELECT id, status, created_at, source_title, wp_post_id, review_json, rewrite_json FROM {$this->table} WHERE " . implode(' AND ', $where) . ' ORDER BY created_at ASC LIMIT 5000';
-        $rows = $wpdb->get_results($wpdb->prepare($sql, ...$args), ARRAY_A);
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, status, created_at, source_title, wp_post_id, review_json, rewrite_json FROM {$wpdb->prefix}tr_ai_wire_items WHERE " . implode(' AND ', $where) . ' ORDER BY created_at ASC LIMIT 5000',
+                $args
+            ),
+            ARRAY_A
+        );
         $min = (int) $s['draft_min_score'];
         $review_sum = 0;
         $seo_sum = 0;
@@ -204,6 +209,56 @@ trait TechnoRapper_AI_Wire_Scores {
             'distribution' => $distribution,
             'series' => $series,
             'recent' => array_slice(array_reverse($items), 0, 15),
+        );
+    }
+
+    private function score_chart_allowed_html() {
+        $svg = array(
+            'viewbox' => true,
+            'viewBox' => true,
+            'role' => true,
+            'aria-label' => true,
+            'style' => true,
+            'xmlns' => true,
+        );
+        return array(
+            'svg' => $svg,
+            'line' => array(
+                'x1' => true,
+                'y1' => true,
+                'x2' => true,
+                'y2' => true,
+                'stroke' => true,
+                'stroke-dasharray' => true,
+            ),
+            'text' => array(
+                'x' => true,
+                'y' => true,
+                'font-size' => true,
+                'fill' => true,
+                'text-anchor' => true,
+            ),
+            'rect' => array(
+                'x' => true,
+                'y' => true,
+                'width' => true,
+                'height' => true,
+                'fill' => true,
+                'opacity' => true,
+            ),
+            'title' => array(),
+            'circle' => array(
+                'cx' => true,
+                'cy' => true,
+                'r' => true,
+                'fill' => true,
+            ),
+            'polyline' => array(
+                'fill' => true,
+                'stroke' => true,
+                'stroke-width' => true,
+                'points' => true,
+            ),
         );
     }
 

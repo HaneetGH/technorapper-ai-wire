@@ -171,6 +171,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(TechnoRapper_AI_Wire::VERSION, $matches[1]);
         $this->assertMatchesRegularExpression('/^\s*\*\s*License:\s*GPLv2 or later\s*$/m', $header);
         $this->assertMatchesRegularExpression('/^\s*\*\s*License URI:\s*https:\/\/www\.gnu\.org\/licenses\/gpl-2\.0\.html\s*$/m', $header);
+        $this->assertDoesNotMatchRegularExpression('/^\s*\*\s*Tested up to:/m', $header);
     }
 
     public function test_wordpress_org_readme_declares_gplv2_or_later() {
@@ -178,6 +179,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotFalse($readme);
         $this->assertMatchesRegularExpression('/^License:\s*GPLv2 or later\s*$/m', $readme);
         $this->assertMatchesRegularExpression('/^License URI:\s*https:\/\/www\.gnu\.org\/licenses\/gpl-2\.0\.html\s*$/m', $readme);
+        $this->assertMatchesRegularExpression('/^Tested up to:\s*7\.1\s*$/m', $readme);
         $this->assertTrue((bool) preg_match('/^Stable tag:\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$/m', $readme, $matches));
         $this->assertSame(TechnoRapper_AI_Wire::VERSION, $matches[1]);
     }
