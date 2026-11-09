@@ -532,9 +532,61 @@ trait TechnoRapper_AI_Wire_Social {
 
         $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE status = 'queued'");
         $finishable = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} q WHERE q.status = 'queued' AND EXISTS (SELECT 1 FROM {$table} p WHERE p.post_id = q.post_id AND p.status = 'published' AND p.updated_at >= UTC_DATE())");
-        if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0) && !wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
-            wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
+        if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0)) {
+            $this->kick_social_queue(60);
         }
+    }
+
+    private function social_queued_count() {
+        global $wpdb;
+        return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->social_table()} WHERE status = 'queued'");
+    }
+
+    private function kick_social_queue($delay = 5, $even_if_empty = false) {
+        if (!$this->social_distribution_ready()) {
+            return false;
+        }
+        if (!$even_if_empty && $this->social_queued_count() < 1) {
+            return false;
+        }
+        $delay = max(1, (int) $delay);
+        $want = time() + $delay;
+        $next = wp_next_scheduled(self::SOCIAL_CRON_HOOK);
+        if ($next && $next <= $want + 15) {
+            return true;
+        }
+        wp_clear_scheduled_hook(self::SOCIAL_CRON_HOOK);
+        wp_schedule_single_event($want, self::SOCIAL_CRON_HOOK);
+        return true;
+    }
+
+    public function run_social_queue_now() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to run social publishing.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_run_social_queue');
+        if (function_exists('set_time_limit')) {
+            set_time_limit(180);
+        }
+        if (function_exists('ignore_user_abort')) {
+            ignore_user_abort(true);
+        }
+        $processed = 0;
+        for ($i = 0; $i < 5; $i++) {
+            $before = $this->social_queued_count();
+            if ($before < 1) {
+                break;
+            }
+            $this->process_social_queue();
+            $after = $this->social_queued_count();
+            if ($after >= $before) {
+                break;
+            }
+            $processed++;
+        }
+        $this->kick_social_queue(5);
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&social_ran=' . (int) $processed));
+        exit;
     }
 
     private function publish_social_item($row, $credentials, $settings) {
@@ -1754,10 +1806,28 @@ trait TechnoRapper_AI_Wire_Social {
                 .tr-ai-wire-social-status.is-processing{background:#c5d9ed;}
             </style>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
+            <?php if (isset($_GET['social_ran'])) : ?><div class="notice notice-success is-dismissible"><p><?php echo ((int) $_GET['social_ran'] > 0) ? 'Processed queued social posts. Refresh in a minute if a graphic is still generating.' : 'No queued social post could be processed now. If items are still waiting, check the daily limit, image budget, and WP-Cron.'; ?></p></div><?php endif; ?>
             <?php $this->render_site_context_card('tr-ai-wire-social'); ?>
             <p>Automatic distribution is <?php echo !empty($settings['social_distribution_enabled']) ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Turning it off pauses queued work. Today: <?php echo esc_html((string) $this->social_published_today()); ?> / <?php echo esc_html((string) (int) ($settings['social_daily_limit'] ?? 10)); ?> articles distributed.</p>
             <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated.</p>
-            <p class="description">Each row is one platform post for a published AI Wire article. The graphic on the right is the branded social card — not the article featured image. The worker generates that card, writes a caption, then tries to publish it.</p>
+            <?php
+            $queued_now = $this->social_queued_count();
+            $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);
+            if ($queued_now > 0 && $next_run && $next_run > time() + 600) {
+                echo '<div class="notice notice-warning"><p>Queued posts are waiting until ' . esc_html(gmdate('Y-m-d H:i', $next_run)) . ' UTC — usually because the daily cap was hit earlier. Raising the daily limit does not start them by itself. Process the queue now.</p></div>';
+            }
+            ?>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0 16px;">
+                <input type="hidden" name="action" value="tr_ai_wire_run_social_queue">
+                <?php wp_nonce_field('tr_ai_wire_run_social_queue'); ?>
+                <?php submit_button('Process queued social posts now', 'secondary', 'submit', false); ?>
+                <p class="description" style="display:inline;margin-left:8px;">Generates missing graphics and tries to publish up to 5 waiting rows. Use this after raising the daily limit.</p>
+            </form>
+            <p class="description">Each row is one platform post for a published AI Wire article. The graphic on the right is the branded social card — not the article featured image. The worker generates that card, writes a caption, then tries to publish it.<?php
+            if ($next_run) {
+                echo ' Next automatic attempt: ' . esc_html(gmdate('Y-m-d H:i', $next_run)) . ' UTC.';
+            }
+            ?></p>
             <table class="widefat striped"><thead><tr><th>Queued</th><th>Article</th><th>Platform</th><th>Status</th><th>Generated graphic / result</th></tr></thead><tbody>
             <?php if (!$rows) : ?><tr><td colspan="5">No social items have been queued.</td></tr><?php else : foreach ($rows as $row) :
                 $post = get_post((int) $row['post_id']);
