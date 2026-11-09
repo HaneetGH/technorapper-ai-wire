@@ -24,7 +24,14 @@ trait TechnoRapper_AI_Wire_Admin {
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
-            <?php if (!empty($_GET['social_credentials_saved'])) : ?><div class="notice notice-success is-dismissible"><p>Social publishing connections saved.</p></div><?php endif; ?>
+            <?php if (!empty($_GET['social_credentials_saved'])) : ?><div class="notice notice-success is-dismissible"><p>Social publishing connections saved.<?php
+            $backfill = (int) ($_GET['social_backfill'] ?? 0);
+            $backfill_platform = sanitize_key((string) ($_GET['social_backfill_platform'] ?? ''));
+            if ($backfill > 0 && $backfill_platform !== '') {
+                $label = $backfill_platform === 'instagram' ? 'Instagram' : 'X';
+                echo ' Queued ' . esc_html((string) $backfill) . ' existing article' . ($backfill === 1 ? '' : 's') . ' for ' . esc_html($label) . ' using saved graphics — no new images will be generated.';
+            }
+            ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <p>Feed items are rewritten, reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead.</p>
             <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">

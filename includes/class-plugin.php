@@ -69,6 +69,7 @@ final class TechnoRapper_AI_Wire {
         add_action('init', array($this, 'maybe_requeue_instagram_quota_field_failures'), 12);
         add_action('admin_post_tr_ai_wire_save_social_credentials', array($this, 'save_social_credentials'));
         add_action('admin_post_tr_ai_wire_retry_social_item', array($this, 'retry_social_item'));
+        add_action('admin_post_tr_ai_wire_queue_missing_platform', array($this, 'queue_missing_platform_request'));
         add_action('admin_post_tr_ai_wire_refresh_site_context', array($this, 'refresh_site_context_request'));
         add_action('admin_post_tr_ai_wire_run_now', array($this, 'run_now'));
         add_action('admin_post_tr_ai_wire_run_social_queue', array($this, 'run_social_queue_now'));
