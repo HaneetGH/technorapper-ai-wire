@@ -661,8 +661,8 @@ trait TechnoRapper_AI_Wire_Social {
         $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this site';
         $system = 'You are the social desk for ' . $brand . '. Repackage an already-published article for X and Instagram. Do not write a new article. Use only supplied article fields plus the site context. Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. Return JSON only.';
         $user = 'Build one social package that matches this publisher\'s priorities. Principles to hit when the article supports them: hook that stops the scroll; curiosity; a feeling (stakes for a reader\'s phone/job/money, not melodrama); relatability; pattern interrupt; before/after contrast; a tiny story; useful value; a clear CTA to read the article; branding; shareability; saveability; cultural relevance when the source has it. '
-            . 'on_image_headline: Instagram poster headline, 8–16 words, punchy, can include a number only if it is in the article. Written to sit in huge type on a photo. on_image_subhead: one supporting line, max 14 words. '
-            . 'visual_brief: one photoreal cinematic news-poster scene that fills a vertical 4:5 frame (tight device close-up, crowded office from behind, factory, night city, server hall). Prefer dusk, night, or hard rim light. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
+            . 'on_image_headline: Instagram poster headline, 4–9 words, punchy, can include a number only if it is in the article. Written to sit in huge condensed type on a photo, so keep it short enough for 2–3 lines. on_image_subhead: one supporting line, max 10 words. '
+            . 'visual_brief: describe only the photograph (tight device close-up, crowded office from behind, factory, night city, server hall). Prefer dusk, night, or hard rim light. Do not include the headline wording. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
             . 'x_text: hook plus one curiosity or value line; do not include the URL. instagram_caption: hook, 2–4 short lines of value/story, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags for this site, no spam. instagram_alt: factual description of the graphic. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
@@ -683,8 +683,8 @@ trait TechnoRapper_AI_Wire_Social {
             $excerpt = wp_trim_words(wp_strip_all_tags((string) $post->post_content), 36, '');
         }
         $hook = $this->clip_social_text($raw['hook'] ?? $title, 110);
-        $headline = $this->clip_social_text($raw['on_image_headline'] ?? $hook, 96);
-        $subhead = $this->clip_social_text($raw['on_image_subhead'] ?? $excerpt, 80);
+        $headline = $this->clip_social_text($raw['on_image_headline'] ?? $hook, 70);
+        $subhead = $this->clip_social_text($raw['on_image_subhead'] ?? $excerpt, 56);
         $profile = $this->site_context_profile();
         $default_cta = !empty($profile['cta_style']) ? $profile['cta_style'] : 'Read the full story on TechnoRapper';
         $cta = $this->clip_social_text($raw['cta'] ?? $default_cta, 60);
@@ -853,23 +853,20 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_image_prompt($post, $copy = array()) {
         $copy = is_array($copy) ? $copy : array();
-        $headline = trim((string) ($copy['on_image_headline'] ?? ($post instanceof WP_Post ? $post->post_title : '')));
         $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
         $profile = $this->site_context_profile();
-        $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this technology publisher';
         $revision = ($post instanceof WP_Post) ? (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_revision', true) : 0;
-        $prompt = 'Photoreal cinematic Instagram news poster still for ' . $brand . ', vertical 4:5, full-bleed photography filling the entire frame. '
-            . 'Shot like a viral tech-news graphic: one clear real-world scene, magazine lighting, shallow depth of field, high contrast, cinematic color grade. '
-            . 'The lower 40 percent of the frame must be naturally darker and uncluttered so large white headline type can sit there later. '
-            . 'Do not draw a card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup with text. '
+        $prompt = 'Untitled photoreal cinematic photograph, vertical 4:5, full-bleed, no graphic design. '
+            . 'One real-world scene, magazine lighting, shallow depth of field, high contrast. This is a photograph, not a poster, not a title card, not a thumbnail. '
+            . 'The lower half of the frame is naturally dark and empty of objects so we can overlay type later. '
+            . 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. '
+            . 'Do not draw a poster, card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup. '
             . 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. '
-            . 'No letters, numbers, captions, watermarks, or real brand logos in the artwork — headline type is overlaid later. '
             . 'Art direction: ' . $this->social_image_art_direction($profile) . '. '
-            . 'Subject: ' . $headline . '. '
-            . ($brief !== '' ? 'Scene: ' . $brief . '. ' : '')
-            . 'Make it stop a social-media scroll.';
+            . ($brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one clear technology-news photograph with a single subject. ')
+            . 'Make the picture stop a social-media scroll.';
         if ($revision > 0) {
-            $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story.';
+            $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story. Still no text in the photograph.';
         }
         return $prompt;
     }
@@ -950,7 +947,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $copy = is_array($copy) ? $copy : array();
         $headline = $this->social_poster_headline((string) ($copy['on_image_headline'] ?? $copy['hook'] ?? ''));
-        $subhead = (string) ($copy['on_image_subhead'] ?? '');
+        $subhead = trim(wp_strip_all_tags((string) ($copy['on_image_subhead'] ?? '')));
         $source_width = imagesx($source);
         $source_height = imagesy($source);
         $target_width = 1080;
@@ -975,35 +972,44 @@ trait TechnoRapper_AI_Wire_Social {
         $this->draw_social_bottom_gradient($canvas, $target_width, $target_height);
         $cyan = imagecolorallocate($canvas, 43, 213, 255);
         $white = imagecolorallocate($canvas, 255, 255, 255);
-        $muted = imagecolorallocate($canvas, 210, 220, 230);
+        $muted = imagecolorallocate($canvas, 220, 226, 232);
+        $stroke = imagecolorallocate($canvas, 0, 0, 0);
         $font = $this->social_font_path();
         if ($font) {
-            imagettftext($canvas, 20, 0, 48, 64, $white, $font, 'TECHNORAPPER');
-            imagefilledrectangle($canvas, 48, 76, 220, 82, $cyan);
+            imagettftext($canvas, 28, 0, 48, 78, $white, $font, 'TECHNORAPPER');
+            imagefilledrectangle($canvas, 48, 90, 268, 98, $cyan);
         } else {
             imagestring($canvas, 5, 48, 28, 'TECHNORAPPER', $white);
         }
-        $headline_size = 46;
-        $lines = $this->wrap_social_lines($headline, 980, $headline_size, $font, 22, 5);
-        $line_height = $font ? 62 : 36;
-        $block_height = (count($lines) * $line_height) + ($subhead !== '' ? 48 : 0);
-        $y = $target_height - 72 - $block_height;
-        if ($y < 860) {
-            $y = 860;
+        $layout = $this->social_poster_headline_layout($headline, $font, 1000, (int) round($target_height * 0.46), 4);
+        $subhead_size = $font ? max(24, min(32, (int) round($layout['size'] * 0.28))) : 5;
+        $subhead_step = (int) round($subhead_size * 1.2);
+        $subhead_lines = ($subhead !== '') ? $this->wrap_social_lines($subhead, 940, $subhead_size, $font, 36, 2) : array();
+        $handle_y = $target_height - 28;
+        $subhead_block = $subhead_lines ? (14 + ((count($subhead_lines) - 1) * $subhead_step) + $subhead_size) : 0;
+        $line_count = max(1, count($layout['lines']));
+        $first_baseline = $handle_y - 40 - $subhead_block - (($line_count - 1) * $layout['line_height']);
+        if ($first_baseline < 620) {
+            $first_baseline = 620;
         }
-        foreach ($lines as $text_line) {
-            $this->draw_social_centered_text($canvas, $text_line, $headline_size, $y, $white, $font, $target_width);
-            $y += $line_height;
+        $y = $first_baseline;
+        foreach ($layout['lines'] as $index => $text_line) {
+            $this->draw_social_centered_text($canvas, $text_line, $layout['size'], $y, $white, $font, $target_width, $stroke, 3);
+            if ($index < $line_count - 1) {
+                $y += $layout['line_height'];
+            }
         }
-        if ($subhead !== '') {
-            $y += 8;
-            foreach ($this->wrap_social_lines($subhead, 920, 22, $font, 40, 2) as $text_line) {
-                $this->draw_social_centered_text($canvas, $text_line, 22, $y, $muted, $font, $target_width);
-                $y += 34;
+        if ($subhead_lines) {
+            $y += 18 + $subhead_size;
+            foreach ($subhead_lines as $index => $text_line) {
+                $this->draw_social_centered_text($canvas, $text_line, $subhead_size, $y, $muted, $font, $target_width, $stroke, 2);
+                if ($index < count($subhead_lines) - 1) {
+                    $y += $subhead_step;
+                }
             }
         }
         if ($font) {
-            imagettftext($canvas, 16, 0, $target_width - 268, $target_height - 28, $cyan, $font, '@technorapper');
+            imagettftext($canvas, 18, 0, $target_width - 292, $handle_y, $cyan, $font, '@technorapper');
         }
         ob_start();
         imagejpeg($canvas, null, 88);
@@ -1020,21 +1026,56 @@ trait TechnoRapper_AI_Wire_Social {
         return function_exists('mb_strtoupper') ? mb_strtoupper($text, 'UTF-8') : strtoupper($text);
     }
 
+    private function social_poster_headline_layout($headline, $font, $max_width, $max_block_height, $max_lines = 4) {
+        $headline = $this->social_poster_headline($headline);
+        $max_lines = max(1, (int) $max_lines);
+        $min_size = $font ? 64 : 5;
+        $max_size = $font ? 118 : 5;
+        $chosen = array(
+            'size' => $min_size,
+            'lines' => $this->wrap_social_lines($headline, $max_width, $min_size, $font, 18, $max_lines),
+            'line_height' => $font ? (int) round($min_size * 1.08) : 36,
+        );
+        $chosen['block_height'] = max(1, count($chosen['lines'])) * $chosen['line_height'];
+        if ($headline === '' || !$font) {
+            return $chosen;
+        }
+        for ($size = $max_size; $size >= $min_size; $size -= 2) {
+            $line_height = (int) round($size * 1.08);
+            $lines = $this->wrap_social_lines($headline, $max_width, $size, $font, 18, 12);
+            if (count($lines) > $max_lines) {
+                continue;
+            }
+            $block_height = count($lines) * $line_height;
+            if ($block_height <= $max_block_height) {
+                return array(
+                    'size' => $size,
+                    'lines' => $lines,
+                    'line_height' => $line_height,
+                    'block_height' => $block_height,
+                );
+            }
+        }
+        return $chosen;
+    }
+
     private function draw_social_bottom_gradient($canvas, $width, $height) {
-        $start = (int) round($height * 0.52);
+        $start = (int) round($height * 0.36);
         $span = $height - $start;
         if ($span < 1) {
             return;
         }
         for ($i = 0; $i < $span; $i++) {
             $t = $i / $span;
-            $alpha = (int) max(0, min(127, 110 - (int) round($t * 110)));
+            $alpha = (int) max(0, min(127, (int) round(118 - ($t * 150))));
             $color = imagecolorallocatealpha($canvas, 0, 0, 0, $alpha);
             imageline($canvas, 0, $start + $i, $width, $start + $i, $color);
         }
+        $cover = imagecolorallocatealpha($canvas, 0, 0, 0, 18);
+        imagefilledrectangle($canvas, 0, (int) round($height * 0.62), $width, $height, $cover);
     }
 
-    private function draw_social_centered_text($canvas, $text, $size, $y, $color, $font, $canvas_width) {
+    private function draw_social_centered_text($canvas, $text, $size, $y, $color, $font, $canvas_width, $stroke = null, $stroke_width = 0) {
         $text = (string) $text;
         if ($text === '') {
             return;
@@ -1042,7 +1083,18 @@ trait TechnoRapper_AI_Wire_Social {
         if ($font && function_exists('imagettfbbox')) {
             $box = imagettfbbox($size, 0, $font, $text);
             $text_width = abs($box[2] - $box[0]);
-            $x = (int) max(36, ($canvas_width - $text_width) / 2);
+            $x = (int) max(32, ($canvas_width - $text_width) / 2);
+            if ($stroke && $stroke_width > 0) {
+                $width = (int) $stroke_width;
+                for ($ox = -$width; $ox <= $width; $ox++) {
+                    for ($oy = -$width; $oy <= $width; $oy++) {
+                        if ($ox === 0 && $oy === 0) {
+                            continue;
+                        }
+                        imagettftext($canvas, $size, 0, $x + $ox, $y + $oy, $stroke, $font, $text);
+                    }
+                }
+            }
             imagettftext($canvas, $size, 0, $x, $y, $color, $font, $text);
             return;
         }
@@ -1059,7 +1111,7 @@ trait TechnoRapper_AI_Wire_Social {
             }
             $candidate = $line === '' ? $word : $line . ' ' . $word;
             $box = ($font && function_exists('imagettfbbox')) ? imagettfbbox($size, 0, $font, $candidate) : false;
-            $too_wide = $box ? ($box[2] > $max_width) : (strlen($candidate) > $fallback_chars);
+            $too_wide = $box ? (abs($box[2] - $box[0]) > $max_width) : (strlen($candidate) > $fallback_chars);
             if ($too_wide && $line !== '') {
                 $lines[] = $line;
                 $line = $word;
@@ -1078,6 +1130,8 @@ trait TechnoRapper_AI_Wire_Social {
             return '';
         }
         foreach (array(
+            dirname(__DIR__) . '/assets/fonts/Anton-Regular.ttf',
+            '/usr/share/fonts/truetype/macos/Inter-Bold.ttf',
             '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
             '/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf',
             '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
