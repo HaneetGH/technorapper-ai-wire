@@ -702,6 +702,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             $this->apply_seo_meta($existing_id, $rewrite);
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->maybe_promote_post_status($existing_id, $s);
+            $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => null, 'rewrite_json' => wp_json_encode($rewrite)));
             return;
         }
@@ -764,6 +765,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             return;
         }
         $this->maybe_promote_post_status((int) $post_id, $s);
+        $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);
         $this->update_item($id, array(
             'status' => $this->queue_status_for_post((int) $post_id, $publish),
             'wp_post_id' => (int) $post_id,

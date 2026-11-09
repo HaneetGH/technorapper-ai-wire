@@ -402,9 +402,19 @@ trait TechnoRapper_AI_Wire_Admin {
         $page = max(1, absint($_GET['paged'] ?? 1));
         $per_page = 50;
         $status_filter = sanitize_key(wp_unslash($_GET['status'] ?? ''));
+        $status_aliases = array('new' => 'pending', 'rewritten' => 'generated');
+        if (isset($status_aliases[$status_filter])) {
+            $status_filter = $status_aliases[$status_filter];
+        }
         $allowed_statuses = array('pending', 'waiting_budget', 'retry_wait', 'generated', 'reviewed', 'draft', 'published', 'quarantined', 'error');
         if (!in_array($status_filter, $allowed_statuses, true)) { $status_filter = ''; }
-        $where = $status_filter ? $wpdb->prepare(' WHERE status = %s', $status_filter) : '';
+        $status_match = array('pending' => array('pending', 'new'), 'generated' => array('generated', 'rewritten'));
+        if ($status_filter && isset($status_match[$status_filter])) {
+            $placeholders = implode(', ', array_fill(0, count($status_match[$status_filter]), '%s'));
+            $where = $wpdb->prepare(' WHERE status IN (' . $placeholders . ')', $status_match[$status_filter]);
+        } else {
+            $where = $status_filter ? $wpdb->prepare(' WHERE status = %s', $status_filter) : '';
+        }
         $total_rows = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->table}{$where}");
         $offset = ($page - 1) * $per_page;
         $rows = $wpdb->get_results($wpdb->prepare("SELECT id, feed_name, source_title, source_url, status, wp_post_id, created_at, error_text, review_json, rewrite_json FROM {$this->table}{$where} ORDER BY id DESC LIMIT %d OFFSET %d", $per_page, $offset), ARRAY_A);
