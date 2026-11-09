@@ -298,9 +298,7 @@ trait TechnoRapper_AI_Wire_Publisher {
     }
 
     private function skip_item_without_image($id, $reason = 'No source image; skipped.') {
-        $this->update_item((int) $id, array(
-            'status' => 'quarantined',
-            'error_text' => $reason,
+        $this->quarantine_item((int) $id, $reason, null, array(
             'wp_post_id' => null,
         ));
     }
@@ -701,14 +699,9 @@ trait TechnoRapper_AI_Wire_Publisher {
                 $this->skip_item_without_image($id);
                 return;
             }
-            if ($publish && in_array(get_post_status($existing_id), array('draft', 'pending', 'future'), true)) {
-                wp_update_post(array(
-                    'ID' => $existing_id,
-                    'post_status' => 'publish',
-                ));
-            }
             $this->apply_seo_meta($existing_id, $rewrite);
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
+            $this->maybe_promote_post_status($existing_id, $s);
             $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => null, 'rewrite_json' => wp_json_encode($rewrite)));
             return;
         }
@@ -716,7 +709,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         $lede = sanitize_text_field($rewrite['lede'] ?? '');
         $body = wp_kses_post($rewrite['body_html'] ?? '');
         if (!$title || ($body === '' && ($s['map_content'] ?? 'rewrite') === 'rewrite')) {
-            $this->update_item($id, array('status' => 'quarantined', 'error_text' => 'Rewrite did not include a title and body.'));
+            $this->quarantine_item($id, 'Rewrite did not include a title and body.', $item);
             return;
         }
         if ($this->source_image_url($item['source_body'] ?? '') === '') {
@@ -724,7 +717,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             return;
         }
         if ($body === '' && ($s['map_content'] ?? 'rewrite') === 'source' && trim((string) ($item['source_body'] ?? '')) === '') {
-            $this->update_item($id, array('status' => 'quarantined', 'error_text' => 'Rewrite did not include a title and body.'));
+            $this->quarantine_item($id, 'Rewrite did not include a title and body.', $item);
             return;
         }
         $content = $this->mapped_content($rewrite, $item, $s);
@@ -732,7 +725,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         $now = $this->mapped_post_date($item, $s);
         $insert = array(
             'post_type' => $this->mapped_post_type($s),
-            'post_status' => $status,
+            'post_status' => 'draft',
             'post_author' => $this->publishing_author_id(),
             'post_title' => $title,
             'post_name' => $slug,
@@ -770,6 +763,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             $this->skip_item_without_image($id);
             return;
         }
+        $this->maybe_promote_post_status((int) $post_id, $s);
         $this->update_item($id, array(
             'status' => $this->queue_status_for_post((int) $post_id, $publish),
             'wp_post_id' => (int) $post_id,
@@ -778,8 +772,32 @@ trait TechnoRapper_AI_Wire_Publisher {
         ));
     }
 
+    /**
+     * WordPress posts are always inserted as drafts. Promotion to publish (or
+     * pending) happens only after content, metadata, and a permalink exist, so
+     * social adapters never see a premature post.
+     */
+    private function maybe_promote_post_status($post_id, $s) {
+        $post_id = (int) $post_id;
+        $wanted = $this->mapped_post_status($s);
+        if ($post_id <= 0 || !in_array($wanted, array('publish', 'pending'), true)) {
+            return;
+        }
+        if (get_post_status($post_id) === $wanted) {
+            return;
+        }
+        $result = wp_update_post(array(
+            'ID' => $post_id,
+            'post_status' => $wanted,
+        ), true);
+        if (is_wp_error($result)) {
+            return;
+        }
+    }
+
     private function queue_status_for_post($post_id, $publish) {
-        if ($publish || get_post_status($post_id) === 'publish') {
+        unset($publish);
+        if (get_post_status($post_id) === 'publish') {
             return 'published';
         }
         return 'draft';

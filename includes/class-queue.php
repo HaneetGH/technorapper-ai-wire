@@ -17,8 +17,8 @@ trait TechnoRapper_AI_Wire_Queue {
 
     /**
      * A saved review under the score or fact-flag gate is replayed forever
-     * unless Retry asks the reviewer again. A review that already clears the
-     * score gate still publishes without another model call.
+     * unless Retry asks the independent reviewer again. A review that already
+     * clears the editorial gates still publishes without another model call.
      */
     private function retry_queue_item($id) {
         $item = $this->get_item($id);
@@ -30,21 +30,24 @@ trait TechnoRapper_AI_Wire_Queue {
         $s = $this->settings_for_item($item, $this->settings());
         $blocked = is_array($review) && $this->review_draft_blockers($review, $s);
         if ($this->should_force_publish_retry($item, $rewrite, $review, $s) && !$blocked) {
-            $this->force_publish_item($id, $item, $rewrite, $review, $s);
+            $this->update_item($id, array(
+                'status' => 'reviewed',
+                'attempts' => 0,
+                'next_retry_at' => null,
+                'error_text' => null,
+            ));
+            $this->advance_item_until_idle($id, $s);
             return;
         }
         $fields = array(
-            'status' => is_array($review) ? 'reviewed' : (is_array($rewrite) ? 'rewritten' : 'new'),
+            'status' => $this->has_usable_rewrite($rewrite) ? 'generated' : 'pending',
             'attempts' => 0,
             'next_retry_at' => null,
             'error_text' => null,
+            'review_json' => '',
         );
-        if ($blocked) {
-            $fields['status'] = is_array($rewrite) ? 'rewritten' : 'new';
-            $fields['review_json'] = '';
-        }
         $this->update_item($id, $fields);
-        $this->process_item($id, $s, true);
+        $this->advance_item_until_idle($id, $s);
     }
 
     public function is_run_in_progress() {
@@ -155,7 +158,7 @@ trait TechnoRapper_AI_Wire_Queue {
         $row = array(
             'source_key' => $key, 'experiment_id' => $experiment_id, 'variant' => $variant, 'feed_url' => $feed, 'feed_name' => $name, 'source_guid' => $guid,
             'source_url' => $url, 'source_title' => $title, 'source_body' => $body,
-            'status' => 'new', 'created_at' => $now, 'updated_at' => $now,
+            'status' => 'pending', 'created_at' => $now, 'updated_at' => $now,
         );
         $formats = array('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s');
         if ($published !== '') {

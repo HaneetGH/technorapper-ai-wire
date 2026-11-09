@@ -47,7 +47,7 @@ trait TechnoRapper_AI_Wire_Schema {
             source_published_at datetime NULL,
             rewrite_json longtext NULL,
             review_json longtext NULL,
-            status varchar(24) NOT NULL DEFAULT 'new',
+            status varchar(24) NOT NULL DEFAULT 'pending',
             wp_post_id bigint(20) unsigned NULL,
             created_at datetime NOT NULL,
             updated_at datetime NOT NULL,
@@ -96,7 +96,35 @@ trait TechnoRapper_AI_Wire_Schema {
             KEY status_created (status, created_at)
         ) {$charset};";
         dbDelta($social_sql);
+        $quarantine_table = $wpdb->prefix . self::QUARANTINE_TABLE_SUFFIX;
+        $quarantine_sql = "CREATE TABLE {$quarantine_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            queue_item_id bigint(20) unsigned NOT NULL,
+            reason text NOT NULL,
+            source_url text NULL,
+            source_title text NULL,
+            rewrite_json longtext NULL,
+            review_json longtext NULL,
+            created_at datetime NOT NULL,
+            PRIMARY KEY  (id),
+            KEY queue_item_id (queue_item_id),
+            KEY created_at (created_at)
+        ) {$charset};";
+        dbDelta($quarantine_sql);
+        self::migrate_pipeline_statuses();
         update_option('tr_ai_wire_schema_version', self::SCHEMA_VERSION, false);
+    }
+
+    /**
+     * Map legacy tightly-coupled statuses onto the explicit pipeline states.
+     */
+    private static function migrate_pipeline_statuses() {
+        global $wpdb;
+        $table = $wpdb->prefix . self::TABLE_SUFFIX;
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name is a prefixed plugin constant.
+        $wpdb->query("UPDATE {$table} SET status = 'pending' WHERE status = 'new'");
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name is a prefixed plugin constant.
+        $wpdb->query("UPDATE {$table} SET status = 'generated' WHERE status = 'rewritten'");
     }
 
     public static function deactivate() {

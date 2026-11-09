@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper AI Wire
  * Description: Turns configured RSS feed items into attributed, AI-reviewed WordPress drafts or published posts with daily and API usage limits.
- * Version: 0.2.48
+ * Version: 0.2.49
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: TechnoRapper
@@ -40,6 +40,7 @@ require_once TR_AI_WIRE_DIR . 'includes/class-admin.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-queue.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-feeds.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-ai.php';
+require_once TR_AI_WIRE_DIR . 'includes/class-pipeline.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-seo.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-publisher.php';
 require_once TR_AI_WIRE_DIR . 'includes/class-scores.php';
