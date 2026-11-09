@@ -2174,6 +2174,70 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('WHAT JUST HAPPENED IN 24 HOURS?', $this->invoke_private('social_poster_headline', array('What just happened in 24 hours?')));
     }
 
+    public function test_social_poster_headline_uses_large_display_type() {
+        if (!function_exists('imagettfbbox')) {
+            $this->markTestSkipped('FreeType is required to size poster headlines.');
+        }
+        $font = $this->invoke_private('social_font_path');
+        $this->assertNotSame('', $font);
+        $this->assertStringContainsString('Anton-Regular.ttf', $font);
+        $short = $this->invoke_private('social_poster_headline_layout', array(
+            'What just happened in 24 hours?',
+            $font,
+            1000,
+            620,
+            4,
+        ));
+        $this->assertGreaterThanOrEqual(90, $short['size']);
+        $this->assertLessThanOrEqual(3, count($short['lines']));
+        $this->assertSame('WHAT JUST HAPPENED IN 24 HOURS?', implode(' ', $short['lines']));
+        $long = $this->invoke_private('social_poster_headline_layout', array(
+            '6,300 tech jobs gone in 10 days. Is AI the biggest threat?',
+            $font,
+            1000,
+            620,
+            4,
+        ));
+        $this->assertGreaterThanOrEqual(64, $long['size']);
+        $this->assertLessThanOrEqual(4, count($long['lines']));
+        $this->assertFileExists(dirname(__DIR__) . '/assets/fonts/Anton-Regular.ttf');
+    }
+
+    public function test_branded_social_image_is_instagram_portrait_with_large_type() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg') || !function_exists('imagecreatefromstring')) {
+            $this->markTestSkipped('GD is required to render social posters.');
+        }
+        $im = imagecreatetruecolor(1080, 1350);
+        for ($y = 0; $y < 1350; $y++) {
+            $t = $y / 1350;
+            $color = imagecolorallocate($im, (int) (40 + (1 - $t) * 80), (int) (18 + (1 - $t) * 30), (int) (12 + $t * 20));
+            imageline($im, 0, $y, 1079, $y, $color);
+        }
+        ob_start();
+        imagejpeg($im, null, 88);
+        $bytes = ob_get_clean();
+        imagedestroy($im);
+        $branded = $this->invoke_private('brand_social_image', array($bytes, array(
+            'on_image_headline' => 'What just happened in 24 hours?',
+            'on_image_subhead' => 'The week Big Tech could not ignore',
+        )));
+        $this->assertTrue(is_string($branded) && $branded !== '');
+        $info = getimagesizefromstring($branded);
+        $this->assertSame(1080, $info[0]);
+        $this->assertSame(1350, $info[1]);
+        $dir = '/opt/cursor/artifacts';
+        if (is_dir($dir) || mkdir($dir, 0755, true)) {
+            file_put_contents($dir . '/instagram_poster_type_short.jpg', $branded);
+            $long = $this->invoke_private('brand_social_image', array($bytes, array(
+                'on_image_headline' => '6,300 tech jobs gone in 10 days. Is AI the biggest threat?',
+                'on_image_subhead' => 'Layoffs hit offices from coast to coast',
+            )));
+            if (is_string($long) && $long !== '') {
+                file_put_contents($dir . '/instagram_poster_type_long.jpg', $long);
+            }
+        }
+    }
+
     public function test_site_context_needs_refresh_until_a_successful_read() {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         $this->assertTrue($this->plugin->site_context_needs_refresh());
