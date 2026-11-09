@@ -273,7 +273,7 @@ The current feature branch adds an opt-in post-publication path in `includes/cla
 
 - Defaults social distribution off; only eligible AI Wire-created posts published while enabled are queued, and configured destinations require saved credentials.
 - Stores one independent queue row per `(post_id, platform)` in the social table. A worker processes a bounded row under a lock; the daily cap counts unique articles, allowing another configured platform for an article already counted that day.
-- Generates one GPT Image 2 low portrait social image, adds the TechnoRapper title card locally with GD, stores it in WordPress Media, and reuses the same attachment across configured destinations. The image is referenced by social-specific metadata and never becomes the article's featured image.
+- Generates one GPT Image 2 low portrait social image, overlays a TechnoRapper title card locally with GD using one of five per-article layout variants (plus a rotating camera prompt), stores it in WordPress Media, and reuses the same attachment across configured destinations. The image is referenced by social-specific metadata and never becomes the article's featured image. Existing live posters stay on `poster-v2` until regenerated.
 - Publishes to X and Instagram through separate platform workflows and records destination outcomes. Ambiguous publish outcomes require manual review before retry; they are not blindly repeated.
 - Uses a local monthly social-image estimate/budget, separate from Writer/Reviewer text spend. It is an application-side estimate, not a provider-enforced hard cap. X access/usage charges are separate.
 
