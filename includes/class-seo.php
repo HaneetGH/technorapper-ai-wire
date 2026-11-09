@@ -33,7 +33,7 @@ trait TechnoRapper_AI_Wire_SEO {
         if ($seo_title === '') {
             $seo_title = $title;
             if (strlen($seo_title) < 30) {
-                $seo_title = trim($seo_title . ' | TechnoRapper');
+                $seo_title = trim($seo_title . ' | ' . self::site_brand_name());
             }
             $seo_title = $this->truncate_seo($seo_title, 60);
         }
@@ -442,7 +442,7 @@ trait TechnoRapper_AI_Wire_SEO {
         foreach ($links as $link) {
             $items .= '<li><a href="' . esc_url($link['url']) . '">' . esc_html($link['anchor']) . '</a></li>';
         }
-        return rtrim($html) . '<h2>Related on TechnoRapper</h2><ul>' . $items . '</ul>';
+        return rtrim($html) . '<h2>Related on ' . esc_html(self::site_brand_name()) . '</h2><ul>' . $items . '</ul>';
     }
 
     private function normalize_takeaways($items, $lede, $keyphrase) {
@@ -494,7 +494,7 @@ trait TechnoRapper_AI_Wire_SEO {
         $fallbacks = array(
             array(
                 'question' => 'What is ' . $topic . '?',
-                'answer' => $this->truncate_seo($lede !== '' ? $lede : ($title . ' is the attributed development covered in this TechnoRapper article.'), 220),
+                'answer' => $this->truncate_seo($lede !== '' ? $lede : ($title . ' is the attributed development covered in this article.'), 220),
             ),
             array(
                 'question' => 'Why does ' . $topic . ' matter?',
@@ -502,7 +502,7 @@ trait TechnoRapper_AI_Wire_SEO {
             ),
             array(
                 'question' => 'What should readers watch next?',
-                'answer' => 'Watch official follow-up from the attributed source. TechnoRapper has not independently verified claims beyond that source.',
+                'answer' => 'Watch official follow-up from the attributed source. This site has not independently verified claims beyond that source.',
             ),
         );
         foreach ($fallbacks as $row) {

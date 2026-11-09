@@ -417,7 +417,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         }
         $lede = sanitize_text_field($rewrite['lede'] ?? '');
         $body = wp_kses_post($rewrite['body_html'] ?? '');
-        $content = '<p class="tr-ai-wire-byline"><em>By TechnoRapper editorial desk. This is an attributed analysis of the linked source, not original reporting or an independent test.</em></p>';
+        $content = '<p class="tr-ai-wire-byline"><em>By ' . esc_html(self::site_brand_name()) . ' editorial desk. This is an attributed analysis of the linked source, not original reporting or an independent test.</em></p>';
         $content .= ($lede ? '<p><strong>' . esc_html($lede) . '</strong></p>' : '') . $body;
         $content .= '<p class="tr-ai-wire-source"><strong>Source:</strong> <a href="' . esc_url($item['source_url'] ?? '') . '" rel="nofollow noopener" target="_blank">' . esc_html($item['feed_name'] ?? 'Source') . '</a></p>';
         $content .= '<p class="tr-ai-wire-method">How we used the source: facts, quotes, and numbers below come only from that link. We added structure, search intent, and reader context. We did not independently verify the reporting.</p>';
@@ -804,12 +804,12 @@ trait TechnoRapper_AI_Wire_Publisher {
                 'mainEntityOfPage' => get_permalink($post_id),
                 'author' => array(
                     '@type' => 'Organization',
-                    'name' => 'TechnoRapper editorial desk',
+                    'name' => self::site_brand_name() . ' editorial desk',
                     'url' => home_url('/'),
                 ),
                 'publisher' => array(
                     '@type' => 'Organization',
-                    'name' => 'TechnoRapper',
+                    'name' => self::site_brand_name(),
                     'url' => home_url('/'),
                 ),
             ),

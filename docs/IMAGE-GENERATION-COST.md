@@ -11,7 +11,7 @@ Verify current [OpenAI image pricing](https://developers.openai.com/api/docs/pri
 
 Article featured images remain the RSS item's own photo URL (enclosure, media thumbnail, Open Graph image, or `<img src>`). The article pipeline does not copy that file into the WordPress media library; items with no image URL are skipped. The Writer's `featured_image_alt` remains a caption, not a picture.
 
-When Social distribution is enabled and a configured account is connected, a copy pass writes a hook, on-image headline, captions and a visual brief from the published article. Then the image layer requests a portrait illustration, overlays that post info as a 4:5 TechnoRapper card, stores it as a social asset (never the article featured image), and reuses it for configured platforms. The returned image payload is saved locally; the plugin does not depend on a temporary remote image URL. Copy generation is a small Luna JSON call (~$0.001) and is billed against the Writer/Reviewer budget, not the social image budget.
+When Social distribution is enabled and a configured account is connected, a copy pass writes a hook, on-image headline, captions and a visual brief from the published article. Then the image layer requests a portrait illustration, overlays that post info as a 4:5 card branded with **this WordPress site’s name**, stores it as a social asset (never the article featured image), and reuses it for configured platforms. The returned image payload is saved locally; the plugin does not depend on a temporary remote image URL. Copy generation is a small Luna JSON call (~$0.001) and is billed against the Writer/Reviewer budget, not the social image budget.
 
 ## What you already pay (text)
 
@@ -57,7 +57,8 @@ Image generation dominates the text pipeline at higher volumes. For the configur
 - **Sideload / disk:** generated JPEGs must be stored in WordPress media. ~400 KB × 350 posts/day ≈ **4 GB/month**. Hosting/CDN is usually cents compared with the API.
 - **Prompt writing:** the implementation reuses the article title and excerpt (or a short body excerpt) for the image prompt; prompt tokens are included in the local per-image reserve. Negligible beside image output.
 - **Failed items:** only successfully published AI Wire articles enter the social queue; image API calls are therefore limited to eligible published articles.
-- **X API:** post and media upload charges are billed separately by X and are not included in the image budget. Check the X Developer Console for current per-use rates and actual usage.
+- **X API credits:** automated tweets and media uploads are billed by X, not OpenAI. A queue error of `credits depleted` means the X developer balance (or spending limit) is empty. That is not this image budget. Check the X Developer Console. Manual tweets on x.com do not spend API credits.
+- **Instagram:** Meta does not charge a per-post API fee. The plugin honors Meta’s rolling 24-hour publishing quota and defers when it is full. See [What it costs to run](PLATFORM-COSTS.md).
 
 ## Cheaper rollout options
 
@@ -70,4 +71,4 @@ Image generation dominates the text pipeline at higher volumes. For the configur
 
 For the default GPT Image 2 low portrait output, the image output is about **$0.005**; the implementation reserves **$0.006 per image** to include a small prompt allowance. The dashboard records a local estimate and stops at the separate image budget; check the OpenAI usage dashboard for the invoice amount. At 10 articles/day, this reserve is about **$1.80/month** before retries and output variation. Image and ambiguous platform failures go to review; Instagram quota-full items remain queued for a later check. No platform post is sent without its branded image.
 
-The image budget is a local estimate and not a provider-side hard limit. Check OpenAI usage, X charges, and the target WordPress host during the staging canary before raising either the daily article cap or image budget.
+The image budget is a local estimate and not a provider-side hard limit. Check OpenAI usage, X credits, Instagram quota, and the target WordPress host during the staging canary before raising either the daily article cap or image budget.

@@ -1,8 +1,10 @@
-# Social Distribution: Implementation Handoff
+# Social Distribution: Implementation Notes
 
-**Updated:** 8 November 2026
-**Repository:** [HaneetGH/technorapper-ai-wire](https://github.com/HaneetGH/technorapper-ai-wire)
-**Active PR:** this branch — social creative pipeline (hook graphic + captions + X/Instagram). See also [#39](https://github.com/HaneetGH/technorapper-ai-wire/pull/39).
+**Updated:** 9 November 2026  
+**Repository:** [HaneetGH/technorapper-ai-wire](https://github.com/HaneetGH/technorapper-ai-wire)  
+**Audience:** anyone installing or extending the open-source plugin. This is not an internal worktree log.
+
+Operator costs (OpenAI vs X credits vs Instagram quota): [What it costs to run](PLATFORM-COSTS.md).
 
 ## Flow diagrams
 
@@ -68,7 +70,7 @@ stateDiagram-v2
 
 ## Objective and agreed behavior
 
-Build an opt-in distribution feature for up to **10 unique AI Wire articles per UTC day** on X and Instagram. Use one branded image per article and reuse it on every configured destination. The existing article writer and independent reviewer remain the editorial source of truth; do not add a second article-writing agent or regenerate article copy for social.
+Build an opt-in distribution feature for up to **10 unique AI Wire articles per UTC day** on the operator's own X and Instagram accounts. Use one branded image per article (site name from WordPress) and reuse it on every configured destination. The existing article writer and independent reviewer remain the editorial source of truth; do not add a second article-writing agent or regenerate article copy for social.
 
 - The main **Social distribution** switch defaults to off. Off means no new social queue work; it does not unpublish or alter existing WordPress articles.
 - Enabling the switch queues a site-context job **only after** X and/or Instagram credentials are saved. With no social account connected, that job does not run and no OpenAI tokens are spent on context, captions, or social images. When onboarded, the job uses the same Writer model to read this WordPress site (name, tagline, desks, about page, recent stories) and stores a profile later social copy/graphics must follow. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (14 days, or if the site identity fingerprint changed).
@@ -88,7 +90,7 @@ Read these files first:
 
 1. [`README.md`](../README.md): current plugin configuration, publishing architecture, production runbook, and social feature description.
 2. [`docs/AI-AGENT-WORKFLOW-AUDIT.md`](AI-AGENT-WORKFLOW-AUDIT.md): writer/reviewer pipeline and publishing behavior.
-3. [`docs/IMAGE-GENERATION-COST.md`](IMAGE-GENERATION-COST.md): article image versus social image, current local estimate, and budget assumptions.
+3. [`docs/PLATFORM-COSTS.md`](PLATFORM-COSTS.md) and [`docs/IMAGE-GENERATION-COST.md`](IMAGE-GENERATION-COST.md): OpenAI vs X credits vs Instagram quota, plus image estimates.
 4. `includes/class-publisher.php`: AI Wire article creation and `_tr_ai_wire_queue_id` metadata.
 5. `includes/class-admin.php`, `includes/class-settings.php`, `includes/class-schema.php`, and `includes/class-plugin.php`: dashboard, settings sanitization, schema upgrade, and hooks.
 6. `includes/class-social.php`: credentials, queue worker, social copy, branded graphic, X and Instagram publishing, retries, and queue UI.
@@ -96,31 +98,19 @@ Read these files first:
 
 Current plugin compatibility declared in `technorapper-ai-wire.php`: WordPress 6.2+ and PHP 7.4+. The social image renderer additionally requires PHP GD. A TrueType font is optional; the renderer has a built-in GD font fallback.
 
-## Current PR and working-tree status
-
-- PR #39 is open and draft. Its GitHub head is `codex/opt-in-social-distribution` at `bd1b4ed` and currently contains only the opt-in setting/default changes.
-- The larger implementation and documentation changes are currently uncommitted in `/private/tmp/technorapper-ai-wire-pr`, on a detached checkout at that PR head. The local changes include a new `includes/class-social.php`, schema/hooks/settings/admin changes, cost and README updates, and schema expectation updates in `tests/test-production-safety.php`.
-- Keep working on **PR #39**. The user explicitly requires changes through a PR and does not want direct changes to `main`. Do not open a second PR for this feature.
-- Before committing, create a local branch tracking `origin/codex/opt-in-social-distribution`, inspect the diff, then commit and push the feature to update PR #39. Update the PR title/body so it describes the complete feature, not just the switch. Keep it draft until staging API credentials and a canary have been reviewed.
-- WordPress PHPUnit coverage now includes onboarding gates (no OpenAI/platform HTTP without X or Instagram), site-context storage, unique-article daily cap, switch-off pause, mocked X publish, ambiguous X → needs_review, Instagram quota deferral, and “social asset is not the featured image”. Staging canary with live tokens is still required before production enablement.
-- The project mirror's `sources/` folder is synced reference material and must remain read-only.
-
-## Current implementation shape in the worktree
-
-The local implementation is already intended to provide:
+## Current implementation
 
 - `social_distribution_enabled` default `0`, daily limit default `10`, image budget default `$5`, sanitized and clamped in settings.
-- Separate non-autoloaded credentials option for the X user token and Instagram token/account ID. Save/remove actions are capability-checked and nonce-protected; the secret is not redisplayed.
-- A new `tr_ai_wire_social` database table with a unique `(post_id, platform)` key, independent row states, attempts, image attachment ID, remote ID/URL, and error text. Schema version is bumped from 6 to 7.
-- `wp_after_insert_post` queueing for published AI Wire posts and a single-event WP-Cron consumer. The consumer processes one destination row per run under a worker lock to reduce daily-cap races and long requests.
-- One Luna JSON copy pass writes hook, on-image headline, captions and visual brief. GPT Image 2 low then generates a portrait photograph; GD overlays TechnoRapper branding, headline, supporting line and handle as a 1080×1350 JPEG using one of five hashed poster layouts so posts do not share one identical template. Same attachment is reused across platforms and is never the article featured image.
-- A separate local monthly social-image estimate at `$0.006` per image, with `$5` default budget. This is a conservative app-side estimate, not an OpenAI provider-side hard cap or invoice.
-- X v2 media initialize/append/finalize/status followed by post creation with media and a link. X media calls/posts incur X plan or usage charges outside the image budget.
-- Instagram Graph API container creation/status/publish, including optional carousel packing of 4–6 website articles into one Instagram post, or a collage of those posters. Daily settings choose how many carousel posts and how many independent posts. X uses the same mix, with up to 4 images on a carousel tweet. The article count then resets to zero.
-- An admin queue view, published links, error text, and two distinct retry paths: **Post existing graphic** after a token refresh, versus **Generate a new graphic and retry**. Late X/Instagram onboarding queues missing platform rows with the saved JPEG and does not call image generation.
-- README and image-cost documentation describing requirements, toggle, cost, and rollout.
+- Separate non-autoloaded credentials option for X Keys and tokens and Instagram token/account ID. Save/remove actions are capability-checked and nonce-protected; the secret is not redisplayed.
+- `tr_ai_wire_social` table with a unique `(post_id, platform)` key, independent row states, attempts, image attachment ID, remote ID/URL, and error text.
+- `wp_after_insert_post` queueing for published AI Wire posts and a WP-Cron consumer under a worker lock.
+- One copy pass writes hook, on-image headline, captions and visual brief. GPT Image 2 low generates a portrait; GD overlays this WordPress site's name, headline, supporting line and handle as a 1080×1350 JPEG using one of five hashed poster layouts. Same attachment is reused across platforms and is never the article featured image.
+- Local monthly social-image estimate at `$0.006` per image, with `$5` default budget. Separate from X API credits and from Instagram quota.
+- X v2 media initialize/append/finalize/status followed by post creation. X credits/plan charges are outside the image budget.
+- Instagram Graph API container creation/status/publish, including optional carousel packing of 4–6 website articles, or a collage of those posters.
+- Admin queue: **Post existing graphic**, **Generate a new graphic and retry**, and on published rows **Regenerate graphic and post again** (deletes the live post first).
 
-These are **worktree intentions, not verified release behavior**. Review the actual current diff before building on it.
+PHPUnit covers onboarding gates, unique-article daily cap, mocked X publish, Instagram quota deferral, and “social asset is not the featured image”. A staging canary with **your** tokens is still required before production enablement. Never commit those tokens.
 
 ## API and hosting constraints
 
@@ -129,7 +119,7 @@ These are **worktree intentions, not verified release behavior**. Review the act
 - Requires an X developer app with Read and Write access. Prefer the four Keys and tokens values (API Key, API Key Secret, Access Token, Access Token Secret) and sign requests with OAuth 1.0a. The Access Token + Secret popup is not an OAuth 2.0 Bearer token; pasting only that Access Token as Bearer is why posting fails. An OAuth 2.0 user token remains an optional fallback. Tokens can expire or be revoked.
 - Image publishing is a multi-step operation: initialize upload, append the file segment, finalize, wait for processing if required, then create the post with the media ID.
 - Current image implementation rejects empty or over-5-MB media. The [X chunked media guide](https://docs.x.com/x-api/media/quickstart/media-upload-chunked) documents the v2 flow and `tweet_image`'s typical 5 MB limit.
-- X API charges depend on current account plan and usage. Do not promise a fixed monthly X charge; verify in the developer console before enabling.
+- Automated posting spends **X developer credits** (or the current X plan’s write allowance). Do not promise a fixed monthly X charge. A queue error of `credits depleted` is X billing, not the OpenAI image budget. Verify in the X Developer Console before enabling.
 
 ### Instagram
 
@@ -144,7 +134,7 @@ These are **worktree intentions, not verified release behavior**. Review the act
 - WP-Cron is traffic-triggered. Configure a host-level cron for timely background delivery.
 - PHP GD is required for crop/branding; OpenAI image API access and a working site OpenAI key are required for image generation.
 - At 10 articles/day for 30 days, 300 generated images × `$0.006` local reserve = about **$1.80/month** before retries or provider pricing differences. `$5/month` is the default local image budget. The existing Writer/Reviewer text spend is separate and already exists.
-- Social image storage grows in WordPress Media. X usage charges are separate. Instagram's API has no per-post API line item in this estimate; Meta access/app eligibility and hosting still apply.
+- Social image storage grows in WordPress Media. X credits are separate. Instagram's API has no per-post Meta line item; Meta access/app eligibility, hosting, and the rolling publishing quota still apply.
 - Image output is an editorial illustration with a deterministic title card; do not ask the image model to render factual text, logos, or a photorealistic depiction of a named news event/person.
 
 ## Risks to inspect before release
@@ -160,15 +150,13 @@ These are **worktree intentions, not verified release behavior**. Review the act
 9. **Schema upgrade:** schema v7 must add the social table without clearing existing AI Wire queue/view data or scheduled feed jobs.
 10. **Retry and switch semantics:** turning the switch off pauses queued delivery; it should not delete history or affect already-published platform posts.
 
-## Recommended implementation and rollout phases
+## Recommended rollout
 
-### Phase 1 — Finish code review in PR #39
+### Phase 1 — Review the implementation
 
-- Inspect every changed file in the PR worktree, especially `includes/class-social.php` and schema/settings hooks.
-- Resolve any correctness or API mismatches. Verify X status polling and Instagram quota response parsing against current primary docs.
-- Confirm README and cost doc match the implementation (prompt source, image dimensions, defaults, extension requirements, API charges).
-- Review existing tests and add/update cases only within the task's test authorization. Useful coverage includes default-off, queue idempotency, UTC unique-article cap, disabled pause, quota deferral, ambiguous publish review, and schema preservation.
-- Commit and push changes to the existing PR branch; update PR #39 body to whole-feature scope. Do not push directly to `main` or create another PR.
+- Read `includes/class-social.php` and schema/settings hooks.
+- Confirm README and [PLATFORM-COSTS.md](PLATFORM-COSTS.md) match the implementation (prompt source, image dimensions, defaults, X credits, Instagram quota).
+- Useful tests: default-off, queue idempotency, UTC unique-article cap, disabled pause, quota deferral, ambiguous publish review, and schema preservation.
 
 ### Phase 2 — Staging setup
 
@@ -197,9 +185,5 @@ These are **worktree intentions, not verified release behavior**. Review the act
 - [ ] Success stores remote IDs/URLs. Platform/API errors are visible. Ambiguous outcomes require human verification before retry.
 - [ ] Switch off pauses queued items without deleting queue history or changing posts already live on the platforms.
 - [ ] Schema upgrade preserves all existing plugin data and feed cron behavior.
-- [ ] README, cost estimate, and staging checklist describe the actual behavior and explicitly call out WP-Cron, PHP GD, public media URLs, expiring tokens, and separate X charges.
-- [ ] Staging canary passes before the PR is marked ready or the feature is enabled on production.
-
-## Handoff instruction for the next AI
-
-Start by reading this file and the repository references above, then inspect the current PR worktree. Treat the existing writer/reviewer/publisher as complete and build only the distribution path after publication. Keep the master switch off by default, keep all code changes on PR #39, and report clearly which acceptance criteria are verified versus still pending. Do not claim a platform connection works until a real staging canary has passed.
+- [ ] README, cost estimate, and staging checklist describe the actual behavior and explicitly call out WP-Cron, PHP GD, public media URLs, expiring tokens, X credits, and Instagram quota.
+- [ ] Staging canary with **this operator's** accounts passes before the feature is enabled on production. Tokens stay off git.

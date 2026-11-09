@@ -1,9 +1,9 @@
 # AI Wire Social Distribution Architecture
 
-**Status:** Architecture and rollout reference for the opt-in social distribution feature. A first implementation is present on the social distribution branch ([PR #39](https://github.com/HaneetGH/technorapper-ai-wire/pull/39)); production validation and a live canary remain separate gates.  
-**Date:** 8 November 2026  
-**Scope:** Post-publication distribution to X and Instagram.  
-**Core boundary:** AI Wire owns editorial content and TechnoRapper article publishing. The Distribution Engine owns social copy, social assets and platform delivery. AI-generated images are only for social media; they are never required or generated for a TechnoRapper article.
+**Status:** Architecture and rollout reference for the opt-in social distribution feature. Production validation and a live canary remain separate gates for each operator.  
+**Date:** 9 November 2026  
+**Scope:** Post-publication distribution to X and Instagram on **any** WordPress site that installs the plugin.  
+**Core boundary:** AI Wire owns editorial content and WordPress article publishing. The Distribution Engine owns social copy, social assets and platform delivery. AI-generated images are only for social media; they are never required or generated for the WordPress article.
 
 ## Purpose and design principles
 
@@ -61,7 +61,7 @@ Suggested input:
 ```json
 {
   "post_id": 123,
-  "article_url": "https://technorapper.com/example/",
+  "article_url": "https://publisher.example/example/",
   "published_at": "2026-11-08T10:30:00Z",
   "title": "Published article title",
   "lede": "Article summary",
@@ -160,13 +160,13 @@ The adapters should implement a common interface such as `validate()`, `prepare_
 
 - Primary output is concise text with the canonical article URL. The Agent should leave headroom for URL length accounting and platform limits.
 - An image is optional and selected/generated as a social asset only. A distinct crop or card can be used; do not assume the Instagram file is the right X asset.
-- Record the returned post ID and URL. Handle access tier, rate-limit and API capability differences as configuration/runtime facts rather than hard-coded assumptions.
+- Record the returned post ID and URL. Handle access tier, rate-limit, **API credits**, and capability differences as configuration/runtime facts rather than hard-coded assumptions. Automated posting spends X developer credits; `credits depleted` is an X billing failure, not an OpenAI image-budget failure. See [What it costs to run](PLATFORM-COSTS.md).
 
 ### Instagram adapter
 
 - Prepare a platform-compliant image or carousel using current API requirements. The caption is separate from any on-image headline.
 - An article link is included as a clear call to action; use the configured profile/link strategy where captions do not create clickable links.
-- Record container/media and published post IDs and the returned permalink when available. Respect account type, publishing permissions, media processing status and API quotas.
+- Record container/media and published post IDs and the returned permalink when available. Respect account type, publishing permissions, media processing status and API quotas. Meta does not bill a per-post API fee; a full rolling quota should defer the item, not mark `credits depleted`.
 
 Platform requirements, pricing/access tiers and supported media formats can change. Verify current official platform documentation during implementation and keep adapter-specific limits configurable.
 
@@ -175,10 +175,10 @@ Platform requirements, pricing/access tiers and supported media formats can chan
 The Social Creative Engine chooses among these options per destination:
 
 1. **Source image:** Reuse an article/source image only when rights and attribution permit social reuse and the image meets platform dimensions and quality needs. Preserve attribution where required. Do not treat the availability of an image URL as proof of usage rights.
-2. **Branded template:** Render a TechnoRapper card with headline, small supporting text, category/brand elements and an article URL or call to action. This should be the predictable, low-cost default when no safe source visual fits.
+2. **Branded template:** Render a site-name card with headline, small supporting text, category/brand elements and an article URL or call to action. This should be the predictable, low-cost default when no safe source visual fits. The overlay uses the WordPress site name, not a hard-coded third-party brand.
 3. **AI-generated social image:** Optional fallback or deliberate creative choice, controlled by configuration, budget and editorial rules. Generate illustrative graphics rather than fabricated documentary-looking depictions of real events or people. Store provenance and prompt/model metadata. Review moderation, trademark, likeness and factual implications.
 
-**Hard invariant:** AI image generation is only invoked from the Social Creative Engine for an enabled social delivery (currently X or Instagram, when configured). It is never invoked by the AI Wire Writer, Reviewer, article publisher or WordPress featured-image flow. A TechnoRapper article does not depend on an AI-generated image to be drafted, reviewed or published. A social asset failure falls back to an allowed source image or branded template, or holds/skips that destination; it never blocks or changes the article.
+**Hard invariant:** AI image generation is only invoked from the Social Creative Engine for an enabled social delivery (currently X or Instagram, when configured). It is never invoked by the AI Wire Writer, Reviewer, article publisher or WordPress featured-image flow. A WordPress article does not depend on an AI-generated image to be drafted, reviewed or published. A social asset failure falls back to an allowed source image or branded template, or holds/skips that destination; it never blocks or changes the article.
 
 The plugin should enforce this in code boundaries and configuration: distinct social image setting/budget, distinct social asset storage/reference, no write into the article's featured-image field, and tests/monitoring that assert article jobs cannot invoke the image provider. A social asset may be stored in WordPress Media and referenced from social-specific post metadata; it must remain separate from the article's featured-image metadata. The distribution UI should label generated files as social assets.
 
@@ -259,7 +259,7 @@ Before production automation, verify that:
 
 - A draft, rejected article and failed editorial job never create social delivery jobs.
 - Publishing (including draft-to-publish transition) creates one distribution/version and at most one delivery per enabled destination.
-- Social-generation code cannot write an AI-generated file to a TechnoRapper post's featured-image field and cannot be invoked by article drafting/publishing.
+- Social-generation code cannot write an AI-generated file to a WordPress post's featured-image field and cannot be invoked by article drafting/publishing.
 - X and Instagram can succeed/fail/retry independently.
 - An ambiguous platform timeout does not produce a duplicate post on retry.
 - Daily/monthly social spend limits prevent new image requests once exhausted.
@@ -273,10 +273,10 @@ The current feature branch adds an opt-in post-publication path in `includes/cla
 
 - Defaults social distribution off; only eligible AI Wire-created posts published while enabled are queued, and configured destinations require saved credentials.
 - Stores one independent queue row per `(post_id, platform)` in the social table. A worker processes a bounded row under a lock; the daily cap counts unique articles, allowing another configured platform for an article already counted that day.
-- Generates one GPT Image 2 low portrait social image per article, overlays a TechnoRapper title card locally with GD using one of five per-article layout variants, and stores it in WordPress Media. Instagram can publish one article per post, or the worker can pack 4–6 website articles into one carousel or collage. Daily settings choose how many carousel posts and how many independent posts to send. X uses the same mix: a carousel is one tweet with up to 4 images. The image is referenced by social-specific metadata and never becomes the article's featured image. Existing live posters stay on `poster-v2` until regenerated.
+- Generates one GPT Image 2 low portrait social image per article, overlays this WordPress site's name locally with GD using one of five per-article layout variants, and stores it in WordPress Media. Instagram can publish one article per post, or the worker can pack 4–6 website articles into one carousel or collage. Daily settings choose how many carousel posts and how many independent posts to send. X uses the same mix: a carousel is one tweet with up to 4 images. The image is referenced by social-specific metadata and never becomes the article's featured image. Existing live posters stay on `poster-v2` until regenerated.
 - Publishes to X and Instagram through separate platform workflows and records destination outcomes. Ambiguous publish outcomes require manual review before retry; they are not blindly repeated.
-- Uses a local monthly social-image estimate/budget, separate from Writer/Reviewer text spend. It is an application-side estimate, not a provider-enforced hard cap. X access/usage charges are separate.
+- Uses a local monthly social-image estimate/budget, separate from Writer/Reviewer text spend. It is an application-side estimate, not a provider-enforced hard cap. X API credits and Instagram quota are separate; see [What it costs to run](PLATFORM-COSTS.md).
 
 The richer options in this architecture—such as choosing a rights-cleared source image, using a template without AI generation, and different per-platform creative—are design choices for future iterations, not descriptions of the first implementation. In the current version, image generation is part of the social delivery path when enabled; if its budget is zero or exhausted, the social image and delivery are held/skipped according to the implementation policy. This still does not affect article drafting, review, publication or featured images.
 
-For implementation decisions, current behavior, API/hosting constraints and the staging checklist, see the companion [Social Distribution Implementation Handoff](https://github.com/HaneetGH/technorapper-ai-wire/blob/codex/opt-in-social-distribution/docs/SOCIAL-DISTRIBUTION-HANDOFF.md) on [PR #39](https://github.com/HaneetGH/technorapper-ai-wire/pull/39). For the editorial workflow and code-level audit, see [AI Agent Workflow and Feature Audit](AI-AGENT-WORKFLOW-AUDIT.md); for image cost assumptions, see [Image generation cost estimate](IMAGE-GENERATION-COST.md).
+For implementation decisions, current behavior, API/hosting constraints and the staging checklist, see [Social Distribution Implementation Notes](SOCIAL-DISTRIBUTION-HANDOFF.md). For the editorial workflow and code-level audit, see [AI Agent Workflow and Feature Audit](AI-AGENT-WORKFLOW-AUDIT.md); for operator billing, see [What it costs to run](PLATFORM-COSTS.md).

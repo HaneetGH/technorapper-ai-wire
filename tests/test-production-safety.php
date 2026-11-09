@@ -1327,7 +1327,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->assertStringContainsString('slug', $prompt);
             $this->assertStringContainsString('internal', $prompt);
         }
-        $this->assertStringContainsString('India', $writer);
+        $this->assertStringContainsString('site\'s audience', $writer);
         $this->assertStringContainsString('search_intent', $writer);
         $this->assertStringContainsString('featured_image_alt', $writer);
         $this->assertStringContainsString('qualcomm-data-center-push', $writer);
@@ -1397,8 +1397,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $this->assertCount(1, $posts);
         $this->assertStringContainsString(get_permalink($related), $posts[0]->post_content);
-        $this->assertStringContainsString('Related on TechnoRapper', $posts[0]->post_content);
-        $this->assertStringContainsString('TechnoRapper editorial desk', $posts[0]->post_content);
+        $this->assertStringContainsString('Related on ' . get_bloginfo('name'), $posts[0]->post_content);
+        $this->assertStringContainsString(get_bloginfo('name') . ' editorial desk', $posts[0]->post_content);
         $this->assertStringContainsString('Key takeaways', $posts[0]->post_content);
         $this->assertStringContainsString('Frequently asked questions', $posts[0]->post_content);
         $this->assertNotEmpty(get_post_meta($posts[0]->ID, '_tr_ai_wire_faq', true));
@@ -2562,7 +2562,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertSame(3, $child_items);
         $this->assertSame(1, $parents);
-        $this->assertStringContainsString('Today on TechnoRapper', $pack_caption);
+        $this->assertStringContainsString('Today on ' . get_bloginfo('name'), $pack_caption);
         $this->assertStringContainsString('13-inch or 15-inch Air?', $pack_caption);
         $this->assertStringContainsString('When fake IDs become easier to scale', $pack_caption);
         $this->assertStringContainsString('When big tech becomes politics', $pack_caption);
@@ -2777,7 +2777,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotNull($tweet);
         $body = is_string($tweet['body']) ? json_decode($tweet['body'], true) : $tweet['body'];
         $this->assertCount(3, $body['media']['media_ids']);
-        $this->assertStringContainsString('Today on TechnoRapper', $body['text']);
+        $this->assertStringContainsString('Today on ' . get_bloginfo('name'), $body['text']);
         $auth = is_array($tweet['headers']) ? ($tweet['headers']['Authorization'] ?? '') : '';
         $this->assertStringStartsWith('Bearer ', $auth);
     }

@@ -1,8 +1,10 @@
 # Instagram Content Publishing Setup
 
-This guide is intentionally **generic for an open-source project**.
+This guide is intentionally **generic for an open-source project**. Any WordPress operator can use it.
 
-Each developer must connect the project to **their own Instagram Professional account**, using **their own Meta app, account ID, and access token**.
+Each operator must connect the plugin to **their own Instagram Professional account**, using **their own Meta app, account ID, and access token**.
+
+Instagram Graph publishing has **no Meta per-post fee**. The limit is a rolling 24-hour quota. That is not the same as **X API credits**. See [What it costs to run](PLATFORM-COSTS.md).
 
 > **Security rule:** This repository must never contain, document, or reuse credentials belonging to any developer or organization.
 
