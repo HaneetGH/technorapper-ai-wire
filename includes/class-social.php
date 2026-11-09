@@ -662,7 +662,7 @@ trait TechnoRapper_AI_Wire_Social {
         $system = 'You are the social desk for ' . $brand . '. Repackage an already-published article for X and Instagram. Do not write a new article. Use only supplied article fields plus the site context. Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. Return JSON only.';
         $user = 'Build one social package that matches this publisher\'s priorities. Principles to hit when the article supports them: hook that stops the scroll; curiosity; a feeling (stakes for a reader\'s phone/job/money, not melodrama); relatability; pattern interrupt; before/after contrast; a tiny story; useful value; a clear CTA to read the article; branding; shareability; saveability; cultural relevance when the source has it. '
             . 'on_image_headline: Instagram poster headline, 4–9 words, punchy, can include a number only if it is in the article. Written to sit in huge condensed type on a photo, so keep it short enough for 2–3 lines. on_image_subhead: one supporting line, max 10 words. '
-            . 'visual_brief: one photoreal cinematic news-poster scene that fills a vertical 4:5 frame (tight device close-up, crowded office from behind, factory, night city, server hall). Prefer dusk, night, or hard rim light. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
+            . 'visual_brief: describe only the photograph (tight device close-up, crowded office from behind, factory, night city, server hall). Prefer dusk, night, or hard rim light. Do not include the headline wording. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
             . 'x_text: hook plus one curiosity or value line; do not include the URL. instagram_caption: hook, 2–4 short lines of value/story, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags for this site, no spam. instagram_alt: factual description of the graphic. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
@@ -853,23 +853,20 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_image_prompt($post, $copy = array()) {
         $copy = is_array($copy) ? $copy : array();
-        $headline = trim((string) ($copy['on_image_headline'] ?? ($post instanceof WP_Post ? $post->post_title : '')));
         $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
         $profile = $this->site_context_profile();
-        $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this technology publisher';
         $revision = ($post instanceof WP_Post) ? (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_revision', true) : 0;
-        $prompt = 'Photoreal cinematic Instagram news poster still for ' . $brand . ', vertical 4:5, full-bleed photography filling the entire frame. '
-            . 'Shot like a viral tech-news graphic: one clear real-world scene, magazine lighting, shallow depth of field, high contrast, cinematic color grade. '
-            . 'The lower 40 percent of the frame must be naturally darker and uncluttered so large white headline type can sit there later. '
-            . 'Do not draw a card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup with text. '
+        $prompt = 'Untitled photoreal cinematic photograph, vertical 4:5, full-bleed, no graphic design. '
+            . 'One real-world scene, magazine lighting, shallow depth of field, high contrast. This is a photograph, not a poster, not a title card, not a thumbnail. '
+            . 'The lower half of the frame is naturally dark and empty of objects so we can overlay type later. '
+            . 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. '
+            . 'Do not draw a poster, card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup. '
             . 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. '
-            . 'No letters, numbers, captions, watermarks, or real brand logos in the artwork — headline type is overlaid later. '
             . 'Art direction: ' . $this->social_image_art_direction($profile) . '. '
-            . 'Subject: ' . $headline . '. '
-            . ($brief !== '' ? 'Scene: ' . $brief . '. ' : '')
-            . 'Make it stop a social-media scroll.';
+            . ($brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one clear technology-news photograph with a single subject. ')
+            . 'Make the picture stop a social-media scroll.';
         if ($revision > 0) {
-            $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story.';
+            $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story. Still no text in the photograph.';
         }
         return $prompt;
     }
@@ -979,8 +976,8 @@ trait TechnoRapper_AI_Wire_Social {
         $stroke = imagecolorallocate($canvas, 0, 0, 0);
         $font = $this->social_font_path();
         if ($font) {
-            imagettftext($canvas, 22, 0, 48, 70, $white, $font, 'TECHNORAPPER');
-            imagefilledrectangle($canvas, 48, 82, 236, 90, $cyan);
+            imagettftext($canvas, 28, 0, 48, 78, $white, $font, 'TECHNORAPPER');
+            imagefilledrectangle($canvas, 48, 90, 268, 98, $cyan);
         } else {
             imagestring($canvas, 5, 48, 28, 'TECHNORAPPER', $white);
         }
@@ -1063,17 +1060,19 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function draw_social_bottom_gradient($canvas, $width, $height) {
-        $start = (int) round($height * 0.40);
+        $start = (int) round($height * 0.36);
         $span = $height - $start;
         if ($span < 1) {
             return;
         }
         for ($i = 0; $i < $span; $i++) {
             $t = $i / $span;
-            $alpha = (int) max(0, min(127, 100 - (int) round($t * 100)));
+            $alpha = (int) max(0, min(127, (int) round(118 - ($t * 150))));
             $color = imagecolorallocatealpha($canvas, 0, 0, 0, $alpha);
             imageline($canvas, 0, $start + $i, $width, $start + $i, $color);
         }
+        $cover = imagecolorallocatealpha($canvas, 0, 0, 0, 18);
+        imagefilledrectangle($canvas, 0, (int) round($height * 0.62), $width, $height, $cover);
     }
 
     private function draw_social_centered_text($canvas, $text, $size, $y, $color, $font, $canvas_width, $stroke = null, $stroke_width = 0) {

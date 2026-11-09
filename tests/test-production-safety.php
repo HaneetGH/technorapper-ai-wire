@@ -2227,14 +2227,51 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1350, $info[1]);
         $dir = '/opt/cursor/artifacts';
         if (is_dir($dir) || mkdir($dir, 0755, true)) {
-            file_put_contents($dir . '/instagram_poster_type_short.jpg', $branded);
+            file_put_contents($dir . '/instagram_poster_overlay_short.jpg', $branded);
             $long = $this->invoke_private('brand_social_image', array($bytes, array(
                 'on_image_headline' => '6,300 tech jobs gone in 10 days. Is AI the biggest threat?',
                 'on_image_subhead' => 'Layoffs hit offices from coast to coast',
             )));
             if (is_string($long) && $long !== '') {
-                file_put_contents($dir . '/instagram_poster_type_long.jpg', $long);
+                file_put_contents($dir . '/instagram_poster_overlay_long.jpg', $long);
             }
+        }
+    }
+
+    public function test_branded_social_image_covers_tiny_baked_in_captions() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg') || !function_exists('imagecreatefromstring') || !function_exists('imagecolorsforindex')) {
+            $this->markTestSkipped('GD is required to cover baked-in image captions.');
+        }
+        $im = imagecreatetruecolor(1080, 1350);
+        for ($y = 0; $y < 1350; $y++) {
+            $t = $y / 1350;
+            $color = imagecolorallocate($im, (int) (20 + (1 - $t) * 40), (int) (18 + (1 - $t) * 24), (int) (22 + $t * 18));
+            imageline($im, 0, $y, 1079, $y, $color);
+        }
+        $white = imagecolorallocate($im, 230, 230, 230);
+        imagestring($im, 2, 430, 1080, 'WHEN FAKE IDS BECOME', $white);
+        imagestring($im, 2, 440, 1100, 'EASIER TO SCALE', $white);
+        imagestring($im, 1, 400, 1130, 'OnlyFake raises questions about digital', $white);
+        ob_start();
+        imagejpeg($im, null, 88);
+        $raw = ob_get_clean();
+        imagedestroy($im);
+        $branded = $this->invoke_private('brand_social_image', array($raw, array(
+            'on_image_headline' => 'When fake IDs become easier to scale',
+            'on_image_subhead' => 'OnlyFake raises hard questions',
+        )));
+        $this->assertTrue(is_string($branded) && $branded !== '');
+        $result = imagecreatefromstring($branded);
+        $this->assertNotFalse($result);
+        $sample = imagecolorat($result, 36, 1240);
+        $rgb = imagecolorsforindex($result, $sample);
+        imagedestroy($result);
+        $this->assertLessThan(40, (int) $rgb['red']);
+        $this->assertLessThan(40, (int) $rgb['green']);
+        $this->assertLessThan(40, (int) $rgb['blue']);
+        $dir = '/opt/cursor/artifacts';
+        if (is_dir($dir) || mkdir($dir, 0755, true)) {
+            file_put_contents($dir . '/instagram_poster_covers_model_text.jpg', $branded);
         }
     }
 
@@ -2944,14 +2981,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'on_image_headline' => '6,300 tech jobs gone',
             'visual_brief' => 'Symbolic chip glow',
         )));
-        $this->assertStringContainsString('Photoreal cinematic Instagram news poster', $prompt);
+        $this->assertStringContainsString('Untitled photoreal cinematic photograph', $prompt);
         $this->assertStringContainsString('vertical 4:5', $prompt);
-        $this->assertStringContainsString('Do not draw a card', $prompt);
-        $this->assertStringContainsString('6,300 tech jobs gone', $prompt);
+        $this->assertStringContainsString('not a poster', $prompt);
+        $this->assertStringContainsString('Do not render any text', $prompt);
         $this->assertStringContainsString('cinematic photoreal news photography', $prompt);
+        $this->assertStringNotContainsString('6,300 tech jobs gone', $prompt);
         $this->assertStringNotContainsString('Navy cyan magazine art', $prompt);
         $this->assertStringNotContainsString('Symbolic chip glow', $prompt);
         $this->assertStringNotContainsString('regeneration attempt', $prompt);
+        $this->assertStringNotContainsString('Subject:', $prompt);
     }
 
     public function test_social_image_prompt_adds_variation_after_regenerate() {
@@ -3132,8 +3171,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame((int) $published['image_attachment_id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
         $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
         $this->assertCount(1, $prompts);
-        $this->assertStringContainsString('Photoreal cinematic Instagram news poster', $prompts[0]);
+        $this->assertStringContainsString('Untitled photoreal cinematic photograph', $prompts[0]);
+        $this->assertStringContainsString('Do not render any text', $prompts[0]);
         $this->assertStringContainsString('regeneration attempt 1', $prompts[0]);
         $this->assertStringContainsString('Photoreal phone on a dark desk at dusk', $prompts[0]);
+        $this->assertStringNotContainsString('Faster phone chip', $prompts[0]);
     }
 }
