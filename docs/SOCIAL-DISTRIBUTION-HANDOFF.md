@@ -61,7 +61,9 @@ stateDiagram-v2
     processing --> published: platform returns media/post ID
     processing --> queued: image lock busy or Instagram quota full
     processing --> needs_review: API error, stale worker, or outcome may be ambiguous
-    needs_review --> queued: admin confirms post is not already live and retries
+    needs_review --> queued: Post existing graphic (token refresh; reuse JPEG)
+    needs_review --> queued: Generate a new graphic and retry
+    [*] --> queued: late platform onboard copies saved graphic onto missing rows
 ```
 
 ## Objective and agreed behavior
@@ -72,11 +74,11 @@ Build an opt-in distribution feature for up to **10 unique AI Wire articles per 
 - Enabling the switch queues a site-context job **only after** X and/or Instagram credentials are saved. With no social account connected, that job does not run and no OpenAI tokens are spent on context, captions, or social images. When onboarded, the job uses the same Writer model to read this WordPress site (name, tagline, desks, about page, recent stories) and stores a profile later social copy/graphics must follow. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (14 days, or if the site identity fingerprint changed).
 - Credentials are configured before enabling. Only destinations with complete credentials receive a queue row.
 - Only AI Wire-created WordPress `post` articles are eligible. Their `_tr_ai_wire_queue_id` post meta is the source marker.
-- Only articles that publish after the switch is enabled are queued. Drafts can be queued if they are later published while the switch is on. Do not backfill old posts in this first version.
+- Only articles that publish after the switch is enabled are queued for platforms already connected. Drafts can be queued if they are later published while the switch is on. Connecting a second platform later (for example Instagram first, then X) backfills existing social articles onto that platform using the saved graphic — no new image generation. Saving credentials does this automatically; the queue also has **Queue saved graphics for X/Instagram**.
 - Turning the switch off pauses pending delivery. Turning it on resumes pending rows.
 - Daily limit is **unique articles**, so an article's X and Instagram rows both count as one article. The setting is clamped to 1–10.
 - One social copy package (hook, on-image headline, captions) is generated from the published article, then one branded graphic with that post info on the image. The graphic is cached and reused across both networks. If the image budget is zero or exhausted, do not generate a social image or publish a post without the branded graphic.
-- Do not automatically repeat a platform publish when the response is ambiguous. Mark it for review; require an administrator to confirm the post is not already live before retrying.
+- Do not automatically repeat a platform publish when the response is ambiguous. Mark it for review; require an administrator to confirm the post is not already live before retrying. Token-refresh retries (**Post existing graphic**) reuse the saved JPEG. **Generate a new graphic and retry** is a separate action and is the only path that spends image budget again.
 
 ## Repository context
 
@@ -114,8 +116,8 @@ The local implementation is already intended to provide:
 - One Luna JSON copy pass writes hook, on-image headline, captions and visual brief. GPT Image 2 low then generates a portrait photograph; GD overlays TechnoRapper branding, headline, supporting line and handle as a 1080×1350 JPEG using one of five hashed poster layouts so posts do not share one identical template. Same attachment is reused across platforms and is never the article featured image.
 - A separate local monthly social-image estimate at `$0.006` per image, with `$5` default budget. This is a conservative app-side estimate, not an OpenAI provider-side hard cap or invoice.
 - X v2 media initialize/append/finalize/status followed by post creation with media and a link. X media calls/posts incur X plan or usage charges outside the image budget.
-- Instagram Graph API container creation/status/publish; an account quota lookup; the public Media Library URL; caption and alt text.
-- An admin queue view, published links, error text, and manual retry flow requiring an explicit “not already published” confirmation.
+- Instagram Graph API container creation/status/publish, including optional carousel packing of 4–6 website articles into one Instagram post, or a collage of those posters. Daily settings choose how many carousel posts and how many independent posts. X uses the same mix, with up to 4 images on a carousel tweet. The article count then resets to zero.
+- An admin queue view, published links, error text, and two distinct retry paths: **Post existing graphic** after a token refresh, versus **Generate a new graphic and retry**. Late X/Instagram onboarding queues missing platform rows with the saved JPEG and does not call image generation.
 - README and image-cost documentation describing requirements, toggle, cost, and rollout.
 
 These are **worktree intentions, not verified release behavior**. Review the actual current diff before building on it.
@@ -124,7 +126,7 @@ These are **worktree intentions, not verified release behavior**. Review the act
 
 ### X
 
-- Requires an X developer app and a user access token for the account that will publish, with post and media write access. Tokens can expire or be revoked.
+- Requires an X developer app with Read and Write access. Prefer the four Keys and tokens values (API Key, API Key Secret, Access Token, Access Token Secret) and sign requests with OAuth 1.0a. The Access Token + Secret popup is not an OAuth 2.0 Bearer token; pasting only that Access Token as Bearer is why posting fails. An OAuth 2.0 user token remains an optional fallback. Tokens can expire or be revoked.
 - Image publishing is a multi-step operation: initialize upload, append the file segment, finalize, wait for processing if required, then create the post with the media ID.
 - Current image implementation rejects empty or over-5-MB media. The [X chunked media guide](https://docs.x.com/x-api/media/quickstart/media-upload-chunked) documents the v2 flow and `tweet_image`'s typical 5 MB limit.
 - X API charges depend on current account plan and usage. Do not promise a fixed monthly X charge; verify in the developer console before enabling.

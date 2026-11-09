@@ -16,7 +16,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Social;
 
-    const VERSION = '0.2.41';
+    const VERSION = '0.2.43';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -24,6 +24,8 @@ final class TechnoRapper_AI_Wire {
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const SOCIAL_CREDENTIALS_OPTION = 'tr_ai_wire_social_credentials';
     const SOCIAL_CONTEXT_OPTION = 'tr_ai_wire_site_context';
+    const SOCIAL_BATCH_OPTION = 'tr_ai_wire_social_batch';
+    const SOCIAL_MIX_OPTION = 'tr_ai_wire_social_mix';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
     const SOCIAL_CRON_HOOK = 'tr_ai_wire_process_social_queue';
     const SOCIAL_CONTEXT_CRON_HOOK = 'tr_ai_wire_learn_site_context';
@@ -67,6 +69,7 @@ final class TechnoRapper_AI_Wire {
         add_action('init', array($this, 'maybe_requeue_instagram_quota_field_failures'), 12);
         add_action('admin_post_tr_ai_wire_save_social_credentials', array($this, 'save_social_credentials'));
         add_action('admin_post_tr_ai_wire_retry_social_item', array($this, 'retry_social_item'));
+        add_action('admin_post_tr_ai_wire_queue_missing_platform', array($this, 'queue_missing_platform_request'));
         add_action('admin_post_tr_ai_wire_refresh_site_context', array($this, 'refresh_site_context_request'));
         add_action('admin_post_tr_ai_wire_run_now', array($this, 'run_now'));
         add_action('admin_post_tr_ai_wire_run_social_queue', array($this, 'run_social_queue_now'));

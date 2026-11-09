@@ -20,6 +20,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('pre_http_request');
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_BATCH_OPTION);
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_MIX_OPTION . '_' . gmdate('Ymd'));
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
         delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
         delete_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'));
@@ -43,6 +45,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         );
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
             'social_distribution_enabled' => 1,
+            'social_x_enabled' => in_array('x', $platforms, true) ? 1 : 0,
+            'social_instagram_enabled' => in_array('instagram', $platforms, true) ? 1 : 0,
         )), false);
         update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, $credentials, false);
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
@@ -527,6 +531,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK));
         $this->assertSame(0, (int) $settings['social_distribution_enabled']);
+        $this->assertSame(0, (int) $settings['social_x_enabled']);
+        $this->assertSame(0, (int) $settings['social_instagram_enabled']);
+        $this->assertSame('single', $settings['social_post_format']);
+        $this->assertSame(5, $settings['social_slide_count']);
+        $this->assertSame(2, $settings['social_carousel_daily_limit']);
+        $this->assertSame(3, $settings['social_single_daily_limit']);
+        $this->assertArrayNotHasKey('social_pack_wait_minutes', $settings);
     }
 
     public function test_activation_keeps_a_fresh_install_paused() {
@@ -2394,6 +2405,464 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertGreaterThan(30, (int) $rail['blue']);
     }
 
+    public function test_social_post_format_settings_are_sanitized() {
+        $clean = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 4,
+        ));
+        $this->assertSame('carousel', $clean['social_post_format']);
+        $this->assertSame(4, $clean['social_slide_count']);
+        $five = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'collage',
+            'social_slide_count' => 5,
+        ));
+        $this->assertSame(5, $five['social_slide_count']);
+        $six = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 6,
+        ));
+        $this->assertSame(6, $six['social_slide_count']);
+        $rejected = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'album',
+            'social_slide_count' => 9,
+        ));
+        $this->assertSame('single', $rejected['social_post_format']);
+        $this->assertSame(5, $rejected['social_slide_count']);
+        $this->assertSame(1, $this->invoke_private('social_slide_count', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(4, $this->invoke_private('social_slide_count', array($clean)));
+        $this->assertArrayNotHasKey('social_pack_wait_minutes', $clean);
+        $mix = $this->plugin->sanitize_settings(array(
+            'social_carousel_daily_limit' => 2,
+            'social_single_daily_limit' => 4,
+        ));
+        $this->assertSame(2, $mix['social_carousel_daily_limit']);
+        $this->assertSame(4, $mix['social_single_daily_limit']);
+        $clamped = $this->plugin->sanitize_settings(array(
+            'social_carousel_daily_limit' => 99,
+            'social_single_daily_limit' => 99,
+        ));
+        $this->assertSame(10, $clamped['social_carousel_daily_limit']);
+        $this->assertSame(10, $clamped['social_single_daily_limit']);
+    }
+
+    public function test_instagram_job_packs_three_website_articles_into_one_carousel() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 3,
+            'social_daily_limit' => 10,
+        )), false);
+        $headlines = array(
+            '13-inch or 15-inch Air?',
+            'When fake IDs become easier to scale',
+            'When big tech becomes politics',
+        );
+        $post_ids = array();
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        foreach ($headlines as $index => $headline) {
+            $attachment_id = $this->create_social_jpeg_attachment();
+            if ($attachment_id < 1) {
+                $this->markTestSkipped('GD and uploads are required to pack Instagram carousels.');
+            }
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => $headline,
+                'post_excerpt' => 'Story ' . (string) ($index + 1),
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 80 + $index);
+            update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+            update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+                'hook' => $headline,
+                'on_image_headline' => $headline,
+                'x' => $headline,
+                'instagram' => $headline,
+                'instagram_alt' => $headline,
+                'cta' => 'Read the full stories on TechnoRapper',
+                'hashtags' => array('tech'),
+            )));
+            $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+                'post_id' => $post_id,
+                'platform' => 'instagram',
+                'status' => 'queued',
+                'image_attachment_id' => $attachment_id,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ));
+            $post_ids[] = $post_id;
+        }
+        $requests = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$requests) {
+            $requests[] = array('url' => (string) $url, 'body' => $args['body'] ?? array());
+            if (strpos((string) $url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Pack should reuse cached copy and graphics.');
+            }
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-pack-media'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
+                $id = (!empty($body['media_type']) && $body['media_type'] === 'CAROUSEL') ? 'ig-pack-parent' : ('ig-pack-child-' . (string) count($requests));
+                return $this->mock_http_ok(array('id' => $id));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/pack/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $rows = $wpdb->get_results("SELECT post_id, status, remote_id, remote_url FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' ORDER BY post_id ASC", ARRAY_A);
+        $this->assertCount(3, $rows);
+        foreach ($rows as $row) {
+            $this->assertSame('published', $row['status']);
+            $this->assertSame('ig-pack-media', $row['remote_id']);
+            $this->assertSame('https://www.instagram.com/p/pack/', $row['remote_url']);
+        }
+        $child_items = 0;
+        $parents = 0;
+        $pack_caption = '';
+        foreach ($requests as $request) {
+            if (strpos($request['url'], '/media_publish') !== false || strpos($request['url'], '/media') === false) {
+                continue;
+            }
+            $body = is_array($request['body']) ? $request['body'] : array();
+            if (($body['is_carousel_item'] ?? '') === 'true') {
+                $child_items++;
+            }
+            if (($body['media_type'] ?? '') === 'CAROUSEL') {
+                $parents++;
+                $pack_caption = (string) ($body['caption'] ?? '');
+            }
+        }
+        $this->assertSame(3, $child_items);
+        $this->assertSame(1, $parents);
+        $this->assertStringContainsString('Today on TechnoRapper', $pack_caption);
+        $this->assertStringContainsString('13-inch or 15-inch Air?', $pack_caption);
+        $this->assertStringContainsString('When fake IDs become easier to scale', $pack_caption);
+        $this->assertStringContainsString('When big tech becomes politics', $pack_caption);
+        $this->assertSame(3, $this->invoke_private('social_published_today'));
+    }
+
+    public function test_social_batch_holds_until_configured_count_then_resets() {
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 5,
+            'social_daily_limit' => 10,
+        )), false);
+        global $wpdb;
+        $post_ids = array();
+        for ($i = 1; $i <= 4; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Waiting story ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 90 + $i);
+            $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+            $post_ids[] = $post_id;
+        }
+        $this->assertSame(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+        $this->assertCount(4, $this->invoke_private('social_batch_ids'));
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
+
+        $fifth = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Waiting story 5',
+        ));
+        update_post_meta($fifth, '_tr_ai_wire_queue_id', 95);
+        $this->plugin->queue_social_for_post($fifth, get_post($fifth), false, null);
+        $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $queued = $wpdb->get_results("SELECT post_id, platform, status FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC, platform ASC", ARRAY_A);
+        $this->assertCount(10, $queued);
+        foreach (array_merge($post_ids, array($fifth)) as $post_id) {
+            $platforms = $wpdb->get_col($wpdb->prepare("SELECT platform FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d ORDER BY platform ASC", $post_id));
+            $this->assertSame(array('instagram', 'x'), $platforms);
+        }
+        $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
+
+        $sixth = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Waiting story 6',
+        ));
+        update_post_meta($sixth, '_tr_ai_wire_queue_id', 96);
+        $this->plugin->queue_social_for_post($sixth, get_post($sixth), false, null);
+        $this->assertSame(array($sixth), $this->invoke_private('social_batch_ids'));
+        $this->assertSame(10, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+    }
+
+    public function test_process_now_flushes_an_incomplete_social_batch() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 5,
+        )), false);
+        $post_ids = array();
+        for ($i = 1; $i <= 2; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Leftover story ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 80 + $i);
+            $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+            $post_ids[] = $post_id;
+        }
+        global $wpdb;
+        $this->assertSame(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+        $this->assertCount(2, $this->invoke_private('social_batch_ids'));
+        $this->assertTrue($this->invoke_private('flush_social_batch', array(true)));
+        $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $this->assertSame(2, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' AND status = 'queued'"));
+        $this->assertSame($post_ids, array_map('intval', $wpdb->get_col("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC")));
+    }
+
+    public function test_independent_posts_start_after_the_daily_carousel_quota() {
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 5,
+            'social_carousel_daily_limit' => 1,
+            'social_single_daily_limit' => 3,
+            'social_daily_limit' => 10,
+        )), false);
+        global $wpdb;
+        for ($i = 1; $i <= 5; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Carousel story ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 70 + $i);
+            $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        }
+        $this->assertSame(10, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+        $this->assertSame('pack', (string) get_post_meta((int) $wpdb->get_var("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC LIMIT 1"), '_tr_ai_wire_social_mode', true));
+        $this->assertSame(array('carousel' => 1, 'single' => 0), $this->invoke_private('social_mix_today'));
+
+        $independent = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Independent story',
+        ));
+        update_post_meta($independent, '_tr_ai_wire_queue_id', 76);
+        $this->plugin->queue_social_for_post($independent, get_post($independent), false, null);
+        $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $this->assertSame('single', (string) get_post_meta($independent, '_tr_ai_wire_social_mode', true));
+        $this->assertSame(12, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+        $this->assertSame(array('carousel' => 1, 'single' => 1), $this->invoke_private('social_mix_today'));
+    }
+
+    public function test_x_keys_and_tokens_sign_oauth1_requests() {
+        $credentials = array(
+            'x_api_key' => 'api-key',
+            'x_api_secret' => 'api-secret',
+            'x_access_token' => 'access-token',
+            'x_access_token_secret' => 'access-secret',
+            'x_user_access_token' => '',
+        );
+        $this->assertTrue(TechnoRapper_AI_Wire::x_oauth1_ready($credentials));
+        $header = $this->invoke_private('x_authorization_header', array('POST', 'https://api.x.com/2/tweets', $credentials));
+        $this->assertStringStartsWith('OAuth ', $header);
+        $this->assertStringContainsString('oauth_consumer_key=', $header);
+        $this->assertStringNotContainsString('Bearer ', $header);
+        $bearer = $this->invoke_private('x_authorization_header', array('POST', 'https://api.x.com/2/tweets', array(
+            'x_user_access_token' => 'oauth2-user-token',
+        )));
+        $this->assertSame('Bearer oauth2-user-token', $bearer);
+        $error = $this->invoke_private('publish_x_post', array('Hello', '/tmp/missing.jpg', array(
+            'x_user_access_token' => '996743132-NotABearerToken',
+        )));
+        $this->assertTrue(is_wp_error($error));
+        $this->assertSame('tr_ai_wire_x_oauth1_incomplete', $error->get_error_code());
+    }
+
+    public function test_x_pack_posts_one_tweet_with_multiple_images() {
+        $this->onboard_social(array('x'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 5,
+            'social_daily_limit' => 10,
+        )), false);
+        $headlines = array('13-inch or 15-inch Air?', 'When fake IDs become easier to scale', 'When big tech becomes politics');
+        $post_ids = array();
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        foreach ($headlines as $index => $headline) {
+            $attachment_id = $this->create_social_jpeg_attachment();
+            if ($attachment_id < 1) {
+                $this->markTestSkipped('GD and uploads are required to pack X carousels.');
+            }
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => $headline,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 60 + $index);
+            update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+            update_post_meta($post_id, '_tr_ai_wire_social_mode', 'pack');
+            update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+                'hook' => $headline,
+                'on_image_headline' => $headline,
+                'x' => $headline,
+                'instagram' => $headline,
+                'instagram_alt' => $headline,
+            )));
+            $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+                'post_id' => $post_id,
+                'platform' => 'x',
+                'status' => 'queued',
+                'image_attachment_id' => $attachment_id,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ));
+            $post_ids[] = $post_id;
+        }
+        $requests = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$requests) {
+            $requests[] = array('url' => (string) $url, 'headers' => $args['headers'] ?? array(), 'body' => $args['body'] ?? array());
+            if (strpos((string) $url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Pack should reuse cached copy and graphics.');
+            }
+            if (strpos((string) $url, 'media/upload/initialize') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'x-media-' . (string) count($requests))));
+            }
+            if (strpos((string) $url, '/append') !== false || strpos((string) $url, '/finalize') !== false) {
+                return $this->mock_http_ok(array('data' => array('processing_info' => array('state' => 'succeeded'))));
+            }
+            if (strpos((string) $url, 'api.x.com/2/tweets') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'x-pack-tweet')));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $rows = $wpdb->get_results("SELECT post_id, status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'x' ORDER BY post_id ASC", ARRAY_A);
+        $this->assertCount(3, $rows);
+        foreach ($rows as $row) {
+            $this->assertSame('published', $row['status']);
+            $this->assertSame('x-pack-tweet', $row['remote_id']);
+        }
+        $tweet = null;
+        $uploads = 0;
+        foreach ($requests as $request) {
+            if (strpos($request['url'], 'media/upload/initialize') !== false) {
+                $uploads++;
+            }
+            if (strpos($request['url'], 'api.x.com/2/tweets') !== false) {
+                $tweet = $request;
+            }
+        }
+        $this->assertSame(3, $uploads);
+        $this->assertNotNull($tweet);
+        $body = is_string($tweet['body']) ? json_decode($tweet['body'], true) : $tweet['body'];
+        $this->assertCount(3, $body['media']['media_ids']);
+        $this->assertStringContainsString('Today on TechnoRapper', $body['text']);
+        $auth = is_array($tweet['headers']) ? ($tweet['headers']['Authorization'] ?? '') : '';
+        $this->assertStringStartsWith('Bearer ', $auth);
+    }
+
+    public function test_social_collage_is_one_instagram_portrait() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render a collage.');
+        }
+        $tiles = array();
+        foreach (array('bottom-center', 'left-stack', 'kicker-bar', 'cover-top') as $variant) {
+            $im = imagecreatetruecolor(1080, 1350);
+            imagefilledrectangle($im, 0, 0, 1079, 1349, imagecolorallocate($im, 20, 18, 22));
+            ob_start();
+            imagejpeg($im, null, 80);
+            $bytes = ob_get_clean();
+            imagedestroy($im);
+            $branded = $this->invoke_private('brand_social_image', array($bytes, array(
+                '_poster_variant' => $variant,
+                'on_image_headline' => 'When fake IDs become easier to scale',
+                'on_image_subhead' => 'OnlyFake raises questions',
+            )));
+            $this->assertTrue(is_string($branded) && $branded !== '');
+            $tiles[] = $branded;
+        }
+        $collage = $this->invoke_private('compose_social_collage', array($tiles));
+        $this->assertTrue(is_string($collage) && $collage !== '');
+        $info = getimagesizefromstring($collage);
+        $this->assertSame(1080, $info[0]);
+        $this->assertSame(1350, $info[1]);
+        $five = $this->invoke_private('social_collage_cells', array(5, 1080, 1350, 8));
+        $this->assertCount(5, $five);
+        $six = $this->invoke_private('social_collage_cells', array(6, 1080, 1350, 8));
+        $this->assertCount(6, $six);
+        $this->assertSame(1080, $six[2]['x'] + $six[2]['w']);
+        $this->assertSame(1350, $six[5]['y'] + $six[5]['h']);
+        $dir = '/opt/cursor/artifacts';
+        if (is_dir($dir) || mkdir($dir, 0755, true)) {
+            file_put_contents($dir . '/instagram_poster_collage.jpg', $collage);
+        }
+    }
+
+    public function test_instagram_carousel_publishes_child_containers_then_parent() {
+        $this->onboard_social(array('instagram'));
+        $requests = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$requests) {
+            $requests[] = array('url' => (string) $url, 'body' => $args['body'] ?? array());
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-carousel-media'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
+                $id = (!empty($body['media_type']) && $body['media_type'] === 'CAROUSEL') ? 'ig-carousel-parent' : ('ig-child-' . (string) (count($requests)));
+                return $this->mock_http_ok(array('id' => $id));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/carousel/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $result = $this->invoke_private('publish_instagram_post', array(
+            'Caption for the carousel',
+            'Alt text',
+            array(
+                'https://example.org/slide-1.jpg',
+                'https://example.org/slide-2.jpg',
+                'https://example.org/slide-3.jpg',
+            ),
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION),
+        ));
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame('ig-carousel-media', $result['id']);
+        $this->assertSame('https://www.instagram.com/p/carousel/', $result['url']);
+        $child_items = 0;
+        $parents = 0;
+        foreach ($requests as $request) {
+            if (strpos($request['url'], '/media_publish') !== false || strpos($request['url'], '/media') === false) {
+                continue;
+            }
+            $body = is_array($request['body']) ? $request['body'] : array();
+            if (($body['is_carousel_item'] ?? '') === 'true') {
+                $child_items++;
+                $this->assertArrayNotHasKey('caption', $body);
+            }
+            if (($body['media_type'] ?? '') === 'CAROUSEL') {
+                $parents++;
+                $this->assertSame('Caption for the carousel', $body['caption'] ?? '');
+                $this->assertStringContainsString(',', (string) ($body['children'] ?? ''));
+            }
+        }
+        $this->assertSame(3, $child_items);
+        $this->assertSame(1, $parents);
+    }
+
     public function test_site_context_needs_refresh_until_a_successful_read() {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         $this->assertTrue($this->plugin->site_context_needs_refresh());
@@ -2546,6 +3015,103 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array('instagram', 'x'), $platforms);
     }
 
+    public function test_platform_toggle_can_disable_x_while_instagram_stays_on() {
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_x_enabled' => 0,
+            'social_instagram_enabled' => 1,
+            'social_distribution_enabled' => 1,
+        )), false);
+        $this->assertSame(array('instagram'), TechnoRapper_AI_Wire::connected_social_platforms());
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Instagram only after X off'));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 88);
+        $this->plugin->queue_social_for_post($post_id, get_post($post_id), false, null);
+        global $wpdb;
+        $platforms = $wpdb->get_col($wpdb->prepare("SELECT platform FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d ORDER BY platform", $post_id));
+        $this->assertSame(array('instagram'), $platforms);
+    }
+
+    public function test_queue_page_offers_saved_graphics_backfill_when_x_is_on() {
+        $this->onboard_social(array('x', 'instagram'));
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to reuse a saved social graphic.');
+        }
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Instagram only so far',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 52);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $this->assertSame(1, $this->invoke_private('missing_platform_post_count', array('x')));
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Queue saved graphics for X', $html);
+        $this->assertStringContainsString('already went to another network', $html);
+        $this->assertStringContainsString('does not generate a new image', $html);
+        $this->assertStringNotContainsString('Queue saved graphics for Instagram', $html);
+    }
+
+    public function test_social_settings_live_on_their_own_page() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        ob_start();
+        $this->plugin->settings_page();
+        $main = ob_get_clean();
+        $this->assertStringNotContainsString('Onboard social publishing', $main);
+        $this->assertStringNotContainsString('name="social[x_api_key]"', $main);
+        $this->assertStringContainsString('Social settings', $main);
+        ob_start();
+        $this->plugin->social_settings_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Post to X', $html);
+        $this->assertStringContainsString('Post to Instagram', $html);
+        $this->assertStringContainsString('API Key Secret', $html);
+        $this->assertStringContainsString('Access Token Secret', $html);
+        $this->assertStringContainsString('Bearer is not needed', $html);
+        $this->assertStringNotContainsString('access token saved', strtolower($html));
+        $this->assertSame(
+            'Keys and tokens saved (API Key, API Key Secret, Access Token, Access Token Secret). Bearer is not needed.',
+            TechnoRapper_AI_Wire::x_status_text(array(
+                'x_api_key' => 'k',
+                'x_api_secret' => 's',
+                'x_access_token' => 't',
+                'x_access_token_secret' => 'ts',
+            ))
+        );
+        $this->assertStringContainsString('not connected — save', TechnoRapper_AI_Wire::x_status_text(array()));
+    }
+
+    public function test_main_settings_save_does_not_clear_social_toggles() {
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_x_enabled' => 1,
+            'social_instagram_enabled' => 0,
+            'social_daily_limit' => 7,
+        )), false);
+        $clean = $this->plugin->sanitize_settings(array(
+            'auto_publish' => 1,
+            'max_posts_per_day' => 10,
+        ));
+        $this->assertSame(1, (int) $clean['social_x_enabled']);
+        $this->assertSame(0, (int) $clean['social_instagram_enabled']);
+        $this->assertSame(1, (int) $clean['social_distribution_enabled']);
+        $this->assertSame(7, (int) $clean['social_daily_limit']);
+    }
+
     public function test_switch_off_pauses_queued_delivery() {
         $this->onboard_social(array('x'));
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Paused post'));
@@ -2578,6 +3144,125 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1, $this->invoke_private('social_published_today'));
         $this->assertTrue($this->invoke_private('social_post_published_today', array($first)));
         $this->assertFalse($this->invoke_private('social_post_published_today', array($second)));
+    }
+
+    public function test_failed_x_still_runs_when_instagram_already_filled_the_daily_cap() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required for the social publish path.');
+        }
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 1,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'IG ok X retry',
+            'post_excerpt' => 'Finish X after the article cap.',
+        ));
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to finish X after Instagram.');
+        }
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 41);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'IG ok X retry',
+            'on_image_headline' => 'IG ok X retry',
+            'x' => 'IG ok X retry',
+            'instagram' => 'IG ok X retry',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => 'ig-already',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'queued',
+            'image_attachment_id' => $attachment_id,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $other = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'New article behind the cap'));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $other,
+            'platform' => 'x',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Should reuse the cached graphic.');
+            }
+            if (strpos((string) $url, 'graph.facebook.com') !== false) {
+                return new WP_Error('blocked', 'Instagram already published.');
+            }
+            if (strpos((string) $url, 'media/upload/initialize') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'x-media-cap')));
+            }
+            if (strpos((string) $url, '/append') !== false || strpos((string) $url, '/finalize') !== false) {
+                return $this->mock_http_ok(array('data' => array('processing_info' => array('state' => 'succeeded'))));
+            }
+            if (strpos((string) $url, 'api.x.com/2/tweets') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'x-after-cap')));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $x = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('published', $x['status']);
+        $this->assertSame('x-after-cap', $x['remote_id']);
+        $blocked = $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $other));
+        $this->assertSame('queued', $blocked);
+        $this->assertSame(1, $this->invoke_private('social_published_today'));
+    }
+
+    public function test_retry_kicks_failed_x_even_when_the_worker_was_deferred_until_tomorrow() {
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 1,
+        )), false);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Retry X after cap'));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'needs_review',
+            'error_text' => 'X rejected the token.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $x_id = (int) $wpdb->insert_id;
+        $tomorrow = strtotime('tomorrow 00:20:00 UTC');
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        wp_schedule_single_event($tomorrow, TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($x_id, false)));
+        $next = wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        $this->assertNotFalse($next);
+        $this->assertLessThan($tomorrow, $next);
+        $this->assertLessThanOrEqual(time() + 20, $next);
+        $status = $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $x_id));
+        $this->assertSame('queued', $status);
     }
 
     public function test_site_context_job_stores_profile_from_openai() {
@@ -2819,11 +3504,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('When Big Tech Becomes Politics', $html);
         $this->assertStringContainsString('branded social card', $html);
         $this->assertStringContainsString('Instagram could not read the daily publishing quota', $html);
-        $this->assertStringContainsString('Retry this platform post', $html);
+        $this->assertStringContainsString('Post existing graphic to Instagram', $html);
+        $this->assertStringContainsString('Generate a new graphic and retry', $html);
         $this->assertStringContainsString('name="regenerate_image"', $html);
         $this->assertStringContainsString('Process queued social posts now', $html);
         $this->assertStringContainsString('tr_ai_wire_run_social_queue', $html);
-        $this->assertStringContainsString('Generate a new graphic (uses image budget)', $html);
         $this->assertStringNotContainsString('Regenerate graphic and post again', $html);
     }
 
@@ -3088,7 +3773,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     public function test_instagram_oauth_notice_is_hidden_when_already_connected() {
         $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
         wp_set_current_user($admin_id);
-        $_GET['page'] = 'tr-ai-wire';
+        $_GET['page'] = 'tr-ai-wire-social-settings';
         update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
             'x_user_access_token' => '',
             'instagram_user_access_token' => 'page-token',
@@ -3106,7 +3791,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     public function test_instagram_oauth_notice_explains_optional_connect_when_disconnected() {
         $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
         wp_set_current_user($admin_id);
-        $_GET['page'] = 'tr-ai-wire';
+        $_GET['page'] = 'tr-ai-wire-social-settings';
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
         ob_start();
         TechnoRapper_AI_Wire_Instagram_OAuth::admin_notice();
@@ -3233,6 +3918,86 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('ig-media-reuse', $published['remote_id']);
         $this->assertSame($attachment_id, (int) $published['image_attachment_id']);
         $this->assertSame(0, $image_calls);
+    }
+
+    public function test_late_x_onboard_queues_saved_graphics_without_generating() {
+        $this->onboard_social(array('instagram'));
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to reuse a saved social graphic.');
+        }
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Already on Instagram',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 51);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Already on Instagram',
+            'on_image_headline' => 'Already on Instagram',
+            'x' => 'Already on Instagram',
+            'instagram' => 'Already on Instagram',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => 'ig-live',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $this->assertSame(0, $this->invoke_private('missing_platform_post_count', array('x')));
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array_merge(
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array()),
+            array(
+                'x_api_key' => 'api-key',
+                'x_api_secret' => 'api-secret',
+                'x_access_token' => 'access-token',
+                'x_access_token_secret' => 'access-secret',
+            )
+        ), false);
+        $this->assertSame(0, $this->invoke_private('missing_platform_post_count', array('x')));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_x_enabled' => 1,
+            'social_instagram_enabled' => 1,
+            'social_distribution_enabled' => 1,
+        )), false);
+        $this->assertSame(0, $this->invoke_private('enqueue_missing_platform_posts', array('x')));
+        $x = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('queued', $x['status']);
+        $this->assertSame($attachment_id, (int) $x['image_attachment_id']);
+
+        $image_calls = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$image_calls) {
+            if (strpos((string) $url, 'api.openai.com/v1/images/generations') !== false) {
+                $image_calls++;
+                return new WP_Error('blocked', 'Saved graphic should be reused for late X onboarding.');
+            }
+            if (strpos((string) $url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Copy is already cached.');
+            }
+            if (strpos((string) $url, 'media/upload/initialize') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'x-media-late')));
+            }
+            if (strpos((string) $url, '/append') !== false || strpos((string) $url, '/finalize') !== false) {
+                return $this->mock_http_ok(array('data' => array('processing_info' => array('state' => 'succeeded'))));
+            }
+            if (strpos((string) $url, 'api.x.com/2/tweets') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'x-late-onboard')));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $published = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id, image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('published', $published['status']);
+        $this->assertSame('x-late-onboard', $published['remote_id']);
+        $this->assertSame($attachment_id, (int) $published['image_attachment_id']);
+        $this->assertSame(0, $image_calls);
+        $this->assertSame(0, $this->invoke_private('enqueue_missing_platform_posts', array('x')));
     }
 
     public function test_social_retry_with_regenerate_builds_a_new_image() {
@@ -3392,11 +4157,14 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ob_start();
         $this->plugin->social_distribution_page();
         $html = ob_get_clean();
-        $this->assertStringContainsString('Old graphic — retry rebuilds this', $html);
-        $this->assertStringContainsString('name="regenerate_image" value="1" checked', $html);
+        $this->assertStringContainsString('Saved graphic — retry posts this file unless you generate a new one', $html);
+        $this->assertStringContainsString('Post existing graphic to Instagram', $html);
+        $this->assertStringContainsString('Generate a new graphic and retry', $html);
+        $this->assertStringContainsString('name="regenerate_image" value="1"', $html);
+        $this->assertStringNotContainsString('name="regenerate_image" value="1" checked', $html);
     }
 
-    public function test_social_retry_rebuilds_stale_graphic_without_checkbox() {
+    public function test_social_retry_reuses_existing_graphic_unless_regenerate_is_requested() {
         $attachment_id = $this->create_social_jpeg_attachment();
         if ($attachment_id < 1) {
             $this->markTestSkipped('GD and uploads are required for the social retry path.');
@@ -3405,8 +4173,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->onboard_social(array('instagram'));
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
-            'post_title' => 'Stale graphic',
-            'post_excerpt' => 'Old tiny captions should not be reused.',
+            'post_title' => 'Saved graphic',
+            'post_excerpt' => 'Token retry should reuse the file.',
         ));
         update_post_meta($post_id, '_tr_ai_wire_queue_id', 43);
         update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
@@ -3429,11 +4197,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $id = (int) $wpdb->insert_id;
         $this->assertTrue($this->invoke_private('requeue_social_item', array($id, false)));
-        $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
-        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
+        $this->assertSame($attachment_id, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
         $this->assertSame('queued', $row['status']);
-        $this->assertSame(0, (int) $row['image_attachment_id']);
+        $this->assertSame($attachment_id, (int) $row['image_attachment_id']);
     }
 
     public function test_social_published_repost_regenerates_and_publishes_again() {
