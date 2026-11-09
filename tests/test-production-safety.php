@@ -2702,6 +2702,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Instagram could not read the daily publishing quota', $html);
         $this->assertStringContainsString('Retry this platform post', $html);
         $this->assertStringContainsString('name="regenerate_image"', $html);
+        $this->assertStringContainsString('Process queued social posts now', $html);
+        $this->assertStringContainsString('tr_ai_wire_run_social_queue', $html);
         $this->assertStringContainsString('Generate a new graphic (uses image budget)', $html);
         $this->assertStringNotContainsString('Regenerate graphic and post again', $html);
     }
@@ -3475,5 +3477,72 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $published = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
         $this->assertSame('published', $published['status']);
         $this->assertSame('ig-media-cap-repost', $published['remote_id']);
+    }
+
+    public function test_raising_social_daily_limit_kicks_queued_work() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 1,
+        )), false);
+        $done = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Already posted today'));
+        $waiting = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Stuck behind the cap'));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $done,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $waiting,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $tomorrow = strtotime('tomorrow 00:20:00 UTC');
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        wp_schedule_single_event($tomorrow, TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        $this->assertSame($tomorrow, wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
+        $old = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 1,
+        ));
+        $new = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 6,
+        ));
+        $this->plugin->settings_updated($old, $new);
+        $next = wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        $this->assertNotFalse($next);
+        $this->assertLessThan($tomorrow, $next);
+        $this->assertLessThanOrEqual(time() + 20, $next);
+    }
+
+    public function test_social_queue_page_warns_when_worker_is_deferred() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Waiting on cron'));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        wp_schedule_single_event(time() + DAY_IN_SECONDS, TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Queued posts are waiting until', $html);
+        $this->assertStringContainsString('Process queued social posts now', $html);
+        $this->assertStringContainsString('Raising the daily limit does not start them by itself', $html);
     }
 }
