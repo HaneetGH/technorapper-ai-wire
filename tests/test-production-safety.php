@@ -2961,6 +2961,37 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('1784147964186186', $copy);
     }
 
+    public function test_instagram_oauth_notice_is_hidden_when_already_connected() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $_GET['page'] = 'tr-ai-wire';
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
+            'x_user_access_token' => '',
+            'instagram_user_access_token' => 'page-token',
+            'instagram_user_id' => '1784147964186186',
+        ), false);
+        ob_start();
+        TechnoRapper_AI_Wire_Instagram_OAuth::admin_notice();
+        $html = ob_get_clean();
+        unset($_GET['page']);
+        $this->assertStringNotContainsString('before connecting', $html);
+        $this->assertStringNotContainsString('Unified Login Configuration ID', $html);
+        $this->assertStringNotContainsString('wp-config.php', $html);
+    }
+
+    public function test_instagram_oauth_notice_explains_optional_connect_when_disconnected() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $_GET['page'] = 'tr-ai-wire';
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
+        ob_start();
+        TechnoRapper_AI_Wire_Instagram_OAuth::admin_notice();
+        $html = ob_get_clean();
+        unset($_GET['page']);
+        $this->assertStringContainsString('optional one-click Connect button', $html);
+        $this->assertStringContainsString('paste a Facebook Page access token', $html);
+    }
+
     public function test_social_image_prompt_is_photoreal_news_poster() {
         update_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION, array(
             'status' => 'ready',
