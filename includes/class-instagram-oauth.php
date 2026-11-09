@@ -112,7 +112,7 @@ final class TechnoRapper_AI_Wire_Instagram_OAuth {
         }
 
         wp_safe_redirect(add_query_arg(array(
-            'page' => 'tr-ai-wire',
+            'page' => 'tr-ai-wire-social-settings',
             'instagram_connected' => '1',
             'instagram_username' => rawurlencode((string) ($account['username'] ?? '')),
         ), admin_url('admin.php')));
@@ -232,7 +232,7 @@ final class TechnoRapper_AI_Wire_Instagram_OAuth {
 
         if (!self::configured()) {
             if (!$connected) {
-                echo '<div class="notice notice-info"><p><strong>Instagram publishing:</strong> paste a Facebook Page access token and Professional account ID in Card 2. The Meta App ID / Unified Login values in <code>wp-config.php</code> are only needed for the optional one-click Connect button, not for publishing.</p></div>';
+                echo '<div class="notice notice-info"><p><strong>Instagram publishing:</strong> paste a Facebook Page access token and Professional account ID on Social settings. The Meta App ID / Unified Login values in <code>wp-config.php</code> are only needed for the optional one-click Connect button, not for publishing.</p></div>';
             }
             return;
         }
@@ -242,19 +242,19 @@ final class TechnoRapper_AI_Wire_Instagram_OAuth {
             $url = wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_instagram_oauth_start'), 'tr_ai_wire_instagram_oauth_start');
             echo '<a class="button button-primary" href="' . esc_url($url) . '">Connect @techno.rapper with Meta</a>';
         } else {
-            echo '<a href="' . esc_url(admin_url('admin.php?page=tr-ai-wire-social')) . '">Open Social distribution queue</a>';
+            echo '<a href="' . esc_url(admin_url('admin.php?page=tr-ai-wire-social')) . '">Open Social queue</a>';
         }
         echo '</p></div>';
     }
 
     private static function is_ai_wire_page() {
         $page = sanitize_key(wp_unslash($_GET['page'] ?? ''));
-        return in_array($page, array('tr-ai-wire', 'tr-ai-wire-social'), true);
+        return in_array($page, array('tr-ai-wire-social-settings', 'tr-ai-wire-social'), true);
     }
 
     private static function redirect_with_error($message) {
         $url = add_query_arg(array(
-            'page' => 'tr-ai-wire',
+            'page' => 'tr-ai-wire-social-settings',
             'instagram_connect_error' => rawurlencode(sanitize_text_field($message)),
         ), admin_url('admin.php'));
         wp_safe_redirect($url);

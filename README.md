@@ -121,13 +121,13 @@ The API-key section has its own save action so the secret is not included in the
 
 ## Automatic social distribution
 
-Social distribution is **off by default**. Onboard it in this order:
+Social publishing lives on **Social settings**, not the main AI Wire page. It is **off by default**. Onboard it in this order:
 
-1. In **Onboard social publishing**, save an X user access token and/or an Instagram Page access token plus Instagram Professional account ID. One platform is enough.
-2. Enable **Social distribution** in the settings form.
+1. Open **Social settings**. Save X Keys and tokens (API Key, API Key Secret, Access Token, Access Token Secret) and/or an Instagram Page token plus Professional account ID.
+2. Turn **Post to X** and/or **Post to Instagram** on. Tokens can stay saved while a network is off. Each network has its own switch.
 3. Only then does a background job read this WordPress site (name, tagline, desks, recent stories) so later social copy stays in the site's context. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (after 14 days, or if the site identity changed).
 
-If no social account is connected, the context job does not run and no OpenAI tokens are spent on social copy or images. PHPUnit covers that gate, plus mocked X publish, Instagram quota deferral, and the rule that a social graphic is never the article featured image. A live staging canary is still required before production enablement. Only AI Wire articles that publish after the switch is enabled are queued. Turning the switch off pauses queued delivery; it does not delete queue history or remove posts already published on a social network.
+If no social account is connected, the context job does not run and no OpenAI tokens are spent on social copy or images. PHPUnit covers that gate, plus mocked X publish, Instagram quota deferral, and the rule that a social graphic is never the article featured image. A live staging canary is still required before production enablement. Only AI Wire articles that publish after a network is turned on are queued. Turning a network off pauses that destination; it does not delete queue history or remove posts already published. Delivery status is on **Social queue**.
 
 - X requires the four values from the developer portal Keys and tokens page: API Key, API Key Secret, Access Token, and Access Token Secret, with Read and Write app access. That Access Token + Secret popup is OAuth 1.0a, not an OAuth 2.0 Bearer token. The worker uploads the branded graphic and posts a hook-led caption plus the article URL. A carousel becomes one tweet with up to 4 images.
 - Instagram requires a Professional Business or Creator account and a Meta Unified Login configuration containing the Instagram publishing permissions. The OAuth callback stores the resulting system-user token and Instagram Professional account ID in a non-autoloaded WordPress option. Meta fetches the generated image from the public WordPress Media URL. The worker reads the account's quota from Meta, creates a media container, waits for image processing, then publishes it. If the account is at its rolling quota, the item stays queued and is checked again later.

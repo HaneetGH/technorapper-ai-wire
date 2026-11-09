@@ -50,22 +50,69 @@ trait TechnoRapper_AI_Wire_Social {
             && !empty($credentials['x_access_token_secret']);
     }
 
-    public static function connected_social_platforms($credentials = null) {
+    public static function x_oauth1_field_labels() {
+        return array(
+            'x_api_key' => 'API Key',
+            'x_api_secret' => 'API Key Secret',
+            'x_access_token' => 'Access Token',
+            'x_access_token_secret' => 'Access Token Secret',
+        );
+    }
+
+    public static function x_oauth1_missing_labels($credentials = null) {
         if (!is_array($credentials)) {
             $credentials = wp_parse_args(get_option(self::SOCIAL_CREDENTIALS_OPTION, array()), self::social_credential_defaults());
         }
+        $missing = array();
+        foreach (self::x_oauth1_field_labels() as $key => $label) {
+            if (empty($credentials[$key])) {
+                $missing[] = $label;
+            }
+        }
+        return $missing;
+    }
+
+    public static function x_status_text($credentials = null) {
+        if (!is_array($credentials)) {
+            $credentials = wp_parse_args(get_option(self::SOCIAL_CREDENTIALS_OPTION, array()), self::social_credential_defaults());
+        }
+        if (self::x_oauth1_ready($credentials)) {
+            return 'Keys and tokens saved (API Key, API Key Secret, Access Token, Access Token Secret). Bearer is not needed.';
+        }
+        $missing = self::x_oauth1_missing_labels($credentials);
+        if (!empty($credentials['x_user_access_token'])) {
+            return 'Only a Bearer token is saved. X needs the four Keys and tokens values, not Bearer. Missing: ' . implode(', ', $missing) . '.';
+        }
+        return $missing ? 'not connected — save ' . implode(', ', $missing) : 'not connected';
+    }
+
+    public static function instagram_credentials_ready($credentials = null) {
+        if (!is_array($credentials)) {
+            $credentials = wp_parse_args(get_option(self::SOCIAL_CREDENTIALS_OPTION, array()), self::social_credential_defaults());
+        }
+        return !empty($credentials['instagram_user_access_token']) && !empty($credentials['instagram_user_id']);
+    }
+
+    public static function connected_social_platforms($credentials = null, $settings = null) {
+        if (!is_array($credentials)) {
+            $credentials = wp_parse_args(get_option(self::SOCIAL_CREDENTIALS_OPTION, array()), self::social_credential_defaults());
+        }
+        if (!is_array($settings)) {
+            $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        }
+        $settings = self::apply_social_platform_toggles($settings);
         $platforms = array();
-        if (self::x_credentials_ready($credentials)) {
+        if (self::x_credentials_ready($credentials) && !empty($settings['social_x_enabled'])) {
             $platforms[] = 'x';
         }
-        if (!empty($credentials['instagram_user_access_token']) && !empty($credentials['instagram_user_id'])) {
+        if (self::instagram_credentials_ready($credentials) && !empty($settings['social_instagram_enabled'])) {
             $platforms[] = 'instagram';
         }
         return $platforms;
     }
 
-    public static function social_credentials_connected($credentials = null) {
-        return (bool) self::connected_social_platforms($credentials);
+    public static function social_credentials_connected($credentials = null, $settings = null) {
+        return (bool) self::connected_social_platforms($credentials, $settings);
     }
 
     public function social_distribution_ready() {
@@ -112,17 +159,27 @@ trait TechnoRapper_AI_Wire_Social {
         } else {
             update_option(self::SOCIAL_CREDENTIALS_OPTION, $next, false);
         }
-        $now_connected = self::social_credentials_connected($next);
-        $was_connected = self::social_credentials_connected($current);
+        $old_settings = $this->settings();
+        $settings_input = isset($_POST[self::OPTION]) && is_array($_POST[self::OPTION]) ? wp_unslash($_POST[self::OPTION]) : array();
+        $new_settings = array_merge($old_settings, $this->sanitize_social_settings_from_input($settings_input, $old_settings, self::defaults()));
+        update_option(self::OPTION, $new_settings, false);
+        $this->settings_updated($old_settings, $new_settings);
+        $now_connected = self::social_credentials_connected($next, $new_settings);
+        $was_connected = self::social_credentials_connected($current, $old_settings);
         $backfill = 0;
         $backfill_platform = '';
-        if (!empty($this->settings()['social_distribution_enabled']) && $now_connected) {
-            if (!self::x_credentials_ready($current) && self::x_credentials_ready($next)) {
+        if (!empty($new_settings['social_distribution_enabled']) && $now_connected) {
+            if (
+                !empty($new_settings['social_x_enabled'])
+                && !self::x_credentials_ready($current)
+                && self::x_credentials_ready($next)
+            ) {
                 $backfill = $this->enqueue_missing_platform_posts('x');
                 $backfill_platform = 'x';
             } elseif (
-                (empty($current['instagram_user_access_token']) || empty($current['instagram_user_id']))
-                && !empty($next['instagram_user_access_token']) && !empty($next['instagram_user_id'])
+                !empty($new_settings['social_instagram_enabled'])
+                && !self::instagram_credentials_ready($current)
+                && self::instagram_credentials_ready($next)
             ) {
                 $backfill = $this->enqueue_missing_platform_posts('instagram');
                 $backfill_platform = 'instagram';
@@ -131,7 +188,7 @@ trait TechnoRapper_AI_Wire_Social {
             $this->queue_site_context_job(!$was_connected);
         }
         wp_safe_redirect(add_query_arg(array(
-            'page' => 'tr-ai-wire',
+            'page' => 'tr-ai-wire-social-settings',
             'social_credentials_saved' => '1',
             'social_backfill' => (int) $backfill,
             'social_backfill_platform' => $backfill_platform,
@@ -220,9 +277,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         check_admin_referer('tr_ai_wire_refresh_site_context');
         $queued = $this->queue_site_context_job(true);
-        $page = sanitize_key($_POST['redirect_page'] ?? 'tr-ai-wire');
-        if ($page !== 'tr-ai-wire-social') {
-            $page = 'tr-ai-wire';
+        $page = sanitize_key($_POST['redirect_page'] ?? 'tr-ai-wire-social-settings');
+        if (!in_array($page, array('tr-ai-wire-social-settings', 'tr-ai-wire-social'), true)) {
+            $page = 'tr-ai-wire-social-settings';
         }
         $url = admin_url('admin.php?page=' . $page);
         if ($queued) {
@@ -385,11 +442,11 @@ trait TechnoRapper_AI_Wire_Social {
         if (!$connected) {
             $state = 'idle';
             $title = 'Connect X or Instagram first';
-            $body = 'Onboard a social account in the connections card. Until then we do not run the site-context job and we do not spend OpenAI tokens on social copy or images.';
+            $body = 'Onboard X or Instagram on Social settings. Until then we do not run the site-context job and we do not spend OpenAI tokens on social copy or images.';
         } elseif (!$enabled) {
             $state = 'idle';
-            $title = 'We will understand this site when social is on';
-            $body = 'Turn on Social distribution and AI Wire will read this WordPress site — name, desks, recent stories, and voice — so every later social post stays in your context.';
+            $title = 'We will understand this site when a network is on';
+            $body = 'Turn on Post to X and/or Post to Instagram on Social settings and AI Wire will read this WordPress site — name, desks, recent stories, and voice — so every later social post stays in your context.';
         } elseif ($status === 'queued' || $status === 'running' || ($enabled && empty($record['completed_at']) && $status !== 'error')) {
             $state = 'learning';
             $title = 'We are understanding you';
@@ -429,7 +486,7 @@ trait TechnoRapper_AI_Wire_Social {
         );
     }
 
-    public function render_site_context_card($redirect_page = 'tr-ai-wire') {
+    public function render_site_context_card($redirect_page = 'tr-ai-wire-social-settings') {
         $view = $this->site_context_view();
         $colors = array(
             'idle' => '#646970',
@@ -529,9 +586,13 @@ trait TechnoRapper_AI_Wire_Social {
         $wpdb->query("UPDATE {$table} SET status = 'needs_review', error_text = 'The worker stopped before recording an outcome. Check the platform before retrying.' WHERE status = 'processing' AND updated_at < UTC_TIMESTAMP() - INTERVAL 15 MINUTE");
         $this->requeue_instagram_prepublish_quota_failures();
         $rows = $this->social_queued_rows_for_worker($limit);
+        $active = self::connected_social_platforms($credentials, $settings);
         foreach ((array) $rows as $row) {
-            if (empty($this->settings()['social_distribution_enabled'])) {
+            if (empty($this->settings()['social_distribution_enabled']) || !$active) {
                 break;
+            }
+            if (!in_array((string) ($row['platform'] ?? ''), $active, true)) {
+                continue;
             }
             if ($this->social_published_today() >= $limit && !$this->social_post_published_today((int) $row['post_id']) && !$this->social_item_is_manual_repost($row)) {
                 $tomorrow = strtotime('tomorrow 00:20:00 UTC');
@@ -594,12 +655,17 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_queued_rows_for_worker($limit) {
         global $wpdb;
         $table = $this->social_table();
-        if ($this->social_published_today() < $limit) {
-            return $wpdb->get_results("SELECT * FROM {$table} WHERE status = 'queued' ORDER BY created_at ASC LIMIT 25", ARRAY_A);
+        $platform_sql = $this->social_active_platform_sql();
+        if ($platform_sql === '') {
+            return array();
         }
+        if ($this->social_published_today() < $limit) {
+            return $wpdb->get_results("SELECT * FROM {$table} WHERE status = 'queued'{$platform_sql} ORDER BY created_at ASC LIMIT 25", ARRAY_A);
+        }
+        $queued_platform_sql = $this->social_active_platform_sql('q');
         return $wpdb->get_results(
             "SELECT q.* FROM {$table} q
-             WHERE q.status = 'queued'
+             WHERE q.status = 'queued'{$queued_platform_sql}
                AND (
                     EXISTS (
                         SELECT 1 FROM {$table} p
@@ -617,6 +683,20 @@ trait TechnoRapper_AI_Wire_Social {
              LIMIT 25",
             ARRAY_A
         );
+    }
+
+    private function social_active_platform_sql($alias = '') {
+        $platforms = self::connected_social_platforms();
+        if (!$platforms) {
+            return '';
+        }
+        global $wpdb;
+        $parts = array();
+        foreach ($platforms as $platform) {
+            $parts[] = $wpdb->prepare('%s', $platform);
+        }
+        $column = $alias !== '' ? $alias . '.platform' : 'platform';
+        return ' AND ' . $column . ' IN (' . implode(',', $parts) . ')';
     }
 
     private function social_finishable_queued_count() {
@@ -2826,7 +2906,7 @@ trait TechnoRapper_AI_Wire_Social {
         $image_usage = (float) get_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'), 0);
         ?>
         <div class="wrap">
-            <h1>Social distribution</h1>
+            <h1>Social queue</h1>
             <style>
                 .tr-ai-wire-social-item{display:flex;gap:16px;align-items:flex-start;max-width:920px;}
                 .tr-ai-wire-social-preview{flex:0 0 132px;}
@@ -2862,7 +2942,7 @@ trait TechnoRapper_AI_Wire_Social {
             $failed_ig = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->social_table()} WHERE platform = 'instagram' AND status = 'needs_review'");
             $finishable_now = $this->social_finishable_queued_count();
             ?>
-            <p>Automatic distribution is <?php echo !empty($settings['social_distribution_enabled']) ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Turning it off pauses queued work. Today: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?> articles distributed. That cap counts unique website articles, not each platform. A successful Instagram post does not spend an extra slot for X on the same article.</p>
+            <p>X posting is <?php echo !empty($settings['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · Instagram posting is <?php echo !empty($settings['social_instagram_enabled']) && TechnoRapper_AI_Wire::instagram_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Change that on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Today: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?> articles distributed. That cap counts unique website articles, not each platform. A successful Instagram post does not spend an extra slot for X on the same article.</p>
             <?php if ($published_today >= $daily_limit && ($failed_x > 0 || $failed_ig > 0 || $finishable_now > 0)) : ?>
             <div class="notice notice-warning"><p><?php
             $parts = array();
@@ -2899,7 +2979,7 @@ trait TechnoRapper_AI_Wire_Social {
                     echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' for the next carousel';
                 }
             }
-            ?>. Change this under Settings → Social distribution. Process now ships whatever is waiting even if a carousel is not full.</p>
+            ?>. Change this under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Process now ships whatever is waiting even if a carousel is not full.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);

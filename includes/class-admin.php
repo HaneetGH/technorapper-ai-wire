@@ -10,7 +10,8 @@ trait TechnoRapper_AI_Wire_Admin {
         add_submenu_page('tr-ai-wire', 'Queue & usage', 'Queue & usage', 'manage_options', 'tr-ai-wire-queue', array($this, 'queue_page'));
         add_submenu_page('tr-ai-wire', 'Scores', 'Scores', 'manage_options', 'tr-ai-wire-scores', array($this, 'scores_page'));
         add_submenu_page('tr-ai-wire', 'A/B experiments', 'A/B experiments', 'manage_options', 'tr-ai-wire-experiments', array($this, 'experiments_page'));
-        add_submenu_page('tr-ai-wire', 'Social distribution', 'Social distribution', 'manage_options', 'tr-ai-wire-social', array($this, 'social_distribution_page'));
+        add_submenu_page('tr-ai-wire', 'Social settings', 'Social settings', 'manage_options', 'tr-ai-wire-social-settings', array($this, 'social_settings_page'));
+        add_submenu_page('tr-ai-wire', 'Social queue', 'Social queue', 'manage_options', 'tr-ai-wire-social', array($this, 'social_distribution_page'));
     }
 
     public function settings_page() {
@@ -24,16 +25,7 @@ trait TechnoRapper_AI_Wire_Admin {
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
-            <?php if (!empty($_GET['social_credentials_saved'])) : ?><div class="notice notice-success is-dismissible"><p>Social publishing connections saved.<?php
-            $backfill = (int) ($_GET['social_backfill'] ?? 0);
-            $backfill_platform = sanitize_key((string) ($_GET['social_backfill_platform'] ?? ''));
-            if ($backfill > 0 && $backfill_platform !== '') {
-                $label = $backfill_platform === 'instagram' ? 'Instagram' : 'X';
-                echo ' Queued ' . esc_html((string) $backfill) . ' existing article' . ($backfill === 1 ? '' : 's') . ' for ' . esc_html($label) . ' using saved graphics — no new images will be generated.';
-            }
-            ?></p></div><?php endif; ?>
-            <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
-            <p>Feed items are rewritten, reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead.</p>
+            <p>Feed items are rewritten, reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead. Social publishing is on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>.</p>
             <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
                 <h2>1. OpenAI API connection</h2>
                 <?php if ($key_ready) : ?>
@@ -54,36 +46,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 </form>
                 <p class="description">A server-level constant can still be used as a fallback if no dashboard key is saved.</p>
             </div>
-            <?php $social_credentials = $this->social_credentials(); ?>
-            <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
-                <h2>2. Onboard social publishing</h2>
-                <ol>
-                    <li>Paste X Keys and tokens (API Key, API Key Secret, Access Token, Access Token Secret) and/or an Instagram Page token plus Professional account ID, then save. One platform is enough.</li>
-                    <li>Enable <strong>Social distribution</strong> in the settings form below.</li>
-                    <li>Only after both of those do we spend OpenAI tokens: first to understand this site, then to write captions and graphics for new published articles.</li>
-                </ol>
-                <p>Status: X: <?php echo TechnoRapper_AI_Wire::x_oauth1_ready($social_credentials) ? '<strong>Keys and tokens saved</strong>' : (!empty($social_credentials['x_user_access_token']) ? '<strong>Bearer token saved</strong>' : '<strong>not connected</strong>'); ?> · Instagram: <?php echo !empty($social_credentials['instagram_user_access_token']) && !empty($social_credentials['instagram_user_id']) ? '<strong>access token and account ID saved</strong>' : '<strong>not connected</strong>'; ?></p>
-                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
-                    <input type="hidden" name="action" value="tr_ai_wire_save_social_credentials">
-                    <?php wp_nonce_field('tr_ai_wire_save_social_credentials'); ?>
-                    <p><strong>X (from developer portal → Keys and tokens)</strong></p>
-                    <p class="description">The “Access Token” and “Access Token Secret” popup is OAuth 1.0a. You also need API Key and API Key Secret from the same page. App permissions must be Read and Write. Do not paste only the Access Token into a Bearer field — that is why posting fails.</p>
-                    <p><label for="tr-x-api-key">API Key</label><br><input id="tr-x-api-key" name="social[x_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_api_key']) ? esc_attr('Saved — enter a new key to replace it') : esc_attr('API Key / Consumer Key'); ?>"></p>
-                    <p><label for="tr-x-api-secret">API Key Secret</label><br><input id="tr-x-api-secret" name="social[x_api_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_api_secret']) ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('API Key Secret / Consumer Secret'); ?>"></p>
-                    <p><label for="tr-x-access-token">Access Token</label><br><input id="tr-x-access-token" name="social[x_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Access Token'); ?>"></p>
-                    <p><label for="tr-x-access-secret">Access Token Secret</label><br><input id="tr-x-access-secret" name="social[x_access_token_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_access_token_secret']) ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('Access Token Secret'); ?>"></p>
-                    <?php if (TechnoRapper_AI_Wire::x_oauth1_ready($social_credentials)) : ?><p><label><input type="checkbox" name="remove_x_oauth" value="1"> Remove saved X Keys and tokens</label></p><?php endif; ?>
-                    <p><label for="tr-x-token">OAuth 2.0 user token (optional Bearer fallback)</label><br><input id="tr-x-token" name="social[x_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Only if you have an OAuth 2.0 user access token'); ?>"></p>
-                    <?php if (!empty($social_credentials['x_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_x_user_access_token" value="1"> Remove saved X Bearer token</label></p><?php endif; ?>
-                    <p><label for="tr-ig-token"><strong>Instagram Page access token</strong></label><br><input id="tr-ig-token" name="social[instagram_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['instagram_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Paste a Page token for the linked Professional account'); ?>"></p>
-                    <?php if (!empty($social_credentials['instagram_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_instagram_user_access_token" value="1"> Remove saved Instagram token</label></p><?php endif; ?>
-                    <p><label for="tr-ig-user-id"><strong>Instagram Professional account ID</strong></label><br><input id="tr-ig-user-id" name="social[instagram_user_id]" type="text" class="regular-text" inputmode="numeric" value="<?php echo esc_attr($social_credentials['instagram_user_id']); ?>"></p>
-                    <p class="description">Tokens are stored separately in a non-autoloaded WordPress option and are never displayed after saving. X needs all four Keys and tokens values, with Read and Write app access. Instagram needs the Facebook Page access token from Graph API Explorer GET me/accounts (the access_token inside the TechnoRapper object), not the User Token at the top of Explorer, plus the Professional account ID. Tokens may expire and need replacement.</p>
-                    <?php submit_button('Save social connections', 'secondary', 'submit', false); ?>
-                </form>
-            </div>
-            <?php $this->render_site_context_card('tr-ai-wire'); ?>
-            <h2>3. Feed, editorial and processing settings</h2>
+            <h2>2. Feed, editorial and processing settings</h2>
             <form method="post" action="options.php">
                 <?php settings_fields('tr_ai_wire'); ?>
                 <table class="form-table" role="presentation">
@@ -95,7 +58,6 @@ trait TechnoRapper_AI_Wire_Admin {
                     <?php endforeach; ?>
                     <tr><th scope="row"><label for="tr-daily">Maximum posts per day</label></th><td><input id="tr-daily" type="number" min="0" max="2000" name="<?php echo esc_attr(self::OPTION); ?>[max_posts_per_day]" value="<?php echo esc_attr($s['max_posts_per_day']); ?>"> <p class="description">Counts drafts and auto-published posts created by this plugin today. 350 is the daily target. Set to 0 to pause creation.</p></td></tr>
                     <tr><th scope="row">Auto-publish</th><td><label><input id="tr-auto-publish" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[auto_publish]" value="1" <?php checked($s['auto_publish'], 1); ?>> <strong>Publish posts automatically</strong> — no draft and no Publish button. Passing items go live. Rejected items stay quarantined.</label></td></tr>
-                    <tr><th scope="row">Social distribution</th><td><label><input id="tr-social-distribution" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[social_distribution_enabled]" value="1" <?php checked($s['social_distribution_enabled'], 1); ?>> <strong>Enable automatic social distribution</strong></label><p class="description">Off by default. Only future AI Wire articles published after enabling are queued. Turning it off pauses queued work. See the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Social distribution queue</a> for delivery status.</p><p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr(self::OPTION); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per connected platform.</span></p><p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPTION); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Estimated budget gate for image-generation calls. Set to 0 to pause new social images.</span></p><p><label for="tr-social-post-format">Instagram post format</label> <select id="tr-social-post-format" name="<?php echo esc_attr(self::OPTION); ?>[social_post_format]"><option value="single" <?php selected(($s['social_post_format'] ?? 'single'), 'single'); ?>>Single — one website article, one Instagram post</option><option value="carousel" <?php selected(($s['social_post_format'] ?? 'single'), 'carousel'); ?>>Carousel — 4 to 6 website articles in one swipeable Instagram post</option><option value="collage" <?php selected(($s['social_post_format'] ?? 'single'), 'collage'); ?>>Collage — 4 to 6 website articles in one grid image</option></select></p><p><label for="tr-social-slide-count">Website articles in each carousel</label> <select id="tr-social-slide-count" name="<?php echo esc_attr(self::OPTION); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select> <span class="description">Count this many site publishes, post them as one carousel or collage, reset the count, and wait for that many again. Default 5.</span></p><p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr(self::OPTION); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 2); ?>"> <span class="description">How many multi-article social posts to publish today. Each carousel uses the article count above. 0 means no carousels. Default 2.</span></p><p><label for="tr-social-single-daily">Independent posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr(self::OPTION); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 3); ?>"> <span class="description">After the day’s carousel quota is used, remaining website publishes go out as one article, one social post, up to this number. 0 means no independent posts. Default 3. Applies when format is carousel or collage. Single format still posts each article independently, limited by Maximum articles distributed per day. X carousels attach up to 4 images in one tweet. Process now ships a leftover batch.</span></p><p class="description">This switch does nothing until X or Instagram is connected above. After a platform is onboarded, turning this on runs a site-context job (OpenAI Writer tokens) and queues social posts for future published AI Wire articles. Artwork is GPT Image 2 low; type is overlaid locally. That file is a social asset only — it never becomes the article featured image. Local image estimate is $0.006 each; X API charges are separate.</p></td></tr>
                     <tr><th scope="row">Show on homepage</th><td>
                         <fieldset>
                             <label style="display:block;margin:0 0 8px;"><input id="tr-pin-home-on" type="radio" name="<?php echo esc_attr(self::OPTION); ?>[pin_to_homepage]" value="1" <?php checked(!empty($s['pin_to_homepage']), true); ?>> <strong>On</strong> — assign a desk, featured image, and sticky flag so the post can appear on the home board.</label>
@@ -103,7 +65,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         </fieldset>
                         <p class="description">Turn Off if you only want the permalink. Repair existing posts after you change this.</p>
                     </td></tr>
-                    <tr><th colspan="2"><h2 style="margin:12px 0 0;">3. Map content</h2><p class="description">Same mapping as feed-to-post plugins: choose the WordPress type, taxonomy, status, title, date, and body for each item.</p></th></tr>
+                    <tr><th colspan="2"><h2 style="margin:12px 0 0;">Map content</h2><p class="description">Same mapping as feed-to-post plugins: choose the WordPress type, taxonomy, status, title, date, and body for each item.</p></th></tr>
                     <tr><th scope="row"><label for="tr-map-post-type">Post type</label></th><td><select id="tr-map-post-type" name="<?php echo esc_attr(self::OPTION); ?>[map_post_type]"><?php foreach ($this->mappable_post_types() as $type => $label) : ?><option value="<?php echo esc_attr($type); ?>" <?php selected($s['map_post_type'], $type); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Home page boards only show the <code>post</code> type. Pages and other types stay off the home feed.</p></td></tr>
                     <tr><th scope="row"><label for="tr-map-taxonomy">Post taxonomy</label></th><td><select id="tr-map-taxonomy" name="<?php echo esc_attr(self::OPTION); ?>[map_taxonomy]"><?php foreach ($this->mappable_taxonomies() as $tax => $label) : ?><option value="<?php echo esc_attr($tax); ?>" <?php selected($s['map_taxonomy'], $tax); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Pick Categories so desks like Android / Apple can appear on the home board.</p></td></tr>
                     <tr><th scope="row">Terms</th><td>
@@ -176,6 +138,77 @@ trait TechnoRapper_AI_Wire_Admin {
                 <p class="description">Re-assign desks and featured images on already published AI Wire posts so they can appear on the home board, not only at their own URL.</p>
                 <?php submit_button('Repair existing posts for homepage', 'secondary'); ?>
             </form>
+        </div>
+        <?php
+    }
+
+    public function social_settings_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        $s = $this->settings();
+        $social_credentials = $this->social_credentials();
+        $x_ready = TechnoRapper_AI_Wire::x_oauth1_ready($social_credentials);
+        $ig_ready = TechnoRapper_AI_Wire::instagram_credentials_ready($social_credentials);
+        $x_on = !empty($s['social_x_enabled']) || !$x_ready;
+        $ig_on = !empty($s['social_instagram_enabled']) || !$ig_ready;
+        $option = self::OPTION;
+        ?>
+        <div class="wrap">
+            <h1>Social settings</h1>
+            <?php if (!empty($_GET['social_credentials_saved'])) : ?><div class="notice notice-success is-dismissible"><p>Social settings saved.<?php
+            $backfill = (int) ($_GET['social_backfill'] ?? 0);
+            $backfill_platform = sanitize_key((string) ($_GET['social_backfill_platform'] ?? ''));
+            if ($backfill > 0 && $backfill_platform !== '') {
+                $label = $backfill_platform === 'instagram' ? 'Instagram' : 'X';
+                echo ' Queued ' . esc_html((string) $backfill) . ' existing article' . ($backfill === 1 ? '' : 's') . ' for ' . esc_html($label) . ' using saved graphics — no new images will be generated.';
+            }
+            ?></p></div><?php endif; ?>
+            <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
+            <p>Connect X and Instagram here, then turn either network on or off without removing its tokens. Delivery status is on the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Social queue</a>.</p>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <input type="hidden" name="action" value="tr_ai_wire_save_social_credentials">
+                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_platform_toggles]" value="1">
+                <?php wp_nonce_field('tr_ai_wire_save_social_credentials'); ?>
+                <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+                    <h2>X</h2>
+                    <p>Status: <strong><?php echo esc_html(TechnoRapper_AI_Wire::x_status_text($social_credentials)); ?></strong> · posting is <strong><?php echo !empty($s['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready($social_credentials) ? 'on' : 'off'; ?></strong></p>
+                    <p class="description">From the developer portal → Keys and tokens, save all four values. App access must be Read and Write. The Access Token + Secret popup is OAuth 1.0a. Bearer is not needed.</p>
+                    <p><label for="tr-x-api-key">API Key</label><br><input id="tr-x-api-key" name="social[x_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_api_key']) ? esc_attr('Saved — enter a new key to replace it') : esc_attr('API Key / Consumer Key'); ?>"></p>
+                    <p><label for="tr-x-api-secret">API Key Secret</label><br><input id="tr-x-api-secret" name="social[x_api_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_api_secret']) ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('API Key Secret / Consumer Secret'); ?>"></p>
+                    <p><label for="tr-x-access-token">Access Token</label><br><input id="tr-x-access-token" name="social[x_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Access Token'); ?>"></p>
+                    <p><label for="tr-x-access-secret">Access Token Secret</label><br><input id="tr-x-access-secret" name="social[x_access_token_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_access_token_secret']) ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('Access Token Secret'); ?>"></p>
+                    <?php if ($x_ready) : ?><p><label><input type="checkbox" name="remove_x_oauth" value="1"> Remove saved X Keys and tokens</label></p><?php endif; ?>
+                    <p><label><input id="tr-social-x-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_x_enabled]" value="1" <?php checked($x_on); ?>> <strong>Post to X</strong></label></p>
+                    <p class="description">Leave this off to keep the four Keys and tokens saved without posting to X. Instagram can stay on.</p>
+                    <details style="margin:12px 0;">
+                        <summary>Advanced: OAuth 2.0 Bearer (optional, not needed)</summary>
+                        <p><label for="tr-x-token">OAuth 2.0 user token</label><br><input id="tr-x-token" name="social[x_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Only if you already have an OAuth 2.0 user access token'); ?>"></p>
+                        <?php if (!empty($social_credentials['x_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_x_user_access_token" value="1"> Remove saved X Bearer token</label></p><?php endif; ?>
+                    </details>
+                </div>
+                <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+                    <h2>Instagram</h2>
+                    <p>Status: <?php echo $ig_ready ? '<strong>Page token and Professional account ID saved</strong>' : '<strong>not connected</strong>'; ?> · posting is <strong><?php echo !empty($s['social_instagram_enabled']) && $ig_ready ? 'on' : 'off'; ?></strong></p>
+                    <p><label for="tr-ig-token"><strong>Instagram Page access token</strong></label><br><input id="tr-ig-token" name="social[instagram_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['instagram_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Paste a Page token for the linked Professional account'); ?>"></p>
+                    <?php if (!empty($social_credentials['instagram_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_instagram_user_access_token" value="1"> Remove saved Instagram token</label></p><?php endif; ?>
+                    <p><label for="tr-ig-user-id"><strong>Instagram Professional account ID</strong></label><br><input id="tr-ig-user-id" name="social[instagram_user_id]" type="text" class="regular-text" inputmode="numeric" value="<?php echo esc_attr($social_credentials['instagram_user_id']); ?>"></p>
+                    <p><label><input id="tr-social-ig-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_instagram_enabled]" value="1" <?php checked($ig_on); ?>> <strong>Post to Instagram</strong></label></p>
+                    <p class="description">Leave this off to keep the Instagram token saved without posting. X can stay on. Use the Facebook Page access token from Graph API Explorer GET me/accounts, not the User Token at the top of Explorer.</p>
+                </div>
+                <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+                    <h2>Distribution</h2>
+                    <p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per network that is turned on.</span></p>
+                    <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
+                    <p><label for="tr-social-post-format">Instagram post format</label> <select id="tr-social-post-format" name="<?php echo esc_attr($option); ?>[social_post_format]"><option value="single" <?php selected(($s['social_post_format'] ?? 'single'), 'single'); ?>>Single — one website article, one Instagram post</option><option value="carousel" <?php selected(($s['social_post_format'] ?? 'single'), 'carousel'); ?>>Carousel — 4 to 6 website articles in one swipeable Instagram post</option><option value="collage" <?php selected(($s['social_post_format'] ?? 'single'), 'collage'); ?>>Collage — 4 to 6 website articles in one grid image</option></select></p>
+                    <p><label for="tr-social-slide-count">Website articles in each carousel</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
+                    <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 2); ?>"></p>
+                    <p><label for="tr-social-single-daily">Independent posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 3); ?>"></p>
+                    <p class="description">Artwork is GPT Image 2 low; type is overlaid locally. That file is a social asset only — it never becomes the article featured image. Local image estimate is $0.006 each; X API charges are separate.</p>
+                </div>
+                <?php submit_button('Save social settings'); ?>
+            </form>
+            <?php $this->render_site_context_card('tr-ai-wire-social-settings'); ?>
         </div>
         <?php
     }

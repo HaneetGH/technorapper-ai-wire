@@ -31,6 +31,8 @@ trait TechnoRapper_AI_Wire_Settings {
             'draft_block_fact_flags' => 0,
             'auto_publish' => 1,
             'social_distribution_enabled' => 0,
+            'social_x_enabled' => 0,
+            'social_instagram_enabled' => 0,
             'social_daily_limit' => 10,
             'social_image_budget_usd' => 5,
             'social_post_format' => 'single',
@@ -59,7 +61,36 @@ trait TechnoRapper_AI_Wire_Settings {
         if (empty($s['tenants']) || !is_array($s['tenants'])) {
             $s['tenants'] = $this->tenants_from_feed_lines($s['feeds'] ?? '', $s);
         }
-        return $s;
+        return self::apply_social_platform_toggles($s);
+    }
+
+    public static function social_setting_keys() {
+        return array(
+            'social_distribution_enabled',
+            'social_x_enabled',
+            'social_instagram_enabled',
+            'social_daily_limit',
+            'social_image_budget_usd',
+            'social_post_format',
+            'social_slide_count',
+            'social_carousel_daily_limit',
+            'social_single_daily_limit',
+        );
+    }
+
+    public static function apply_social_platform_toggles($settings) {
+        $settings = is_array($settings) ? $settings : array();
+        $x = empty($settings['social_x_enabled']) ? 0 : 1;
+        $instagram = empty($settings['social_instagram_enabled']) ? 0 : 1;
+        $master = empty($settings['social_distribution_enabled']) ? 0 : 1;
+        if ($master && !$x && !$instagram) {
+            $x = 1;
+            $instagram = 1;
+        }
+        $settings['social_x_enabled'] = $x;
+        $settings['social_instagram_enabled'] = $instagram;
+        $settings['social_distribution_enabled'] = ($x || $instagram) ? 1 : 0;
+        return $settings;
     }
 
     public function register_settings() {
@@ -79,9 +110,11 @@ trait TechnoRapper_AI_Wire_Settings {
         if ($old_frequency !== $new_frequency) {
             self::schedule_cron();
         }
+        $old = self::apply_social_platform_toggles(wp_parse_args(is_array($old_value) ? $old_value : array(), self::defaults()));
+        $new = self::apply_social_platform_toggles(wp_parse_args(is_array($value) ? $value : array(), self::defaults()));
         $connected = self::social_credentials_connected();
-        $now_on = !empty($value['social_distribution_enabled']);
-        $was_on = !empty($old_value['social_distribution_enabled']);
+        $now_on = !empty($new['social_distribution_enabled']);
+        $was_on = !empty($old['social_distribution_enabled']);
         if ($now_on && $connected) {
             if (!$was_on) {
                 $this->kick_social_queue(5, true);
@@ -89,11 +122,18 @@ trait TechnoRapper_AI_Wire_Settings {
             } else {
                 $this->kick_social_queue(5);
             }
+            if (empty($old['social_x_enabled']) && !empty($new['social_x_enabled'])) {
+                $this->enqueue_missing_platform_posts('x');
+            }
+            if (empty($old['social_instagram_enabled']) && !empty($new['social_instagram_enabled'])) {
+                $this->enqueue_missing_platform_posts('instagram');
+            }
         }
     }
 
     public function sanitize_settings($input) {
         $defaults = self::defaults();
+        $current = wp_parse_args(get_option(self::OPTION, array()), $defaults);
         $out = array();
         $lines = isset($input['feeds']) ? preg_split('/\r\n|\r|\n/', trim(wp_unslash($input['feeds']))) : array();
         $clean_lines = array();
@@ -136,16 +176,7 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['draft_block_policy_flags'] = empty($input['draft_block_policy_flags']) ? 0 : 1;
         $out['draft_block_fact_flags'] = empty($input['draft_block_fact_flags']) ? 0 : 1;
         $out['auto_publish'] = empty($input['auto_publish']) ? 0 : 1;
-        $out['social_distribution_enabled'] = empty($input['social_distribution_enabled']) ? 0 : 1;
-        $out['social_daily_limit'] = min(20, max(1, absint($input['social_daily_limit'] ?? $defaults['social_daily_limit'])));
-        $out['social_image_budget_usd'] = min(10000, max(0, (float) ($input['social_image_budget_usd'] ?? $defaults['social_image_budget_usd'])));
-        $formats = array('single', 'carousel', 'collage');
-        $format = sanitize_key((string) ($input['social_post_format'] ?? $defaults['social_post_format']));
-        $out['social_post_format'] = in_array($format, $formats, true) ? $format : 'single';
-        $pack = absint($input['social_slide_count'] ?? $defaults['social_slide_count']);
-        $out['social_slide_count'] = in_array($pack, array(4, 5, 6), true) ? $pack : 5;
-        $out['social_carousel_daily_limit'] = min(10, max(0, absint($input['social_carousel_daily_limit'] ?? $defaults['social_carousel_daily_limit'])));
-        $out['social_single_daily_limit'] = min(10, max(0, absint($input['social_single_daily_limit'] ?? $defaults['social_single_daily_limit'])));
+        $out = array_merge($out, $this->sanitize_social_settings_from_input($input, $current, $defaults));
         $out['seo_min_score'] = min(100, max(0, absint($input['seo_min_score'] ?? $defaults['seo_min_score'])));
         $out['seo_max_readability_errors'] = min(20, max(0, absint($input['seo_max_readability_errors'] ?? $defaults['seo_max_readability_errors'])));
         $out['seo_require_keyphrase'] = empty($input['seo_require_keyphrase']) ? 0 : 1;
@@ -171,7 +202,6 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['map_title'] = (($input['map_title'] ?? '') === 'source') ? 'source' : 'rewrite';
         $out['map_date'] = (($input['map_date'] ?? '') === 'source') ? 'source' : 'now';
         $out['map_content'] = (($input['map_content'] ?? '') === 'source') ? 'source' : 'rewrite';
-        $current = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
         if (isset($input['tenants']) || isset($input['new_tenant'])) {
             $out['tenants'] = $this->sanitize_tenants($input['tenants'] ?? array(), $input['new_tenant'] ?? array());
             $out['feeds'] = $this->feeds_from_tenants($out['tenants']);
@@ -183,6 +213,45 @@ trait TechnoRapper_AI_Wire_Settings {
             $out['feeds'] = $this->feeds_from_tenants($out['tenants']);
         }
         return $out;
+    }
+
+    private function sanitize_social_settings_from_input($input, $current, $defaults) {
+        $input = is_array($input) ? $input : array();
+        $has_social = false;
+        foreach (self::social_setting_keys() as $key) {
+            if (array_key_exists($key, $input) || !empty($input['social_platform_toggles'])) {
+                $has_social = true;
+                break;
+            }
+        }
+        if (!$has_social) {
+            $out = array();
+            foreach (self::social_setting_keys() as $key) {
+                $out[$key] = $current[$key] ?? $defaults[$key];
+            }
+            return self::apply_social_platform_toggles($out);
+        }
+        $explicit_toggles = !empty($input['social_platform_toggles'])
+            || array_key_exists('social_x_enabled', $input)
+            || array_key_exists('social_instagram_enabled', $input);
+        $out = array();
+        $out['social_x_enabled'] = empty($input['social_x_enabled']) ? 0 : 1;
+        $out['social_instagram_enabled'] = empty($input['social_instagram_enabled']) ? 0 : 1;
+        if ($explicit_toggles) {
+            $out['social_distribution_enabled'] = ($out['social_x_enabled'] || $out['social_instagram_enabled']) ? 1 : 0;
+        } else {
+            $out['social_distribution_enabled'] = empty($input['social_distribution_enabled']) ? 0 : 1;
+        }
+        $out['social_daily_limit'] = min(20, max(1, absint($input['social_daily_limit'] ?? $defaults['social_daily_limit'])));
+        $out['social_image_budget_usd'] = min(10000, max(0, (float) ($input['social_image_budget_usd'] ?? $defaults['social_image_budget_usd'])));
+        $formats = array('single', 'carousel', 'collage');
+        $format = sanitize_key((string) ($input['social_post_format'] ?? $defaults['social_post_format']));
+        $out['social_post_format'] = in_array($format, $formats, true) ? $format : 'single';
+        $pack = absint($input['social_slide_count'] ?? $defaults['social_slide_count']);
+        $out['social_slide_count'] = in_array($pack, array(4, 5, 6), true) ? $pack : 5;
+        $out['social_carousel_daily_limit'] = min(10, max(0, absint($input['social_carousel_daily_limit'] ?? $defaults['social_carousel_daily_limit'])));
+        $out['social_single_daily_limit'] = min(10, max(0, absint($input['social_single_daily_limit'] ?? $defaults['social_single_daily_limit'])));
+        return self::apply_social_platform_toggles($out);
     }
 
     private function api_key() {
