@@ -1,10 +1,14 @@
-# TechnoRapper AI Wire
+# AI Wire
 
-A WordPress plugin that turns configured RSS/Atom items into source-attributed, AI-assisted editorial posts. Each item passes a writer and a separate editorial review. Passing items are **published automatically**. Uncheck **Auto-publish** if you want WordPress drafts instead.
+Open-source WordPress plugin (**GPLv2 or later**) that turns **your** RSS/Atom feeds into source-attributed, AI-reviewed posts, then can optionally post a branded graphic to **your** X and Instagram accounts.
+
+It is not tied to one newsroom. Site name, desks, and the social poster brand mark come from the WordPress site that installed the plugin. You bring the feeds, OpenAI key, and social apps. See [Contributing](CONTRIBUTING.md) and [What it costs to run](docs/PLATFORM-COSTS.md).
+
+Each item passes a writer and a separate editorial review. Passing items are **published automatically**. Uncheck **Auto-publish** if you want WordPress drafts instead.
 
 > AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
 
-For a role-by-role execution diagram, queue-state explanation and code-level feature audit, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For post-publication X/Instagram distribution, see [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md) and [Social Distribution Implementation Handoff](docs/SOCIAL-DISTRIBUTION-HANDOFF.md). For image-cost assumptions, see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md).
+For a role-by-role execution diagram, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For post-publication X/Instagram distribution, see [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md). For OpenAI vs X credits vs Instagram quota, see [What it costs to run](docs/PLATFORM-COSTS.md). Ready-to-paste public copy is in [Announcement](docs/ANNOUNCEMENT.md).
 
 ## End-to-end pipeline
 
@@ -84,7 +88,7 @@ Automated WordPress integration tests now exercise selected critical paths. They
 ## Install and configure
 
 1. Upload the plugin ZIP through **Plugins → Add New → Upload Plugin**, or copy the plugin directory to `wp-content/plugins/technorapper-ai-wire/`.
-2. Activate **TechnoRapper AI Wire**. The plugin creates/updates its queue and view tables and schedules its initial processing run.
+2. Activate the plugin. The plugin creates/updates its queue and view tables and schedules its initial processing run.
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
 4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
 5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to fetch new items immediately, then rewrite/review them in that same request. Scheduled runs still use WP-Cron.
@@ -123,18 +127,28 @@ The API-key section has its own save action so the secret is not included in the
 
 Social publishing lives on **Social settings**, not the main AI Wire page. It is **off by default**. Onboard it in this order:
 
-1. Open **Social settings**. Save X Keys and tokens (API Key, API Key Secret, Access Token, Access Token Secret) and/or an Instagram Page token plus Professional account ID.
+1. Open **Social settings**. Save **your** X Keys and tokens (API Key, API Key Secret, Access Token, Access Token Secret) and/or **your** Instagram Page token plus Professional account ID. This repository never ships anyone else’s tokens.
 2. Turn **Post to X** and/or **Post to Instagram** on. Tokens can stay saved while a network is off. Each network has its own switch.
-3. Only then does a background job read this WordPress site (name, tagline, desks, recent stories) so later social copy stays in the site's context. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (after 14 days, or if the site identity changed).
+3. Only then does a background job read **this WordPress site** (name, tagline, desks, recent stories) so later social copy stays in that site's context. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (after 14 days, or if the site identity changed).
 
 If no social account is connected, the context job does not run and no OpenAI tokens are spent on social copy or images. PHPUnit covers that gate, plus mocked X publish, Instagram quota deferral, and the rule that a social graphic is never the article featured image. A live staging canary is still required before production enablement. Only AI Wire articles that publish after a network is turned on are queued. Turning a network off pauses that destination; it does not delete queue history or remove posts already published. Delivery status is on **Social queue**.
 
+### What you pay (do not mix these up)
+
+See [What it costs to run](docs/PLATFORM-COSTS.md) for the full table.
+
+- **OpenAI** bills writer, reviewer, and social images. Default social-image budget is $5/month at about $0.006 per image. That estimate is separate from Writer/Reviewer spend.
+- **X automated posts** use the X API and spend **X developer credits**. A Social queue error of `credits depleted` means the X console balance (or spending limit) is empty — not the plugin image budget. Manual tweets on x.com do not use these credits; the plugin cannot post that way.
+- **Instagram** Graph publishing has **no Meta per-post fee**. Meta enforces a rolling 24-hour quota. When the account is full, the item stays queued and is checked again later.
+
+### Platforms
+
 - X requires the four values from the developer portal Keys and tokens page: API Key, API Key Secret, Access Token, and Access Token Secret, with Read and Write app access. That Access Token + Secret popup is OAuth 1.0a, not an OAuth 2.0 Bearer token. The worker uploads the branded graphic and posts a hook-led caption plus the article URL. A carousel becomes one tweet with up to 4 images.
-- Instagram requires a Professional Business or Creator account and a Meta Unified Login configuration containing the Instagram publishing permissions. The OAuth callback stores the resulting system-user token and Instagram Professional account ID in a non-autoloaded WordPress option. Meta fetches the generated image from the public WordPress Media URL. The worker reads the account's quota from Meta, creates a media container, waits for image processing, then publishes it. If the account is at its rolling quota, the item stays queued and is checked again later.
-- After publish, a social copy pass writes a scroll-stopping hook, on-image headline, captions, and a visual brief from the approved article (no second research pass). GPT Image 2 low creates the artwork; PHP GD overlays TechnoRapper branding, the hook headline, a supporting line, and a handle. Each article hashes to one of five poster layouts plus a rotating camera prompt. Instagram can post **one article per post**, or the job can pack **4, 5, or 6 website articles into one carousel or collage** (configured in Settings, default 5). Settings also set how many **carousel posts** and how many **independent posts** to publish per day. Carousel quota is filled first; leftover site publishes go out as independent posts. Process now ships a leftover batch. X carousels attach up to 4 images in one tweet; independent posts remain one tweet per article. Default social-image budget is $5/month at about $0.006 per image. That estimate is separate from Writer/Reviewer spend and from X API charges. Live posters are not rebuilt until you regenerate them.
+- Instagram requires **your** Professional Business or Creator account and a Meta Unified Login configuration containing the Instagram publishing permissions. The OAuth callback stores the resulting token and Instagram Professional account ID in a non-autoloaded WordPress option. Meta fetches the generated image from the public WordPress Media URL. The worker reads the account's quota from Meta, creates a media container, waits for image processing, then publishes it.
+- After publish, a social copy pass writes a hook, on-image headline, captions, and a visual brief from the approved article (no second research pass). GPT Image 2 low creates the artwork; PHP GD overlays **this site’s name**, the hook headline, a supporting line, and a handle derived from the site name. Each article hashes to one of five poster layouts plus a rotating camera prompt. Instagram can post **one article per post**, or the job can pack **4, 5, or 6 website articles into one carousel or collage** (configured in Settings, default 5). Settings also set how many **carousel posts** and how many **independent posts** to publish per day. Carousel quota is filled first; leftover site publishes go out as independent posts. X carousels attach up to 4 images in one tweet; independent posts remain one tweet per article. Live posters are not rebuilt until you regenerate them.
 - The daily cap is for unique articles; each one can create one post on each connected platform. Distribution uses WP-Cron, so configure a host system cron for reliable delivery. Platform errors are held for review to avoid automatic duplicate posting when a network response is ambiguous. The queue keeps two retry paths separate: if the graphic already exists, **Post existing graphic** (token refresh, then retry) uploads that file and does not spend image budget; **Generate a new graphic and retry** is the explicit rebuild. **Regenerate graphic and post again** on a published row deletes the live Instagram or X post first, then publishes the replacement. If that delete fails, the original stays up so you do not get a duplicate. Connecting X or Instagram later queues articles that already went to the other network with the saved graphic — saving credentials backfills those rows, and the queue also has **Queue saved graphics for X/Instagram**. The worker never generates a second image for another network when `_tr_ai_wire_social_image_id` or a sibling row already has the file.
 - Social credentials are saved in a separate non-autoloaded option and are never shown again in the settings form. Instagram is connected through the Meta Unified Login authorization-code flow; X remains manually configured. Instagram OAuth state is short-lived and the callback validates it before saving the token.
-- The WordPress host must have PHP GD enabled so the generated art can be cropped and branded with the TechnoRapper title card. A TrueType font improves title rendering; GD's built-in font is used as a fallback.
+- The WordPress host must have PHP GD enabled so the generated art can be cropped and branded with the site title card. A TrueType font improves title rendering; GD's built-in font is used as a fallback.
 - Instagram caption links are included as text; Instagram does not make ordinary caption URLs clickable. The account's bio link remains a separate editorial setting.
 
 Before production, configure test accounts and verify token scopes, app access, public image reachability, API charges, and cron execution on staging. Start with a low daily cap and image budget, review the social queue, then increase to 10 articles/day after a clean canary.
@@ -156,7 +170,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 - Configure a provider-side project budget/rate limit as a second independent control.
 - Cost estimates depend on the model rates configured in the source. Verify current provider pricing and update the rate table before changing model IDs or pricing.
 - The optional web-search review adds search-tool and token charges.
-- RSS-derived featured-image URLs remain the article-image source. Social posts use a separate generated branded image; see [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md) for estimates and assumptions.
+- RSS-derived featured-image URLs remain the article-image source. Social posts use a separate generated branded image. OpenAI image estimates are in [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). X credits and Instagram quota are in [What it costs to run](docs/PLATFORM-COSTS.md).
 - If the API call or review fails, the item is held in the queue; inspect errors before retrying. Budget-held items are retried by later runs when budget becomes available.
 
 ## A/B experiments and analytics
@@ -220,7 +234,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 ## Known limitations and operational caveats
 
 - The reviewer is an AI quality gate, not a fact-checking guarantee. Web corroboration can help but cannot certify accuracy.
-- Article featured images still use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`); items with no such URL are skipped by the article pipeline. The separate social-distribution path creates a generated branded image after publish when the opt-in switch and platform credentials are configured. See [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
+- Article featured images still use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`); items with no such URL are skipped by the article pipeline. The separate social-distribution path creates a generated branded image after publish when a network is on and credentials are configured. See [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md) and [What it costs to run](docs/PLATFORM-COSTS.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
 - WP-Cron is traffic-triggered unless backed by a host system cron.
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.
@@ -258,7 +272,7 @@ flowchart LR
 
 ## Plugin layout
 
-The installable plugin is no longer one 3,000-line file. `technorapper-ai-wire.php` is the bootstrap (plugin header, loads, hooks). Behavior lives in `includes/`:
+`technorapper-ai-wire.php` is the bootstrap (plugin header, loads, hooks). Behavior lives in `includes/`:
 
 | File | Responsibility |
 |---|---|

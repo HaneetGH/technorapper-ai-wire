@@ -903,7 +903,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'carousel');
         $caption = $this->instagram_pack_caption($prepared);
-        $alt = (string) ($prepared[0]['copy']['instagram_alt'] ?? 'TechnoRapper stories');
+        $alt = (string) ($prepared[0]['copy']['instagram_alt'] ?? (self::site_brand_name() . ' stories'));
         if ($format === 'collage') {
             $bytes = array();
             foreach ($prepared as $item) {
@@ -916,7 +916,7 @@ trait TechnoRapper_AI_Wire_Social {
             if (is_wp_error($collage)) {
                 return $collage;
             }
-            $stored = $this->store_social_jpeg($prepared[0]['post'], $collage, 'TechnoRapper roundup', $prepared[0]['copy'], 'collage', 'pack');
+            $stored = $this->store_social_jpeg($prepared[0]['post'], $collage, self::site_brand_name() . ' roundup', $prepared[0]['copy'], 'collage', 'pack');
             if (is_wp_error($stored)) {
                 return $stored;
             }
@@ -973,7 +973,7 @@ trait TechnoRapper_AI_Wire_Social {
                 $titles[] = $title;
             }
         }
-        $caption = 'Today on TechnoRapper: ' . implode(' • ', $titles);
+        $caption = 'Today on ' . self::site_brand_name() . ': ' . implode(' • ', $titles);
         $home = home_url('/');
         if (strpos($caption, $home) === false) {
             $caption .= ' ' . $home;
@@ -982,9 +982,9 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function instagram_pack_caption($prepared) {
-        $lines = array('Today on TechnoRapper:');
+        $lines = array('Today on ' . self::site_brand_name() . ':');
         $hashtags = array();
-        $cta = 'Read the full stories on TechnoRapper';
+        $cta = 'Read the full stories on ' . self::site_brand_name();
         foreach ($prepared as $item) {
             $copy = is_array($item['copy'] ?? null) ? $item['copy'] : array();
             $title = trim((string) ($copy['on_image_headline'] ?? ''));
@@ -994,7 +994,7 @@ trait TechnoRapper_AI_Wire_Social {
             if ($title !== '') {
                 $lines[] = '• ' . $title;
             }
-            if ($cta === 'Read the full stories on TechnoRapper' && !empty($copy['cta'])) {
+            if ($cta === 'Read the full stories on ' . self::site_brand_name() && !empty($copy['cta'])) {
                 $cta = (string) $copy['cta'];
             }
             foreach ((array) ($copy['hashtags'] ?? array()) as $tag) {
@@ -1155,7 +1155,7 @@ trait TechnoRapper_AI_Wire_Social {
         $headline = $this->clip_social_text($raw['on_image_headline'] ?? $hook, 70);
         $subhead = $this->clip_social_text($raw['on_image_subhead'] ?? $excerpt, 56);
         $profile = $this->site_context_profile();
-        $default_cta = !empty($profile['cta_style']) ? $profile['cta_style'] : 'Read the full story on TechnoRapper';
+        $default_cta = !empty($profile['cta_style']) ? $profile['cta_style'] : ('Read the full story on ' . self::site_brand_name());
         $cta = $this->clip_social_text($raw['cta'] ?? $default_cta, 60);
         $visual = $this->clip_social_text($raw['visual_brief'] ?? ('Photoreal cinematic scene of: ' . $title), 360);
         $alt = $this->clip_social_text($raw['instagram_alt'] ?? $headline, 1000);
@@ -2057,12 +2057,20 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function draw_social_brand_mark($canvas, $font, $white, $cyan, $x, $y) {
+        $mark = self::site_brand_mark();
         if ($font) {
-            imagettftext($canvas, 28, 0, $x, $y, $white, $font, 'TECHNORAPPER');
-            imagefilledrectangle($canvas, $x, $y + 12, $x + 220, $y + 20, $cyan);
+            imagettftext($canvas, 28, 0, $x, $y, $white, $font, $mark);
+            $width = 220;
+            if (function_exists('imagettfbbox')) {
+                $box = imagettfbbox(28, 0, $font, $mark);
+                if (is_array($box)) {
+                    $width = max(80, abs((int) $box[2] - (int) $box[0]));
+                }
+            }
+            imagefilledrectangle($canvas, $x, $y + 12, $x + $width, $y + 20, $cyan);
             return;
         }
-        imagestring($canvas, 5, $x, $y - 50, 'TECHNORAPPER', $white);
+        imagestring($canvas, 5, $x, $y - 50, $mark, $white);
     }
 
     private function draw_social_type_block($canvas, $headline, $subhead, $font, $white, $muted, $stroke, $width, $height, $opts) {
@@ -2116,9 +2124,10 @@ trait TechnoRapper_AI_Wire_Social {
             }
         }
         $handle = (string) ($opts['handle'] ?? 'right');
-        if ($font) {
-            $hx = ($handle === 'left') ? $left : ($width - 292);
-            imagettftext($canvas, 18, 0, $hx, $handle_y, imagecolorallocate($canvas, 43, 213, 255), $font, '@technorapper');
+        $handle_text = self::site_brand_handle();
+        if ($font && $handle_text !== '') {
+            $hx = ($handle === 'left') ? $left : max($left, $width - 24 - (int) (strlen($handle_text) * 11));
+            imagettftext($canvas, 18, 0, $hx, $handle_y, imagecolorallocate($canvas, 43, 213, 255), $font, $handle_text);
         }
     }
 
@@ -2601,7 +2610,7 @@ trait TechnoRapper_AI_Wire_Social {
     private function instagram_missing_object_help($ig_id) {
         $ig_id = preg_replace('/[^0-9]/', '', (string) $ig_id);
         $label = $ig_id !== '' ? 'account ' . $ig_id : 'this Instagram account';
-        return 'Instagram rejected this token for ' . $label . '. Paste the TechnoRapper Page access_token from Graph API Explorer GET me/accounts — the token inside the TechnoRapper object — not the User Token at the top of the page. Then retry.';
+        return 'Instagram rejected this token for ' . $label . '. Paste the Facebook Page access_token from Graph API Explorer GET me/accounts — the token inside your Page object — not the User Token at the top of the page. Then retry.';
     }
 
     private function instagram_is_missing_object_error($message) {

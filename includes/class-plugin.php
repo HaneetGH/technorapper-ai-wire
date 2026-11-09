@@ -16,7 +16,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Social;
 
-    const VERSION = '0.2.44';
+    const VERSION = '0.2.45';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -43,6 +43,24 @@ final class TechnoRapper_AI_Wire {
     const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
 
     private $table;
+
+    public static function site_brand_name() {
+        $name = trim(wp_strip_all_tags((string) get_bloginfo('name')));
+        return $name !== '' ? $name : 'this site';
+    }
+
+    public static function site_brand_handle() {
+        $slug = strtolower(preg_replace('/[^a-z0-9]+/i', '', self::site_brand_name()));
+        return $slug !== '' ? '@' . $slug : '';
+    }
+
+    public static function site_brand_mark() {
+        $name = self::site_brand_name();
+        if (function_exists('mb_strtoupper')) {
+            return mb_strtoupper($name, 'UTF-8');
+        }
+        return strtoupper($name);
+    }
 
     public function __construct() {
         global $wpdb;
