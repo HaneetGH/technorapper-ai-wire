@@ -169,6 +169,17 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $header = file_get_contents(dirname(__DIR__) . '/technorapper-ai-wire.php');
         $this->assertTrue((bool) preg_match('/^\s*\*\s*Version:\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$/m', $header, $matches));
         $this->assertSame(TechnoRapper_AI_Wire::VERSION, $matches[1]);
+        $this->assertMatchesRegularExpression('/^\s*\*\s*License:\s*GPLv2 or later\s*$/m', $header);
+        $this->assertMatchesRegularExpression('/^\s*\*\s*License URI:\s*https:\/\/www\.gnu\.org\/licenses\/gpl-2\.0\.html\s*$/m', $header);
+    }
+
+    public function test_wordpress_org_readme_declares_gplv2_or_later() {
+        $readme = file_get_contents(dirname(__DIR__) . '/readme.txt');
+        $this->assertNotFalse($readme);
+        $this->assertMatchesRegularExpression('/^License:\s*GPLv2 or later\s*$/m', $readme);
+        $this->assertMatchesRegularExpression('/^License URI:\s*https:\/\/www\.gnu\.org\/licenses\/gpl-2\.0\.html\s*$/m', $readme);
+        $this->assertTrue((bool) preg_match('/^Stable tag:\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$/m', $readme, $matches));
+        $this->assertSame(TechnoRapper_AI_Wire::VERSION, $matches[1]);
     }
 
     public function test_activation_creates_all_required_tables() {
