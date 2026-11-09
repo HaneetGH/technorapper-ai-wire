@@ -1,144 +1,123 @@
 # Instagram Content Publishing Setup
 
-This document records the **working setup and troubleshooting path** used to enable TechnoRapper to publish content to the Instagram Professional account `@techno.rapper` via the Meta Graph API.
+This guide is intentionally **generic for an open-source project**.
 
-The goal is intentionally narrow:
+Each developer must connect the project to **their own Instagram Professional account**, using **their own Meta app, account ID, and access token**.
 
-> **Publish images/captions to the TechnoRapper Instagram account through an API.**
+> **Security rule:** This repository must never contain, document, or reuse credentials belonging to any developer or organization.
 
-This document does not cover Facebook Page publishing, ads, comments, DMs, or other Meta integrations.
+## 1. What you need
 
----
-
-## 1. Current setup
-
-| Item | Value |
+| Item | What you provide |
 |---|---|
-| Meta App | `TechnoRapper_Automation` |
-| Instagram account | `@techno.rapper` |
-| Instagram Professional Account ID | `17841473664186186` |
-| Required publish permission | `instagram_content_publish` |
-| Basic account permission | `instagram_basic` |
-| Working API host | `graph.facebook.com` |
-| API version tested | `v27.0` |
+| Meta Developer App | Create your own app |
+| Instagram account | Your own Instagram Professional account |
+| Instagram Professional Account ID | Your own account ID |
+| Access token | Your own valid Meta token |
+| Permission | `instagram_content_publish` |
+| API host | `graph.facebook.com` for the tested flow |
 
-**Never commit an access token to the repository.**
+Example:
 
----
+```env
+INSTAGRAM_ACCOUNT_ID=YOUR_INSTAGRAM_PROFESSIONAL_ACCOUNT_ID
+INSTAGRAM_ACCESS_TOKEN=YOUR_ACCESS_TOKEN
+```
 
-## 2. Meta App configuration
+Never commit these values to Git.
+
+## 2. Create your own Meta app
 
 Open:
 
 https://developers.facebook.com/apps/
 
-Select:
+Create or select **your own Meta app** and configure the Instagram API/content-publishing access required by your app.
 
-**TechnoRapper_Automation**
+For this project, the important permission is:
 
-The Instagram account `@techno.rapper` must be configured as an Instagram tester/test account where required, and the tester invitation must be accepted.
+- `instagram_content_publish`
 
-The working token was confirmed to have these scopes:
+You may also need:
 
 - `instagram_basic`
-- `instagram_content_publish`
-- `public_profile`
 
-For this content-publishing use case, `instagram_content_publish` is the important permission.
+depending on the authentication/configuration used by your app.
 
----
+Meta's UI and authentication flows can change, so follow the current setup shown for your own app.
 
-## 3. Important: token/API host discovery
+## 3. Connect your own Instagram Professional account
 
-During setup we initially tried:
+The Instagram account you want to publish to must be an eligible Instagram Professional account and must be connected/authorized according to your Meta app configuration.
 
-```text
-https://graph.instagram.com/me
+If Meta requires tester access for your development configuration:
+
+1. Add your Instagram account as a tester/test account.
+2. Accept the invitation from the Instagram account.
+3. Complete the authorization flow.
+4. Confirm the account is available to your app.
+
+You are configuring **your account with your app**.
+
+## 4. Generate your own access token
+
+Generate a token using the authentication method configured for **your Meta app**.
+
+The token must have the publishing permission required by your setup, including:
+
+```
+instagram_content_publish
 ```
 
-with the generated token.
+Never copy a token from another installation, developer, screenshot, issue, PR, or documentation.
 
-That returned:
+Validate your own token with Meta's Access Token Debugger:
 
-```json
-{
-  "error": {
-    "message": "Invalid OAuth access token - Cannot parse access token",
-    "code": 190
-  }
-}
-```
+https://developers.facebook.com/tools/debug/accesstoken/
 
-This was **not** a missing-permission error.
+Never paste the actual token into GitHub, logs, documentation, or screenshots.
 
-The Meta Access Token Debugger showed:
+## 5. Find your Instagram Professional Account ID
 
-```text
-App ID: TechnoRapper_Automation
-Type: System User
-Valid: True
-Scopes: instagram_basic, instagram_content_publish, public_profile
-```
+You need the numeric Instagram Professional Account ID belonging to **your account**.
 
-The important discovery was that this token works with:
+Do not confuse it with your username or a Facebook Page ID.
 
-```text
-https://graph.facebook.com
-```
-
-for the Instagram Professional Account ID.
-
-Therefore, for the current working setup, use **`graph.facebook.com`** rather than assuming the token must be sent to `graph.instagram.com`.
-
-Do not change the API host just because another Instagram documentation example uses `graph.instagram.com`; the token type and login configuration determine the correct API flow.
-
----
-
-## 4. Verify the Instagram Professional Account ID
-
-The Instagram Professional Account ID is:
-
-```text
-17841473664186186
-```
-
-Verify it with the access token:
+For the tested API flow:
 
 ```bash
-curl -G "https://graph.facebook.com/v27.0/17841473664186186" \
+curl -G "https://graph.facebook.com/v27.0/$INSTAGRAM_ACCOUNT_ID" \
   --data-urlencode "fields=id,username" \
-  --data-urlencode "access_token=YOUR_ACCESS_TOKEN"
+  --data-urlencode "access_token=$INSTAGRAM_ACCESS_TOKEN"
 ```
 
-Expected response:
+Expected response shape:
 
 ```json
 {
-  "id": "17841473664186186",
-  "username": "techno.rapper"
+  "id": "YOUR_INSTAGRAM_PROFESSIONAL_ACCOUNT_ID",
+  "username": "your_username"
 }
 ```
 
-If this succeeds, the token can access the target Instagram Professional account.
+The returned ID should be the account you intend to publish to.
 
----
+## 6. Publish an image
 
-## 5. Publish an image
-
-Instagram image publishing uses a **two-step process**:
+Instagram image publishing uses a two-step process:
 
 1. Create an Instagram media container.
-2. Publish that media container.
+2. Publish the media container.
 
-The image must be available from a **publicly reachable HTTPS URL**.
+The image must be available through a publicly reachable HTTPS URL.
 
-### Step 1: Create media container
+### Step 1: Create the media container
 
 ```bash
-curl -X POST "https://graph.facebook.com/v27.0/17841473664186186/media" \
+curl -X POST "https://graph.facebook.com/v27.0/$INSTAGRAM_ACCOUNT_ID/media" \
   -d "image_url=https://YOUR_PUBLIC_IMAGE_URL/image.jpg" \
-  -d "caption=Hello from TechnoRapper 🚀" \
-  -d "access_token=YOUR_ACCESS_TOKEN"
+  -d "caption=Hello from my application" \
+  -d "access_token=$INSTAGRAM_ACCESS_TOKEN"
 ```
 
 Expected response:
@@ -149,18 +128,12 @@ Expected response:
 }
 ```
 
-Save the returned `id`.
-
-This is the **media container / creation ID**.
-
----
-
 ### Step 2: Publish the media container
 
 ```bash
-curl -X POST "https://graph.facebook.com/v27.0/17841473664186186/media_publish" \
+curl -X POST "https://graph.facebook.com/v27.0/$INSTAGRAM_ACCOUNT_ID/media_publish" \
   -d "creation_id=CREATION_ID" \
-  -d "access_token=YOUR_ACCESS_TOKEN"
+  -d "access_token=$INSTAGRAM_ACCESS_TOKEN"
 ```
 
 Expected response:
@@ -171,186 +144,236 @@ Expected response:
 }
 ```
 
-At this point the post has been published to:
+The post is then published to the Instagram account associated with the credentials.
+
+## 7. End-to-end flow
 
 ```text
-@techno.rapper
+Developer's Instagram Professional account
+                 |
+                 v
+        Developer's Meta app
+                 |
+                 v
+       Developer's access token
+                 |
+                 v
+       Instagram account ID
+                 |
+                 v
+        Open-source project
+                 |
+                 | POST /{account-id}/media
+                 v
+           creation_id
+                 |
+                 | POST /{account-id}/media_publish
+                 v
+          Instagram post
 ```
 
----
+The project must never assume a specific Instagram account. All account-specific values come from configuration.
 
-## 6. End-to-end API flow
+## 8. Environment configuration
 
-The production flow is:
-
-```text
-TechnoRapper AI Wire
-        |
-        | Select article/content
-        v
-Generate social image
-        |
-        | Public HTTPS image URL
-        v
-Instagram /media
-        |
-        | creation_id
-        v
-Instagram /media_publish
-        |
-        v
-@techno.rapper
-```
-
-For the current implementation, the critical API sequence is:
-
-```text
-POST /17841473664186186/media
-              |
-              v
-        creation_id
-              |
-              v
-POST /17841473664186186/media_publish
-              |
-              v
-        Instagram post
-```
-
----
-
-## 7. What NOT to do
-
-### Do not use the old Facebook Page permissions
-
-Do not add or depend on:
-
-- `manage_pages`
-- `pages_show_list`
-
-Those belong to older/different Facebook Page flows and are not required for this content-publishing setup.
-
-### Do not use the Facebook Page ID as the Instagram account ID
-
-The publishing endpoint above uses:
-
-```text
-17841473664186186
-```
-
-which is the **Instagram Professional Account ID** for `@techno.rapper`.
-
-### Do not commit tokens
-
-Never put an access token in:
-
-- GitHub
-- source code
-- `.env` committed to Git
-- documentation
-- screenshots
-- issues/PR comments
-- logs
-
-Use environment variables/secrets in the actual application.
-
-Example:
+Recommended:
 
 ```env
-META_ACCESS_TOKEN=...
-INSTAGRAM_ACCOUNT_ID=17841473664186186
+INSTAGRAM_ACCOUNT_ID=...
+INSTAGRAM_ACCESS_TOKEN=...
 ```
 
----
+For local development:
 
-## 8. Troubleshooting
+- Keep credentials in a local `.env`.
+- Add `.env` to `.gitignore`.
+- Never commit it.
+- Never print the token in logs.
 
-### Error: Invalid OAuth access token / Cannot parse access token
+For production, use encrypted environment variables/secrets.
 
-Example:
+## 9. Important: API host and token type
 
-```text
-Invalid OAuth access token - Cannot parse access token
-code: 190
+A common source of confusion is using the wrong Meta API host for a token/authentication flow.
+
+During development of this project, the working content-publishing token was successfully used with:
+
 ```
-
-First verify:
-
-1. The token was generated for `TechnoRapper_Automation`.
-2. The token is still valid.
-3. `instagram_content_publish` is present.
-4. The Instagram tester/account authorization is complete.
-5. You are using the API host appropriate for the token type.
-
-For the token used in this setup, the working host was:
-
-```text
 https://graph.facebook.com
 ```
 
-not:
+and the Instagram Professional Account ID.
 
-```text
+Do not blindly replace this with:
+
+```
 https://graph.instagram.com
 ```
 
----
+The correct host depends on the authentication/API flow used by your Meta app.
 
-### Token debugger
+## 10. Common mistakes
 
-Use Meta's Access Token Debugger:
+### Using someone else's account ID
 
-https://developers.facebook.com/tools/debug/accesstoken/
+Wrong:
+
+```env
+INSTAGRAM_ACCOUNT_ID=someone_elses_account
+```
+
+Correct:
+
+```env
+INSTAGRAM_ACCOUNT_ID=YOUR_OWN_ACCOUNT_ID
+```
+
+### Using someone else's token
+
+Wrong:
+
+```env
+INSTAGRAM_ACCESS_TOKEN=someone_elses_token
+```
+
+Correct:
+
+```env
+INSTAGRAM_ACCESS_TOKEN=YOUR_OWN_TOKEN
+```
+
+### Using a Facebook Page ID
+
+The publishing endpoint expects the Instagram Professional Account ID used by your configured Instagram API flow. Do not substitute an unrelated Facebook Page ID.
+
+### Committing credentials
+
+Never commit:
+
+```
+.env
+access tokens
+client secrets
+private credentials
+debug logs containing tokens
+screenshots containing tokens
+```
+
+## 11. Troubleshooting
+
+### Invalid OAuth access token
 
 Check:
 
-- App
-- Token type
-- Valid
-- Scopes
-- Expiration
-- User/account association
+1. The token belongs to your Meta app.
+2. The token is still valid.
+3. `instagram_content_publish` is available.
+4. Your Instagram account is correctly authorized.
+5. You are using the API host appropriate for your authentication flow.
+6. The account ID belongs to the same Instagram account you authorized.
 
-Never share the actual token when asking someone to debug the integration.
+### Account lookup fails
 
----
+Run the account lookup again:
 
-## 9. Token security incident during setup
+```bash
+curl -G "https://graph.facebook.com/v27.0/$INSTAGRAM_ACCOUNT_ID" \
+  --data-urlencode "fields=id,username" \
+  --data-urlencode "access_token=$INSTAGRAM_ACCESS_TOKEN"
+```
 
-A development token was accidentally exposed in a terminal screenshot during troubleshooting.
+Do not debug by sharing the token.
 
-**If this happens again:**
+### Media creation succeeds but publishing fails
 
-1. Treat the token as compromised.
-2. Revoke/regenerate it.
-3. Update the application secret/environment variable.
-4. Never reuse the exposed token.
+Check:
 
-The token value itself must never be recorded in this document.
+- The `creation_id` belongs to the same account.
+- The image URL is publicly reachable over HTTPS.
+- The image meets Instagram's current publishing requirements.
+- The access token is still valid.
+- The account has the required publishing permission.
 
----
+## 12. Security requirements for an open-source project
 
-## 10. Production implementation checklist
+The repository should contain:
 
-Before enabling automated posting:
+- API integration code
+- configuration examples
+- setup instructions
+- placeholder values
+- troubleshooting guidance
 
-- [ ] `TechnoRapper_Automation` is the active Meta app.
-- [ ] `@techno.rapper` is the intended Instagram Professional account.
-- [ ] Instagram Professional Account ID is stored as configuration.
-- [ ] `instagram_content_publish` is available.
-- [ ] Access token is stored securely.
-- [ ] Access token is not in Git.
-- [ ] Image is uploaded/hosted at a public HTTPS URL.
-- [ ] Call `POST /{instagram-account-id}/media`.
-- [ ] Save the returned `creation_id`.
-- [ ] Call `POST /{instagram-account-id}/media_publish`.
-- [ ] Record the returned published media ID.
-- [ ] Handle API failures/retries without publishing duplicates.
-- [ ] Add logging that never prints the access token.
+The repository must **not** contain:
 
----
+- real access tokens
+- client secrets
+- private credentials
+- unnecessary production account IDs
+- screenshots exposing credentials
+- logs containing credentials
 
-## 11. Useful Meta documentation
+Use placeholders such as:
+
+```text
+YOUR_INSTAGRAM_ACCOUNT_ID
+YOUR_INSTAGRAM_ACCESS_TOKEN
+YOUR_PUBLIC_IMAGE_URL
+```
+
+This allows every developer to configure the project independently.
+
+## 13. Optional: OAuth for multiple users
+
+If this project becomes a hosted application where many users connect their own Instagram accounts, use an OAuth-based connection flow rather than asking users to paste permanent tokens into the application.
+
+Typical flow:
+
+1. User chooses **Connect Instagram**.
+2. User authorizes the application's Meta app.
+3. Meta redirects to the application's configured callback URL.
+4. The application securely handles the authorization result.
+5. The application stores the user's credentials securely.
+6. The credentials are associated with that user's Instagram account.
+7. Publishing uses that user's account ID and credentials.
+
+The callback URL belongs to **the application operator's own Meta app**.
+
+## 14. Quick start for a new developer
+
+```text
+1. Clone the open-source project.
+2. Create your own Meta Developer app.
+3. Configure Instagram content publishing.
+4. Connect/authorize your own Instagram Professional account.
+5. Obtain your own access token.
+6. Find your own Instagram Professional Account ID.
+7. Configure:
+
+   INSTAGRAM_ACCOUNT_ID=YOUR_ACCOUNT_ID
+   INSTAGRAM_ACCESS_TOKEN=YOUR_ACCESS_TOKEN
+
+8. Keep the credentials out of Git.
+9. Verify the account:
+
+   GET https://graph.facebook.com/v27.0/{YOUR_ACCOUNT_ID}
+       ?fields=id,username
+       &access_token=YOUR_TOKEN
+
+10. Create media:
+
+   POST https://graph.facebook.com/v27.0/{YOUR_ACCOUNT_ID}/media
+
+11. Take the returned creation_id.
+
+12. Publish:
+
+   POST https://graph.facebook.com/v27.0/{YOUR_ACCOUNT_ID}/media_publish
+
+13. Verify the post on your own Instagram account.
+```
+
+## 15. Related Meta documentation
 
 Instagram Content Publishing:
 
@@ -370,32 +393,10 @@ https://developers.facebook.com/tools/debug/accesstoken/
 
 ---
 
-## 12. Quick reference
+## Important
 
-If someone needs to reproduce the working setup, the shortest path is:
+This documentation is intentionally **account-agnostic**.
 
-```text
-1. Open TechnoRapper_Automation in Meta Developers.
-2. Configure/authorize @techno.rapper as the Instagram tester/account.
-3. Ensure instagram_content_publish is available.
-4. Generate a valid token.
-5. Verify the token with Meta's Access Token Debugger.
-6. Verify the account:
+Never copy another installation's Meta app ID, Instagram account ID, access token, client secret, or other credentials into your own setup.
 
-   GET https://graph.facebook.com/v27.0/17841473664186186
-       ?fields=id,username
-       &access_token=TOKEN
-
-7. Create media:
-
-   POST https://graph.facebook.com/v27.0/17841473664186186/media
-
-8. Take the returned creation_id.
-9. Publish:
-
-   POST https://graph.facebook.com/v27.0/17841473664186186/media_publish
-
-10. Verify the post on @techno.rapper.
-```
-
-This is the **known working content-publishing path established during the TechnoRapper integration setup**.
+The project should work by replacing the documented placeholders with values belonging to the developer's own Meta/Instagram configuration.
