@@ -9,8 +9,6 @@ if (!defined('ABSPATH')) {
  * repeats a successful post on the other.
  */
 trait TechnoRapper_AI_Wire_Social {
-    private $flush_instagram_pack = false;
-
     private function social_table() {
         global $wpdb;
         return $wpdb->prefix . 'tr_ai_wire_social';
@@ -427,19 +425,7 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
 
-        global $wpdb;
-        $table = $this->social_table();
-        $now = current_time('mysql', true);
-        foreach ($platforms as $platform) {
-            $wpdb->query($wpdb->prepare(
-                "INSERT IGNORE INTO {$table} (post_id, platform, status, created_at, updated_at) VALUES (%d, %s, 'queued', %s, %s)",
-                (int) $post_id,
-                $platform,
-                $now,
-                $now
-            ));
-        }
-        $this->kick_social_queue(30);
+        $this->collect_social_article((int) $post_id, $settings);
     }
 
     public function process_social_queue() {
@@ -502,10 +488,6 @@ trait TechnoRapper_AI_Wire_Social {
                 continue;
             }
             $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
-            if ($row['platform'] === 'instagram' && $format !== 'single' && !$this->social_item_is_manual_repost($row) && !$this->instagram_pack_ready($settings)) {
-                $this->schedule_instagram_pack_wait($settings);
-                continue;
-            }
             $claimed = $wpdb->query($wpdb->prepare(
                 "UPDATE {$table} SET status = 'processing', attempts = attempts + 1, updated_at = %s WHERE id = %d AND status = 'queued'",
                 current_time('mysql', true),
@@ -545,14 +527,7 @@ trait TechnoRapper_AI_Wire_Social {
 
         $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE status = 'queued'");
         $finishable = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} q WHERE q.status = 'queued' AND EXISTS (SELECT 1 FROM {$table} p WHERE p.post_id = q.post_id AND p.status = 'published' AND p.updated_at >= UTC_DATE())");
-        $ig_waiting = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single') !== 'single'
-            && !$this->instagram_pack_ready($settings)
-            && $this->instagram_queued_article_count() > 0;
-        if ($ig_waiting) {
-            $this->schedule_instagram_pack_wait($settings);
-        }
-        $other_queued = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE status = 'queued' AND platform != 'instagram'");
-        if ($remaining > 0 && (!$ig_waiting || $other_queued > 0) && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0)) {
+        if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0)) {
             $this->kick_social_queue(60);
         }
     }
@@ -591,7 +566,7 @@ trait TechnoRapper_AI_Wire_Social {
         if (function_exists('ignore_user_abort')) {
             ignore_user_abort(true);
         }
-        $this->flush_instagram_pack = true;
+        $this->flush_social_batch(true);
         $processed = 0;
         for ($i = 0; $i < 5; $i++) {
             $before = $this->social_queued_count();
@@ -605,7 +580,6 @@ trait TechnoRapper_AI_Wire_Social {
             }
             $processed++;
         }
-        $this->flush_instagram_pack = false;
         $this->kick_social_queue(5);
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&social_ran=' . (int) $processed));
         exit;
@@ -1172,56 +1146,95 @@ trait TechnoRapper_AI_Wire_Social {
         if ($format === 'single') {
             return 1;
         }
-        return min(4, max(2, (int) (is_array($settings) ? ($settings['social_slide_count'] ?? 4) : 4)));
+        $count = (int) (is_array($settings) ? ($settings['social_slide_count'] ?? 5) : 5);
+        if (!in_array($count, array(4, 5, 6), true)) {
+            $count = 5;
+        }
+        $limit = min(10, max(1, (int) (is_array($settings) ? ($settings['social_daily_limit'] ?? 10) : 10)));
+        return min($count, $limit);
     }
 
-    private function social_pack_wait_seconds($settings) {
-        $minutes = min(720, max(15, (int) (is_array($settings) ? ($settings['social_pack_wait_minutes'] ?? 120) : 120)));
-        return $minutes * MINUTE_IN_SECONDS;
+    private function social_batch_ids() {
+        $stored = get_option(self::SOCIAL_BATCH_OPTION, array());
+        $ids = is_array($stored) ? ($stored['post_ids'] ?? $stored) : array();
+        $clean = array();
+        foreach ((array) $ids as $id) {
+            $id = (int) $id;
+            if ($id > 0 && !in_array($id, $clean, true)) {
+                $clean[] = $id;
+            }
+        }
+        return $clean;
     }
 
-    private function instagram_queued_article_count() {
-        global $wpdb;
-        $table = $this->social_table();
-        return (int) $wpdb->get_var("SELECT COUNT(DISTINCT post_id) FROM {$table} WHERE status = 'queued' AND platform = 'instagram'");
+    private function social_batch_save($ids) {
+        update_option(self::SOCIAL_BATCH_OPTION, array(
+            'post_ids' => array_values(array_map('intval', $ids)),
+            'updated_at' => current_time('mysql', true),
+        ), false);
     }
 
-    private function instagram_oldest_queued_at() {
-        global $wpdb;
-        $table = $this->social_table();
-        $oldest = $wpdb->get_var("SELECT MIN(created_at) FROM {$table} WHERE status = 'queued' AND platform = 'instagram'");
-        if (!is_string($oldest) || $oldest === '') {
-            return 0;
-        }
-        $stamp = strtotime($oldest . ' UTC');
-        return $stamp ? (int) $stamp : 0;
-    }
-
-    private function instagram_pack_ready($settings) {
-        if ($this->normalize_social_post_format($settings['social_post_format'] ?? 'single') === 'single') {
-            return true;
-        }
-        if (!empty($this->flush_instagram_pack)) {
-            return true;
-        }
-        $queued = $this->instagram_queued_article_count();
-        if ($queued >= $this->social_slide_count($settings)) {
-            return true;
-        }
-        $oldest = $this->instagram_oldest_queued_at();
-        if ($oldest < 1) {
-            return false;
-        }
-        return (time() - $oldest) >= $this->social_pack_wait_seconds($settings);
-    }
-
-    private function schedule_instagram_pack_wait($settings) {
-        $oldest = $this->instagram_oldest_queued_at();
-        if ($oldest < 1) {
+    private function collect_social_article($post_id, $settings) {
+        $post_id = (int) $post_id;
+        if ($post_id < 1) {
             return;
         }
-        $due = $oldest + $this->social_pack_wait_seconds($settings);
-        $this->kick_social_queue(max(60, $due - time()));
+        $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
+        if ($format === 'single') {
+            $this->enqueue_social_article($post_id);
+            $this->kick_social_queue(30);
+            return;
+        }
+        $ids = $this->social_batch_ids();
+        if (!in_array($post_id, $ids, true)) {
+            $ids[] = $post_id;
+            $this->social_batch_save($ids);
+        }
+        if (count($ids) >= $this->social_slide_count($settings)) {
+            $this->flush_social_batch(true);
+        }
+    }
+
+    private function enqueue_social_article($post_id) {
+        $post_id = (int) $post_id;
+        $platforms = self::connected_social_platforms();
+        if ($post_id < 1 || !$platforms) {
+            return;
+        }
+        global $wpdb;
+        $table = $this->social_table();
+        $now = current_time('mysql', true);
+        foreach ($platforms as $platform) {
+            $wpdb->query($wpdb->prepare(
+                "INSERT IGNORE INTO {$table} (post_id, platform, status, created_at, updated_at) VALUES (%d, %s, 'queued', %s, %s)",
+                $post_id,
+                $platform,
+                $now,
+                $now
+            ));
+        }
+    }
+
+    private function flush_social_batch($force = false) {
+        $ids = $this->social_batch_ids();
+        if (!$ids) {
+            return false;
+        }
+        $settings = $this->settings();
+        $wanted = $this->social_slide_count($settings);
+        if (!$force && count($ids) < $wanted) {
+            return false;
+        }
+        $this->social_batch_save(array());
+        foreach ($ids as $post_id) {
+            $post = get_post((int) $post_id);
+            if (!$post || $post->post_status !== 'publish') {
+                continue;
+            }
+            $this->enqueue_social_article((int) $post_id);
+        }
+        $this->kick_social_queue(30);
+        return true;
     }
 
     private function store_social_jpeg($post, $bytes, $headline, $copy, $variant, $suffix = '') {
@@ -1287,8 +1300,10 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function social_collage_cells($count, $width, $height, $gap) {
-        $count = max(2, min(4, (int) $count));
+        $count = max(2, min(6, (int) $count));
         $gap = max(0, (int) $gap);
+        $width = (int) $width;
+        $height = (int) $height;
         if ($count === 2) {
             $cell_w = (int) floor(($width - $gap) / 2);
             return array(
@@ -1305,14 +1320,42 @@ trait TechnoRapper_AI_Wire_Social {
                 array('x' => $cell_w + $gap, 'y' => $top_h + $gap, 'w' => $width - $cell_w - $gap, 'h' => $height - $top_h - $gap),
             );
         }
-        $cell_w = (int) floor(($width - $gap) / 2);
+        if ($count === 4) {
+            $cell_w = (int) floor(($width - $gap) / 2);
+            $cell_h = (int) floor(($height - $gap) / 2);
+            return array(
+                array('x' => 0, 'y' => 0, 'w' => $cell_w, 'h' => $cell_h),
+                array('x' => $cell_w + $gap, 'y' => 0, 'w' => $width - $cell_w - $gap, 'h' => $cell_h),
+                array('x' => 0, 'y' => $cell_h + $gap, 'w' => $cell_w, 'h' => $height - $cell_h - $gap),
+                array('x' => $cell_w + $gap, 'y' => $cell_h + $gap, 'w' => $width - $cell_w - $gap, 'h' => $height - $cell_h - $gap),
+            );
+        }
+        if ($count === 5) {
+            $top_h = (int) floor(($height - $gap) / 2);
+            $bot_h = $height - $top_h - $gap;
+            $top_w = (int) floor(($width - $gap) / 2);
+            $bot_w = (int) floor(($width - (2 * $gap)) / 3);
+            return array(
+                array('x' => 0, 'y' => 0, 'w' => $top_w, 'h' => $top_h),
+                array('x' => $top_w + $gap, 'y' => 0, 'w' => $width - $top_w - $gap, 'h' => $top_h),
+                array('x' => 0, 'y' => $top_h + $gap, 'w' => $bot_w, 'h' => $bot_h),
+                array('x' => $bot_w + $gap, 'y' => $top_h + $gap, 'w' => $bot_w, 'h' => $bot_h),
+                array('x' => (2 * $bot_w) + (2 * $gap), 'y' => $top_h + $gap, 'w' => $width - (2 * $bot_w) - (2 * $gap), 'h' => $bot_h),
+            );
+        }
+        $cell_w = (int) floor(($width - (2 * $gap)) / 3);
         $cell_h = (int) floor(($height - $gap) / 2);
-        return array(
-            array('x' => 0, 'y' => 0, 'w' => $cell_w, 'h' => $cell_h),
-            array('x' => $cell_w + $gap, 'y' => 0, 'w' => $width - $cell_w - $gap, 'h' => $cell_h),
-            array('x' => 0, 'y' => $cell_h + $gap, 'w' => $cell_w, 'h' => $height - $cell_h - $gap),
-            array('x' => $cell_w + $gap, 'y' => $cell_h + $gap, 'w' => $width - $cell_w - $gap, 'h' => $height - $cell_h - $gap),
-        );
+        $cells = array();
+        for ($row = 0; $row < 2; $row++) {
+            for ($col = 0; $col < 3; $col++) {
+                $x = $col * ($cell_w + $gap);
+                $y = $row * ($cell_h + $gap);
+                $w = ($col === 2) ? ($width - $x) : $cell_w;
+                $h = ($row === 1) ? ($height - $y) : $cell_h;
+                $cells[] = array('x' => $x, 'y' => $y, 'w' => $w, 'h' => $h);
+            }
+        }
+        return $cells;
     }
 
     private function social_image_camera($post, $revision = 0) {
@@ -2400,23 +2443,23 @@ trait TechnoRapper_AI_Wire_Social {
             <p>Automatic distribution is <?php echo !empty($settings['social_distribution_enabled']) ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Turning it off pauses queued work. Today: <?php echo esc_html((string) $this->social_published_today()); ?> / <?php echo esc_html((string) (int) ($settings['social_daily_limit'] ?? 10)); ?> articles distributed.</p>
             <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated.</p>
             <?php
+            $wanted = $this->social_slide_count($settings);
             $format_labels = array(
                 'single' => 'one Instagram post per article',
-                'carousel' => 'a carousel of 3–4 website articles in one Instagram post',
-                'collage' => 'a collage of 3–4 website articles in one Instagram image',
+                'carousel' => 'a carousel of ' . (string) $wanted . ' website articles in one Instagram post',
+                'collage' => 'a collage of ' . (string) $wanted . ' website articles in one Instagram image',
             );
             $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
             ?>
             <p>The social job currently posts <strong><?php echo esc_html($format_labels[$format] ?? 'one Instagram post per article'); ?></strong><?php
             if ($format !== 'single') {
-                echo ' (waits for ' . esc_html((string) $this->social_slide_count($settings)) . ' queued articles, or up to ' . esc_html((string) (int) ($settings['social_pack_wait_minutes'] ?? 120)) . ' minutes)';
-                $waiting = $this->instagram_queued_article_count();
-                $wanted = $this->social_slide_count($settings);
-                if ($waiting > 0 && $waiting < $wanted) {
-                    echo '. Holding ' . esc_html((string) $waiting) . ' article' . ($waiting === 1 ? '' : 's') . ' until the pack is full';
+                echo ' after counting ' . esc_html((string) $wanted) . ' website publishes';
+                $holding = count($this->social_batch_ids());
+                if ($holding > 0 && $holding < $wanted) {
+                    echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' until the count is full, then the count resets to zero';
                 }
             }
-            ?>. Change this under Settings → Social distribution. X still posts one tweet per article as soon as it publishes. Process now skips the Instagram wait.</p>
+            ?>. Change this under Settings → Social distribution. X still posts one tweet per article when that social pipeline runs. Process now ships whatever is waiting even if the count is not full.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);
@@ -2428,7 +2471,7 @@ trait TechnoRapper_AI_Wire_Social {
                 <input type="hidden" name="action" value="tr_ai_wire_run_social_queue">
                 <?php wp_nonce_field('tr_ai_wire_run_social_queue'); ?>
                 <?php submit_button('Process queued social posts now', 'secondary', 'submit', false); ?>
-                <p class="description" style="display:inline;margin-left:8px;">Generates missing graphics and tries to publish up to 5 waiting rows. Use this after raising the daily limit.</p>
+                <p class="description" style="display:inline;margin-left:8px;">Generates missing graphics and tries to publish up to 5 waiting rows. Use this after raising the daily limit, or to ship a leftover batch before the count is full.</p>
             </form>
             <p class="description">Each row is one platform post for a published AI Wire article. The graphic on the right is the branded social card — not the article featured image. The worker generates that card, writes a caption, then tries to publish it.<?php
             if ($next_run) {

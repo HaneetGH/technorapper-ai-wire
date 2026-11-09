@@ -24,6 +24,7 @@ final class TechnoRapper_AI_Wire {
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const SOCIAL_CREDENTIALS_OPTION = 'tr_ai_wire_social_credentials';
     const SOCIAL_CONTEXT_OPTION = 'tr_ai_wire_site_context';
+    const SOCIAL_BATCH_OPTION = 'tr_ai_wire_social_batch';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
     const SOCIAL_CRON_HOOK = 'tr_ai_wire_process_social_queue';
     const SOCIAL_CONTEXT_CRON_HOOK = 'tr_ai_wire_learn_site_context';

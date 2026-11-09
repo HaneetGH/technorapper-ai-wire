@@ -114,7 +114,7 @@ The local implementation is already intended to provide:
 - One Luna JSON copy pass writes hook, on-image headline, captions and visual brief. GPT Image 2 low then generates a portrait photograph; GD overlays TechnoRapper branding, headline, supporting line and handle as a 1080×1350 JPEG using one of five hashed poster layouts so posts do not share one identical template. Same attachment is reused across platforms and is never the article featured image.
 - A separate local monthly social-image estimate at `$0.006` per image, with `$5` default budget. This is a conservative app-side estimate, not an OpenAI provider-side hard cap or invoice.
 - X v2 media initialize/append/finalize/status followed by post creation with media and a link. X media calls/posts incur X plan or usage charges outside the image budget.
-- Instagram Graph API container creation/status/publish, including optional carousel packing of 3–4 queued website articles into one Instagram post, or a collage of those posters; an account quota lookup; the public Media Library URL; caption and alt text.
+- Instagram Graph API container creation/status/publish, including optional carousel packing of 4–6 website articles (count from Settings) into one Instagram post after that many site publishes, or a collage of those posters; an account quota lookup; the public Media Library URL; caption and alt text. The count then resets to zero.
 - An admin queue view, published links, error text, and manual retry flow requiring an explicit “not already published” confirmation.
 - README and image-cost documentation describing requirements, toggle, cost, and rollout.
 
