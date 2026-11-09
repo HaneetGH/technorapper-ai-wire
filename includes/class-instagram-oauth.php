@@ -231,13 +231,15 @@ final class TechnoRapper_AI_Wire_Instagram_OAuth {
             echo '<div class="notice notice-success is-dismissible"><p><strong>Instagram connected.</strong> ' . ($username !== '' ? esc_html('@' . $username . ' is ready for AI Wire publishing.') : 'The Instagram access token and account ID were saved securely.') . '</p></div>';
         }
 
-        if (!self::configured()) {
-            echo '<div class="notice notice-warning"><p><strong>Instagram publishing:</strong> add the Meta App ID, App Secret and Unified Login Configuration ID to <code>wp-config.php</code> before connecting <code>@techno.rapper</code>.</p></div>';
-            return;
-        }
-
         $credentials = get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array());
         $connected = !empty($credentials['instagram_user_access_token']) && !empty($credentials['instagram_user_id']);
+
+        if (!self::configured()) {
+            if (!$connected) {
+                echo '<div class="notice notice-info"><p><strong>Instagram publishing:</strong> paste a Facebook Page access token and Professional account ID in Card 2. The Meta App ID / Unified Login values in <code>wp-config.php</code> are only needed for the optional one-click Connect button, not for publishing.</p></div>';
+            }
+            return;
+        }
 
         echo '<div class="notice notice-info"><p><strong>Instagram publishing:</strong> ' . ($connected ? 'connected' : 'not connected') . ' · ';
         if (!$connected) {
