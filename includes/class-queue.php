@@ -31,12 +31,11 @@ trait TechnoRapper_AI_Wire_Queue {
         $blocked = is_array($review) && $this->review_draft_blockers($review, $s);
         if ($this->should_force_publish_retry($item, $rewrite, $review, $s) && !$blocked) {
             $this->update_item($id, array(
-                'status' => 'reviewed',
                 'attempts' => 0,
                 'next_retry_at' => null,
                 'error_text' => null,
             ));
-            $this->advance_item_until_idle($id, $s);
+            $this->force_publish_item($id, $item, $rewrite, $review, $s);
             return;
         }
         $fields = array(
@@ -47,7 +46,7 @@ trait TechnoRapper_AI_Wire_Queue {
             'review_json' => '',
         );
         $this->update_item($id, $fields);
-        $this->advance_item_until_idle($id, $s);
+        $this->process_item($id, $s, true);
     }
 
     public function is_run_in_progress() {

@@ -134,7 +134,11 @@ trait TechnoRapper_AI_Wire_Feeds {
             if ($waiting_id < 1) {
                 break;
             }
-            $this->advance_item_until_idle((int) $waiting_id, $s, 5, $started_at, $time_budget_seconds, $lock_token);
+            if ($foreground) {
+                $this->advance_item_until_idle((int) $waiting_id, $s, 5, $started_at, $time_budget_seconds, $lock_token);
+            } else {
+                $this->process_item((int) $waiting_id, $s, false);
+            }
             $touched[(int) $waiting_id] = true;
             $processed_this_run++;
             $summary['processed'] = $processed_this_run;

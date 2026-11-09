@@ -533,7 +533,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($new_status !== 'publish' || !($post instanceof WP_Post) || $post->post_type !== 'post') {
             return;
         }
-        if (!in_array((string) $old_status, array('draft', 'pending', 'future'), true)) {
+        if (!in_array((string) $old_status, array('draft', 'pending', 'future', 'auto-draft'), true)) {
             return;
         }
         if (wp_is_post_revision($post->ID) || !get_post_meta($post->ID, '_tr_ai_wire_queue_id', true)) {

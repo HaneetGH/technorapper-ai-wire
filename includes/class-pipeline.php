@@ -28,7 +28,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return false;
         }
         $status = $this->pipeline_status($item['status'] ?? '');
-        if (in_array($status, array('pending', 'generated', 'reviewed', 'waiting_budget'), true)) {
+        if (in_array($status, array('pending', 'generated', 'reviewed', 'waiting_budget', 'quarantined'), true)) {
             return true;
         }
         if ($status === 'retry_wait') {
@@ -52,7 +52,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
         return (int) $wpdb->get_var($wpdb->prepare(
             "SELECT id FROM {$this->table}
              WHERE (
-                (status IN ('pending', 'new', 'waiting_budget', 'generated', 'rewritten') AND (wp_post_id IS NULL OR wp_post_id = 0))
+                (status IN ('pending', 'new', 'waiting_budget', 'generated', 'rewritten', 'quarantined') AND (wp_post_id IS NULL OR wp_post_id = 0))
                 OR status = 'reviewed'
                 OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s))
              ){$not_in}
@@ -63,13 +63,16 @@ trait TechnoRapper_AI_Wire_Pipeline {
     }
 
     /**
-     * Advance one pipeline stage and persist it. The unused $complete flag is
-     * kept so historical callers do not fatally mismatch; it no longer chains
-     * writer, reviewer, and publisher in one request.
+     * Advance one committed pipeline stage. Manual Run now still finishes
+     * writer, independent review, and publish in the same request, matching
+     * the previous operator workflow.
      */
     private function process_item($id, $s, $complete = false) {
-        unset($complete);
         try {
+            if ($complete) {
+                $this->advance_item_until_idle((int) $id, $s);
+                return;
+            }
             $this->process_item_stage((int) $id, $s);
         } catch (Throwable $e) {
             $item = $this->get_item((int) $id);
@@ -111,10 +114,14 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $status = $this->pipeline_status($item['status'] ?? '');
-        if (in_array($status, array('quarantined', 'draft', 'published', 'error'), true)) {
+        if (in_array($status, array('draft', 'published', 'error'), true)) {
             return;
         }
         $s = $this->settings_for_item($item, $s);
+        if ($status === 'quarantined') {
+            $this->pipeline_republish_if_clear($id, $item, $s);
+            return;
+        }
         if (in_array($status, array('pending', 'waiting_budget', 'retry_wait'), true)) {
             $this->pipeline_generate($id, $item, $s);
             return;
@@ -146,6 +153,13 @@ trait TechnoRapper_AI_Wire_Pipeline {
         $rewrite = $this->prepare_rewrite_seo($rewrite);
         if (!$this->has_usable_rewrite($rewrite)) {
             $this->quarantine_item($id, 'Writer returned an empty title or body. Held for manual review.', $item, array(
+                'rewrite_json' => wp_json_encode($rewrite),
+            ));
+            return;
+        }
+        $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s);
+        if ($seo_blockers) {
+            $this->quarantine_item($id, 'Held after rewrite SEO tests: ' . implode(', ', $seo_blockers), $item, array(
                 'rewrite_json' => wp_json_encode($rewrite),
             ));
             return;
@@ -222,6 +236,24 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $this->create_draft($id, $item, $rewrite, $review, $s);
+    }
+
+    /**
+     * A later run with looser gates can still publish a stored rewrite/review
+     * that now clears, matching the previous queue behaviour. Missing payloads
+     * stay quarantined until Retry.
+     */
+    private function pipeline_republish_if_clear($id, $item, $s) {
+        $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
+        $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
+        if (!is_array($rewrite) || !is_array($review) || !$this->has_usable_rewrite($rewrite)) {
+            return;
+        }
+        $rewrite = $this->prepare_rewrite_seo($rewrite);
+        if ($this->review_draft_blockers($review, $s) || $this->rewrite_seo_blockers($rewrite, $s)) {
+            return;
+        }
+        $this->pipeline_publish($id, $item, $s);
     }
 
     private function handle_stage_error($id, $error) {
