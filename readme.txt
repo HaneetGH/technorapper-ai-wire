@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram
 Requires at least: 6.2
 Tested up to: 6.8
-Stable tag: 0.2.46
+Stable tag: 0.2.47
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -51,6 +51,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.47 =
+* Ship readme.txt and LICENSE inside the GitHub Release ZIP so WordPress.org Plugin Check can see the GPLv2 license.
+
 = 0.2.46 =
 * Declare GPLv2 or later in readme.txt and the plugin header License URI for WordPress.org Plugin Check.
 
@@ -59,5 +62,5 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Upgrade Notice ==
 
-= 0.2.46 =
-Adds the WordPress.org readme.txt license declaration required to submit the plugin.
+= 0.2.47 =
+Use this GitHub Release ZIP for wordpress.org upload. Older zips omitted readme.txt, which Plugin Check reports as no license.

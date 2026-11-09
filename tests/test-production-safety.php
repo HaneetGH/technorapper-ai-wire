@@ -182,6 +182,23 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(TechnoRapper_AI_Wire::VERSION, $matches[1]);
     }
 
+    public function test_release_package_includes_readme_txt_license() {
+        $root = dirname(__DIR__);
+        $script = $root . '/scripts/package-plugin.sh';
+        $this->assertFileExists($script);
+        $dest = sys_get_temp_dir() . '/tr-ai-wire-pack-' . uniqid('', true);
+        $cmd = 'bash ' . escapeshellarg($script) . ' ' . escapeshellarg($dest);
+        exec($cmd . ' 2>&1', $output, $code);
+        $this->assertSame(0, $code, implode("\n", $output));
+        $this->assertFileExists($dest . '/readme.txt');
+        $this->assertFileExists($dest . '/LICENSE');
+        $packed = file_get_contents($dest . '/readme.txt');
+        $this->assertMatchesRegularExpression('/^License:\s*GPLv2 or later\s*$/m', $packed);
+        $tag_workflow = file_get_contents($root . '/.github/workflows/tag-version.yml');
+        $this->assertStringContainsString('scripts/package-plugin.sh', $tag_workflow);
+        $this->assertStringNotContainsString('cp technorapper-ai-wire.php README.md dist/technorapper-ai-wire/', $tag_workflow);
+    }
+
     public function test_activation_creates_all_required_tables() {
         global $wpdb;
         $expected = array(
