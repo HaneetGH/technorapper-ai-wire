@@ -2,33 +2,40 @@
 
 Ready-to-paste posts. They describe the plugin as a generic WordPress tool. They do not include tokens, private dashboards, internal queue IDs, or one newsroom’s playbook.
 
-Repository: https://github.com/HaneetGH/technorapper-ai-wire  
-License: GPLv2 or later
+Repository: https://github.com/HaneetGH/technorapper-ai-wire
 
 ## LinkedIn
 
-We are open-sourcing AI Wire, a WordPress plugin any publisher can run.
+We are open-sourcing AI Wire.
 
-It takes RSS or Atom feeds you configure, writes an attributed draft, runs a separate AI review, and can publish to WordPress. After an article is live, it can optionally create one branded graphic and post it to X and/or Instagram — using **your** site name, **your** feeds, and **your** social accounts.
+It is a WordPress plugin any publisher can run: your RSS feeds become reviewed articles on your site, then can become branded posts on your X and Instagram.
 
-This is not a closed pipeline for one brand. Install it on any WordPress 6.2+ site. Point it at your OpenAI key. Connect your X developer app and/or your Instagram Professional account. Social distribution stays off until you turn each network on.
+What it does
 
-A few cost facts we want in the open, because they get mixed up:
+You point it at feeds you choose. A writer pass turns each new item into an original, source-attributed article. A separate reviewer checks claims, usefulness, and policy before anything goes live. Passing items can publish automatically, or wait as drafts. After the WordPress article is live, an optional social worker can create one branded graphic and post it to the networks you turned on.
 
-- OpenAI bills writer, reviewer, and social images. You set monthly budgets in the plugin.
-- Automated X posts go through the X API. That spends **X developer credits**. If the queue says “credits depleted”, top up in the X Developer Console. That is not the image budget, and it is not Instagram.
-- Instagram Graph publishing has **no Meta per-post fee**. Meta enforces a rolling 24-hour quota. When the quota is full, the plugin waits and retries.
+Pipeline
 
-Credentials never belong in the git repo. Each operator stores their own keys on their own WordPress host.
+Feeds → dedupe queue → Writer → independent Reviewer → WordPress draft or publish → (only if published) social copy + graphic → X and/or Instagram, each on its own queue row.
 
-Code, docs, and installable releases: https://github.com/HaneetGH/technorapper-ai-wire
+Rejected items stay quarantined. A failure on X does not retry or block Instagram, and the other way around. The social image is never the article featured image.
 
-If you run a newsroom, a niche blog, or a product site on WordPress and you want a reviewed RSS-to-article pipeline with optional social posting, you can use this.
+Architecture
+
+Two layers, not one giant agent.
+
+Editorial owns the article: ingestion, writer, reviewer, WordPress publish, SEO fields, daily and spend caps.
+
+Distribution is downstream. It starts only after WordPress confirms publish. It repackages approved fields into platform copy, renders a site-branded poster from your WordPress site name, and talks to X and Instagram through separate adapters. Site context (name, tagline, desks, recent stories) is learned from the install, so the pipeline is not hard-wired to one brand.
+
+You bring the WordPress site, the feeds, and the API keys. Social stays off until you enable each network.
+
+Code and walkthrough: https://github.com/HaneetGH/technorapper-ai-wire
 
 ## Shorter GitHub / X variant
 
-Open-sourcing AI Wire: a GPLv2 WordPress plugin that turns your RSS feeds into reviewed articles, then can post a branded graphic to your X and Instagram accounts.
+Open-sourcing AI Wire: RSS → writer → independent reviewer → WordPress article → optional branded graphic on your X and Instagram.
 
-Bring your own OpenAI key and social apps. Automated X posts need X API credits. Instagram API posting has no Meta per-post fee (rolling quota only).
+Editorial and social are separate layers. Social only runs after publish. One queue row per network, so one platform can fail without touching the other.
 
 https://github.com/HaneetGH/technorapper-ai-wire
