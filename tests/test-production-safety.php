@@ -527,6 +527,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK));
         $this->assertSame(0, (int) $settings['social_distribution_enabled']);
+        $this->assertSame('single', $settings['social_post_format']);
+        $this->assertSame(4, $settings['social_slide_count']);
     }
 
     public function test_activation_keeps_a_fresh_install_paused() {
@@ -2392,6 +2394,292 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $rail = imagecolorsforindex($left_im, imagecolorat($left_im, 4, 640));
         imagedestroy($left_im);
         $this->assertGreaterThan(30, (int) $rail['blue']);
+    }
+
+    public function test_social_post_format_settings_are_sanitized() {
+        $clean = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 3,
+        ));
+        $this->assertSame('carousel', $clean['social_post_format']);
+        $this->assertSame(3, $clean['social_slide_count']);
+        $rejected = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'album',
+            'social_slide_count' => 9,
+        ));
+        $this->assertSame('single', $rejected['social_post_format']);
+        $this->assertSame(4, $rejected['social_slide_count']);
+        $this->assertSame(1, $this->invoke_private('social_slide_count', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(3, $this->invoke_private('social_slide_count', array($clean)));
+    }
+
+    public function test_instagram_job_packs_three_website_articles_into_one_carousel() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 3,
+            'social_daily_limit' => 10,
+        )), false);
+        $headlines = array(
+            '13-inch or 15-inch Air?',
+            'When fake IDs become easier to scale',
+            'When big tech becomes politics',
+        );
+        $post_ids = array();
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        foreach ($headlines as $index => $headline) {
+            $attachment_id = $this->create_social_jpeg_attachment();
+            if ($attachment_id < 1) {
+                $this->markTestSkipped('GD and uploads are required to pack Instagram carousels.');
+            }
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => $headline,
+                'post_excerpt' => 'Story ' . (string) ($index + 1),
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 80 + $index);
+            update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+            update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+                'hook' => $headline,
+                'on_image_headline' => $headline,
+                'x' => $headline,
+                'instagram' => $headline,
+                'instagram_alt' => $headline,
+                'cta' => 'Read the full stories on TechnoRapper',
+                'hashtags' => array('tech'),
+            )));
+            $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+                'post_id' => $post_id,
+                'platform' => 'instagram',
+                'status' => 'queued',
+                'image_attachment_id' => $attachment_id,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ));
+            $post_ids[] = $post_id;
+        }
+        $requests = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$requests) {
+            $requests[] = array('url' => (string) $url, 'body' => $args['body'] ?? array());
+            if (strpos((string) $url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Pack should reuse cached copy and graphics.');
+            }
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-pack-media'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
+                $id = (!empty($body['media_type']) && $body['media_type'] === 'CAROUSEL') ? 'ig-pack-parent' : ('ig-pack-child-' . (string) count($requests));
+                return $this->mock_http_ok(array('id' => $id));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/pack/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $rows = $wpdb->get_results("SELECT post_id, status, remote_id, remote_url FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' ORDER BY post_id ASC", ARRAY_A);
+        $this->assertCount(3, $rows);
+        foreach ($rows as $row) {
+            $this->assertSame('published', $row['status']);
+            $this->assertSame('ig-pack-media', $row['remote_id']);
+            $this->assertSame('https://www.instagram.com/p/pack/', $row['remote_url']);
+        }
+        $child_items = 0;
+        $parents = 0;
+        $pack_caption = '';
+        foreach ($requests as $request) {
+            if (strpos($request['url'], '/media_publish') !== false || strpos($request['url'], '/media') === false) {
+                continue;
+            }
+            $body = is_array($request['body']) ? $request['body'] : array();
+            if (($body['is_carousel_item'] ?? '') === 'true') {
+                $child_items++;
+            }
+            if (($body['media_type'] ?? '') === 'CAROUSEL') {
+                $parents++;
+                $pack_caption = (string) ($body['caption'] ?? '');
+            }
+        }
+        $this->assertSame(3, $child_items);
+        $this->assertSame(1, $parents);
+        $this->assertStringContainsString('Today on TechnoRapper', $pack_caption);
+        $this->assertStringContainsString('13-inch or 15-inch Air?', $pack_caption);
+        $this->assertStringContainsString('When fake IDs become easier to scale', $pack_caption);
+        $this->assertStringContainsString('When big tech becomes politics', $pack_caption);
+        $this->assertSame(3, $this->invoke_private('social_published_today'));
+    }
+
+    public function test_instagram_carousel_setting_still_posts_a_single_article_when_only_one_is_queued() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the Instagram fallback path.');
+        }
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 4,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Only one story waiting',
+            'post_excerpt' => 'Should not stall.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 91);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Only one story waiting',
+            'on_image_headline' => 'Only one story waiting',
+            'x' => 'Only one story waiting',
+            'instagram' => 'Only one story waiting',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'image_attachment_id' => $attachment_id,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $parents = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$parents) {
+            if (strpos((string) $url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Should reuse the cached graphic.');
+            }
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-single-fallback'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
+                if (($body['media_type'] ?? '') === 'CAROUSEL' || ($body['is_carousel_item'] ?? '') === 'true') {
+                    $parents++;
+                }
+                return $this->mock_http_ok(array('id' => 'ig-single-container'));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/one/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertSame('ig-single-fallback', $row['remote_id']);
+        $this->assertSame(0, $parents);
+    }
+
+    public function test_social_collage_is_one_instagram_portrait() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render a collage.');
+        }
+        $tiles = array();
+        foreach (array('bottom-center', 'left-stack', 'kicker-bar', 'cover-top') as $variant) {
+            $im = imagecreatetruecolor(1080, 1350);
+            imagefilledrectangle($im, 0, 0, 1079, 1349, imagecolorallocate($im, 20, 18, 22));
+            ob_start();
+            imagejpeg($im, null, 80);
+            $bytes = ob_get_clean();
+            imagedestroy($im);
+            $branded = $this->invoke_private('brand_social_image', array($bytes, array(
+                '_poster_variant' => $variant,
+                'on_image_headline' => 'When fake IDs become easier to scale',
+                'on_image_subhead' => 'OnlyFake raises questions',
+            )));
+            $this->assertTrue(is_string($branded) && $branded !== '');
+            $tiles[] = $branded;
+        }
+        $collage = $this->invoke_private('compose_social_collage', array($tiles));
+        $this->assertTrue(is_string($collage) && $collage !== '');
+        $info = getimagesizefromstring($collage);
+        $this->assertSame(1080, $info[0]);
+        $this->assertSame(1350, $info[1]);
+        $dir = '/opt/cursor/artifacts';
+        if (is_dir($dir) || mkdir($dir, 0755, true)) {
+            file_put_contents($dir . '/instagram_poster_collage.jpg', $collage);
+        }
+    }
+
+    public function test_instagram_carousel_publishes_child_containers_then_parent() {
+        $this->onboard_social(array('instagram'));
+        $requests = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$requests) {
+            $requests[] = array('url' => (string) $url, 'body' => $args['body'] ?? array());
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-carousel-media'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
+                $id = (!empty($body['media_type']) && $body['media_type'] === 'CAROUSEL') ? 'ig-carousel-parent' : ('ig-child-' . (string) (count($requests)));
+                return $this->mock_http_ok(array('id' => $id));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/carousel/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $result = $this->invoke_private('publish_instagram_post', array(
+            'Caption for the carousel',
+            'Alt text',
+            array(
+                'https://example.org/slide-1.jpg',
+                'https://example.org/slide-2.jpg',
+                'https://example.org/slide-3.jpg',
+            ),
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION),
+        ));
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame('ig-carousel-media', $result['id']);
+        $this->assertSame('https://www.instagram.com/p/carousel/', $result['url']);
+        $child_items = 0;
+        $parents = 0;
+        foreach ($requests as $request) {
+            if (strpos($request['url'], '/media_publish') !== false || strpos($request['url'], '/media') === false) {
+                continue;
+            }
+            $body = is_array($request['body']) ? $request['body'] : array();
+            if (($body['is_carousel_item'] ?? '') === 'true') {
+                $child_items++;
+                $this->assertArrayNotHasKey('caption', $body);
+            }
+            if (($body['media_type'] ?? '') === 'CAROUSEL') {
+                $parents++;
+                $this->assertSame('Caption for the carousel', $body['caption'] ?? '');
+                $this->assertStringContainsString(',', (string) ($body['children'] ?? ''));
+            }
+        }
+        $this->assertSame(3, $child_items);
+        $this->assertSame(1, $parents);
     }
 
     public function test_site_context_needs_refresh_until_a_successful_read() {

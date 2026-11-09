@@ -33,6 +33,8 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_distribution_enabled' => 0,
             'social_daily_limit' => 10,
             'social_image_budget_usd' => 5,
+            'social_post_format' => 'single',
+            'social_slide_count' => 4,
             'seo_min_score' => 50,
             'seo_max_readability_errors' => 3,
             'seo_require_keyphrase' => 1,
@@ -135,6 +137,10 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_distribution_enabled'] = empty($input['social_distribution_enabled']) ? 0 : 1;
         $out['social_daily_limit'] = min(10, max(1, absint($input['social_daily_limit'] ?? $defaults['social_daily_limit'])));
         $out['social_image_budget_usd'] = min(10000, max(0, (float) ($input['social_image_budget_usd'] ?? $defaults['social_image_budget_usd'])));
+        $formats = array('single', 'carousel', 'collage');
+        $format = sanitize_key((string) ($input['social_post_format'] ?? $defaults['social_post_format']));
+        $out['social_post_format'] = in_array($format, $formats, true) ? $format : 'single';
+        $out['social_slide_count'] = min(4, max(2, absint($input['social_slide_count'] ?? $defaults['social_slide_count'])));
         $out['seo_min_score'] = min(100, max(0, absint($input['seo_min_score'] ?? $defaults['seo_min_score'])));
         $out['seo_max_readability_errors'] = min(20, max(0, absint($input['seo_max_readability_errors'] ?? $defaults['seo_max_readability_errors'])));
         $out['seo_require_keyphrase'] = empty($input['seo_require_keyphrase']) ? 0 : 1;

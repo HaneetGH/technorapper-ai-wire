@@ -509,6 +509,15 @@ trait TechnoRapper_AI_Wire_Social {
             if ($claimed !== 1) {
                 continue;
             }
+            $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
+            $pack = array($row);
+            if ($row['platform'] === 'instagram' && $format !== 'single' && !$this->social_item_is_manual_repost($row)) {
+                $pack = $this->claim_instagram_pack($row, $limit, $settings);
+            }
+            if (count($pack) > 1) {
+                $this->finish_instagram_pack($pack, $this->publish_instagram_pack($pack, $credentials, $settings));
+                break;
+            }
             $result = $this->publish_social_item($row, $credentials, $settings);
             if (is_wp_error($result)) {
                 if ($result->get_error_code() === 'tr_ai_wire_social_image_busy') {
@@ -590,6 +599,26 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function publish_social_item($row, $credentials, $settings) {
+        $prepared = $this->prepare_social_delivery($row, $settings);
+        if (is_wp_error($prepared)) {
+            return $prepared;
+        }
+        if ($row['platform'] === 'x') {
+            if (empty($credentials['x_user_access_token'])) {
+                return new WP_Error('tr_ai_wire_x_missing_token', 'The X access token is no longer configured.');
+            }
+            return $this->publish_x_post($prepared['copy']['x'], $prepared['image_path'], $credentials['x_user_access_token']);
+        }
+        if ($row['platform'] === 'instagram') {
+            if (empty($credentials['instagram_user_access_token']) || empty($credentials['instagram_user_id'])) {
+                return new WP_Error('tr_ai_wire_ig_missing_token', 'The Instagram access token or account ID is no longer configured.');
+            }
+            return $this->publish_instagram_post($prepared['copy']['instagram'], $prepared['copy']['instagram_alt'], $prepared['image_url'], $credentials);
+        }
+        return new WP_Error('tr_ai_wire_social_platform', 'Unknown social platform.');
+    }
+
+    private function prepare_social_delivery($row, $settings) {
         $post = get_post((int) $row['post_id']);
         if (!$post || $post->post_status !== 'publish') {
             return new WP_Error('tr_ai_wire_social_post', 'The source article is no longer published.');
@@ -622,7 +651,8 @@ trait TechnoRapper_AI_Wire_Social {
             }
         }
         $image_path = get_attached_file($image_id);
-        if (!$image_path || !file_exists($image_path)) {
+        $image_url = wp_get_attachment_url($image_id);
+        if (!$image_path || !file_exists($image_path) || !$image_url) {
             return new WP_Error('tr_ai_wire_social_image', 'The generated social image is missing from WordPress Media.');
         }
         global $wpdb;
@@ -630,19 +660,183 @@ trait TechnoRapper_AI_Wire_Social {
             'image_attachment_id' => (int) $image_id,
             'copy_json' => wp_json_encode($copy),
         ), array('id' => (int) $row['id']));
-        if ($row['platform'] === 'x') {
-            if (empty($credentials['x_user_access_token'])) {
-                return new WP_Error('tr_ai_wire_x_missing_token', 'The X access token is no longer configured.');
+        return array(
+            'row' => $row,
+            'post' => $post,
+            'copy' => $copy,
+            'image_id' => (int) $image_id,
+            'image_path' => $image_path,
+            'image_url' => $image_url,
+        );
+    }
+
+    private function claim_instagram_pack($lead, $limit, $settings) {
+        global $wpdb;
+        $table = $this->social_table();
+        $wanted = $this->social_slide_count($settings);
+        $pack = array($lead);
+        $seen = array((int) $lead['post_id'] => true);
+        $slots_left = max(0, $limit - $this->social_published_today());
+        $new_in_pack = ($this->social_post_published_today((int) $lead['post_id']) || $this->social_item_is_manual_repost($lead)) ? 0 : 1;
+        $candidates = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE status = 'queued' AND platform = 'instagram' AND id != %d ORDER BY created_at ASC LIMIT 25",
+            (int) $lead['id']
+        ), ARRAY_A);
+        foreach ((array) $candidates as $candidate) {
+            if (count($pack) >= $wanted) {
+                break;
             }
-            return $this->publish_x_post($copy['x'], $image_path, $credentials['x_user_access_token']);
-        }
-        if ($row['platform'] === 'instagram') {
-            if (empty($credentials['instagram_user_access_token']) || empty($credentials['instagram_user_id'])) {
-                return new WP_Error('tr_ai_wire_ig_missing_token', 'The Instagram access token or account ID is no longer configured.');
+            $post_id = (int) $candidate['post_id'];
+            if (isset($seen[$post_id]) || $this->social_item_is_manual_repost($candidate)) {
+                continue;
             }
-            return $this->publish_instagram_post($copy['instagram'], $copy['instagram_alt'], wp_get_attachment_url($image_id), $credentials);
+            $post = get_post($post_id);
+            if (!$post || $post->post_status !== 'publish') {
+                continue;
+            }
+            $is_new = !$this->social_post_published_today($post_id);
+            if ($is_new && $new_in_pack >= $slots_left) {
+                continue;
+            }
+            $claimed = $wpdb->query($wpdb->prepare(
+                "UPDATE {$table} SET status = 'processing', attempts = attempts + 1, updated_at = %s WHERE id = %d AND status = 'queued'",
+                current_time('mysql', true),
+                (int) $candidate['id']
+            ));
+            if ($claimed !== 1) {
+                continue;
+            }
+            $candidate['status'] = 'processing';
+            $pack[] = $candidate;
+            $seen[$post_id] = true;
+            if ($is_new) {
+                $new_in_pack++;
+            }
         }
-        return new WP_Error('tr_ai_wire_social_platform', 'Unknown social platform.');
+        return $pack;
+    }
+
+    private function publish_instagram_pack($pack, $credentials, $settings) {
+        if (empty($credentials['instagram_user_access_token']) || empty($credentials['instagram_user_id'])) {
+            return new WP_Error('tr_ai_wire_ig_missing_token', 'The Instagram access token or account ID is no longer configured.');
+        }
+        $prepared = array();
+        foreach ($pack as $row) {
+            $item = $this->prepare_social_delivery($row, $settings);
+            if (is_wp_error($item)) {
+                return $item;
+            }
+            $prepared[] = $item;
+        }
+        if (count($prepared) < 2) {
+            $first = $prepared[0];
+            return $this->publish_instagram_post($first['copy']['instagram'], $first['copy']['instagram_alt'], $first['image_url'], $credentials);
+        }
+        $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'carousel');
+        $caption = $this->instagram_pack_caption($prepared);
+        $alt = (string) ($prepared[0]['copy']['instagram_alt'] ?? 'TechnoRapper stories');
+        if ($format === 'collage') {
+            $bytes = array();
+            foreach ($prepared as $item) {
+                $jpeg = file_get_contents($item['image_path']);
+                if (is_string($jpeg) && $jpeg !== '') {
+                    $bytes[] = $jpeg;
+                }
+            }
+            $collage = $this->compose_social_collage($bytes);
+            if (is_wp_error($collage)) {
+                return $collage;
+            }
+            $stored = $this->store_social_jpeg($prepared[0]['post'], $collage, 'TechnoRapper roundup', $prepared[0]['copy'], 'collage', 'pack');
+            if (is_wp_error($stored)) {
+                return $stored;
+            }
+            $url = wp_get_attachment_url((int) $stored);
+            if (!$url) {
+                return new WP_Error('tr_ai_wire_ig_image_url', 'The Instagram collage must have a public HTTP(S) Media Library URL.');
+            }
+            return $this->publish_instagram_post($caption, $alt, array($url), $credentials);
+        }
+        $urls = array();
+        foreach ($prepared as $item) {
+            $urls[] = $item['image_url'];
+        }
+        return $this->publish_instagram_post($caption, $alt, $urls, $credentials);
+    }
+
+    private function instagram_pack_caption($prepared) {
+        $lines = array('Today on TechnoRapper:');
+        $hashtags = array();
+        $cta = 'Read the full stories on TechnoRapper';
+        foreach ($prepared as $item) {
+            $copy = is_array($item['copy'] ?? null) ? $item['copy'] : array();
+            $title = trim((string) ($copy['on_image_headline'] ?? ''));
+            if ($title === '' && $item['post'] instanceof WP_Post) {
+                $title = (string) $item['post']->post_title;
+            }
+            if ($title !== '') {
+                $lines[] = '• ' . $title;
+            }
+            if ($cta === 'Read the full stories on TechnoRapper' && !empty($copy['cta'])) {
+                $cta = (string) $copy['cta'];
+            }
+            foreach ((array) ($copy['hashtags'] ?? array()) as $tag) {
+                $tag = ltrim(strtolower((string) $tag), '#');
+                if ($tag !== '' && !in_array($tag, $hashtags, true)) {
+                    $hashtags[] = $tag;
+                }
+                if (count($hashtags) >= 8) {
+                    break;
+                }
+            }
+        }
+        $caption = implode("\n", $lines) . "\n\n" . $cta;
+        $home = home_url('/');
+        if (strpos($caption, $home) === false) {
+            $caption .= "\n" . $home;
+        }
+        if ($hashtags) {
+            $tag_line = '';
+            foreach ($hashtags as $tag) {
+                $tag_line .= '#' . $tag . ' ';
+            }
+            $caption .= "\n\n" . trim($tag_line);
+        }
+        return $this->clip_social_block($caption, 2200);
+    }
+
+    private function finish_instagram_pack($pack, $result) {
+        global $wpdb;
+        $table = $this->social_table();
+        if (is_wp_error($result)) {
+            $code = $result->get_error_code();
+            if ($code === 'tr_ai_wire_social_image_busy') {
+                foreach ($pack as $row) {
+                    $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
+                }
+                wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
+                return;
+            }
+            if ($code === 'tr_ai_wire_ig_quota_full') {
+                foreach ($pack as $row) {
+                    $wpdb->update($table, array(
+                        'status' => 'queued',
+                        'error_text' => $result->get_error_message(),
+                        'updated_at' => current_time('mysql', true),
+                    ), array('id' => (int) $row['id']));
+                }
+                wp_schedule_single_event(strtotime('+1 hour'), self::SOCIAL_CRON_HOOK);
+                return;
+            }
+            $this->finish_social_item($pack[0]['id'], 'needs_review', '', '', $result->get_error_message());
+            foreach (array_slice($pack, 1) as $row) {
+                $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
+            }
+            return;
+        }
+        foreach ($pack as $row) {
+            $this->finish_social_item($row['id'], 'published', $result['id'], $result['url'], '');
+        }
     }
 
     private function social_copy($post, $settings = null) {
@@ -886,28 +1080,10 @@ trait TechnoRapper_AI_Wire_Social {
         if (is_wp_error($branded)) {
             return $branded;
         }
-        $upload = wp_upload_bits('technorapper-social-' . (int) $post->ID . '.jpg', null, $branded);
-        if (!empty($upload['error'])) {
-            return new WP_Error('tr_ai_wire_social_image_upload', sanitize_text_field($upload['error']));
-        }
-        $attachment_id = wp_insert_attachment(array(
-            'post_mime_type' => 'image/jpeg',
-            'post_title' => sanitize_text_field($headline . ' — social graphic'),
-            'post_status' => 'inherit',
-            'post_parent' => 0,
-        ), $upload['file'], 0, true);
+        $attachment_id = $this->store_social_jpeg($post, $branded, $headline, $copy, $copy['_poster_variant']);
         if (is_wp_error($attachment_id)) {
             return $attachment_id;
         }
-        require_once ABSPATH . 'wp-admin/includes/image.php';
-        $metadata = wp_generate_attachment_metadata($attachment_id, $upload['file']);
-        if (is_array($metadata)) {
-            wp_update_attachment_metadata($attachment_id, $metadata);
-        }
-        update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field((string) ($copy['instagram_alt'] ?? $headline)));
-        update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
-        update_post_meta($attachment_id, '_tr_ai_wire_social_layout', self::SOCIAL_IMAGE_LAYOUT);
-        update_post_meta($attachment_id, '_tr_ai_wire_social_variant', (string) $copy['_poster_variant']);
         delete_post_meta((int) $post->ID, '_tr_ai_wire_social_regenerate_image');
         return (int) $attachment_id;
     }
@@ -973,6 +1149,110 @@ trait TechnoRapper_AI_Wire_Social {
         return 'The lower half of the frame is naturally dark and empty of objects so we can overlay type later.';
     }
 
+    private function normalize_social_post_format($format) {
+        $format = sanitize_key((string) $format);
+        return in_array($format, array('single', 'carousel', 'collage'), true) ? $format : 'single';
+    }
+
+    private function social_slide_count($settings) {
+        $format = $this->normalize_social_post_format(is_array($settings) ? ($settings['social_post_format'] ?? 'single') : 'single');
+        if ($format === 'single') {
+            return 1;
+        }
+        return min(4, max(2, (int) (is_array($settings) ? ($settings['social_slide_count'] ?? 4) : 4)));
+    }
+
+    private function store_social_jpeg($post, $bytes, $headline, $copy, $variant, $suffix = '') {
+        $name = 'technorapper-social-' . (int) $post->ID;
+        $suffix = sanitize_file_name((string) $suffix);
+        if ($suffix !== '') {
+            $name .= '-' . $suffix;
+        }
+        $upload = wp_upload_bits($name . '.jpg', null, $bytes);
+        if (!empty($upload['error'])) {
+            return new WP_Error('tr_ai_wire_social_image_upload', sanitize_text_field($upload['error']));
+        }
+        $attachment_id = wp_insert_attachment(array(
+            'post_mime_type' => 'image/jpeg',
+            'post_title' => sanitize_text_field($headline . ' — social graphic'),
+            'post_status' => 'inherit',
+            'post_parent' => 0,
+        ), $upload['file'], 0, true);
+        if (is_wp_error($attachment_id)) {
+            return $attachment_id;
+        }
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        $metadata = wp_generate_attachment_metadata($attachment_id, $upload['file']);
+        if (is_array($metadata)) {
+            wp_update_attachment_metadata($attachment_id, $metadata);
+        }
+        update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field((string) ($copy['instagram_alt'] ?? $headline)));
+        update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+        update_post_meta($attachment_id, '_tr_ai_wire_social_layout', self::SOCIAL_IMAGE_LAYOUT);
+        update_post_meta($attachment_id, '_tr_ai_wire_social_variant', sanitize_key((string) $variant));
+        return (int) $attachment_id;
+    }
+
+    private function compose_social_collage($jpegs) {
+        if (!function_exists('imagecreatefromstring') || !function_exists('imagejpeg')) {
+            return new WP_Error('tr_ai_wire_social_gd', 'PHP GD is required to render a social collage.');
+        }
+        $jpegs = array_values(array_filter((array) $jpegs, 'is_string'));
+        if (count($jpegs) < 2) {
+            return $jpegs[0] ?? new WP_Error('tr_ai_wire_social_collage', 'A collage needs at least two graphics.');
+        }
+        $width = 1080;
+        $height = 1350;
+        $gap = 8;
+        $canvas = imagecreatetruecolor($width, $height);
+        imagefilledrectangle($canvas, 0, 0, $width, $height, imagecolorallocate($canvas, 0, 0, 0));
+        foreach ($this->social_collage_cells(count($jpegs), $width, $height, $gap) as $index => $cell) {
+            if (!isset($jpegs[$index])) {
+                break;
+            }
+            $source = @imagecreatefromstring($jpegs[$index]);
+            if (!$source) {
+                continue;
+            }
+            imagecopyresampled($canvas, $source, $cell['x'], $cell['y'], 0, 0, $cell['w'], $cell['h'], imagesx($source), imagesy($source));
+            imagedestroy($source);
+        }
+        ob_start();
+        imagejpeg($canvas, null, 88);
+        $result = ob_get_clean();
+        imagedestroy($canvas);
+        return $result ? $result : new WP_Error('tr_ai_wire_social_collage', 'Could not render the collage.');
+    }
+
+    private function social_collage_cells($count, $width, $height, $gap) {
+        $count = max(2, min(4, (int) $count));
+        $gap = max(0, (int) $gap);
+        if ($count === 2) {
+            $cell_w = (int) floor(($width - $gap) / 2);
+            return array(
+                array('x' => 0, 'y' => 0, 'w' => $cell_w, 'h' => $height),
+                array('x' => $cell_w + $gap, 'y' => 0, 'w' => $width - $cell_w - $gap, 'h' => $height),
+            );
+        }
+        if ($count === 3) {
+            $top_h = (int) floor(($height - $gap) / 2);
+            $cell_w = (int) floor(($width - $gap) / 2);
+            return array(
+                array('x' => 0, 'y' => 0, 'w' => $width, 'h' => $top_h),
+                array('x' => 0, 'y' => $top_h + $gap, 'w' => $cell_w, 'h' => $height - $top_h - $gap),
+                array('x' => $cell_w + $gap, 'y' => $top_h + $gap, 'w' => $width - $cell_w - $gap, 'h' => $height - $top_h - $gap),
+            );
+        }
+        $cell_w = (int) floor(($width - $gap) / 2);
+        $cell_h = (int) floor(($height - $gap) / 2);
+        return array(
+            array('x' => 0, 'y' => 0, 'w' => $cell_w, 'h' => $cell_h),
+            array('x' => $cell_w + $gap, 'y' => 0, 'w' => $width - $cell_w - $gap, 'h' => $cell_h),
+            array('x' => 0, 'y' => $cell_h + $gap, 'w' => $cell_w, 'h' => $height - $cell_h - $gap),
+            array('x' => $cell_w + $gap, 'y' => $cell_h + $gap, 'w' => $width - $cell_w - $gap, 'h' => $height - $cell_h - $gap),
+        );
+    }
+
     private function social_image_camera($post, $revision = 0) {
         $cameras = array(
             'tight overhead still life of one device on a dark desk, hard side light',
@@ -1009,6 +1289,7 @@ trait TechnoRapper_AI_Wire_Social {
             return 0;
         }
         delete_post_meta($post_id, '_tr_ai_wire_social_image_id');
+        delete_post_meta($post_id, '_tr_ai_wire_social_slide_ids');
         $revision = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true);
         update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision + 1);
         update_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', '1');
@@ -1479,7 +1760,11 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function publish_instagram_post($caption, $alt_text, $image_url, $credentials) {
-        if (!$image_url || !wp_http_validate_url($image_url)) {
+        $urls = is_array($image_url) ? $image_url : array($image_url);
+        $urls = array_values(array_filter($urls, function ($url) {
+            return is_string($url) && $url !== '' && wp_http_validate_url($url);
+        }));
+        if (!$urls) {
             return new WP_Error('tr_ai_wire_ig_image_url', 'The Instagram image must have a public HTTP(S) Media Library URL.');
         }
         $credentials = $this->instagram_resolve_publish_credentials($credentials);
@@ -1494,21 +1779,63 @@ trait TechnoRapper_AI_Wire_Social {
         if (isset($limit['quota_usage'], $limit['config']['quota_total']) && (int) $limit['quota_usage'] >= (int) $limit['config']['quota_total']) {
             return new WP_Error('tr_ai_wire_ig_quota_full', 'Instagram publishing quota is full. The item is queued to try again later.');
         }
-        $container = $this->instagram_request($base . '/media', array(
-            'image_url' => $image_url,
-            'caption' => $caption,
-            'alt_text' => function_exists('mb_substr') ? mb_substr(sanitize_text_field($alt_text), 0, 1000, 'UTF-8') : substr(sanitize_text_field($alt_text), 0, 1000),
-            'access_token' => $credentials['instagram_user_access_token'],
-        ));
-        if (is_wp_error($container) || empty($container['id'])) {
-            return is_wp_error($container) ? $container : new WP_Error('tr_ai_wire_ig_container', 'Instagram did not return a media container ID.');
+        $alt = function_exists('mb_substr') ? mb_substr(sanitize_text_field($alt_text), 0, 1000, 'UTF-8') : substr(sanitize_text_field($alt_text), 0, 1000);
+        $token = $credentials['instagram_user_access_token'];
+        if (count($urls) === 1) {
+            $container = $this->instagram_request($base . '/media', array(
+                'image_url' => $urls[0],
+                'caption' => $caption,
+                'alt_text' => $alt,
+                'access_token' => $token,
+            ));
+            if (is_wp_error($container) || empty($container['id'])) {
+                return is_wp_error($container) ? $container : new WP_Error('tr_ai_wire_ig_container', 'Instagram did not return a media container ID.');
+            }
+            $wait = $this->instagram_wait_for_container((string) $container['id'], $token);
+            if (is_wp_error($wait)) {
+                return $wait;
+            }
+            return $this->instagram_publish_container((string) $container['id'], $credentials);
         }
-        $container_id = (string) $container['id'];
-        $ready = false;
+        $children = array();
+        foreach ($urls as $url) {
+            $child = $this->instagram_request($base . '/media', array(
+                'image_url' => $url,
+                'is_carousel_item' => 'true',
+                'alt_text' => $alt,
+                'access_token' => $token,
+            ));
+            if (is_wp_error($child) || empty($child['id'])) {
+                return is_wp_error($child) ? $child : new WP_Error('tr_ai_wire_ig_container', 'Instagram did not return a carousel item ID.');
+            }
+            $wait = $this->instagram_wait_for_container((string) $child['id'], $token);
+            if (is_wp_error($wait)) {
+                return $wait;
+            }
+            $children[] = (string) $child['id'];
+        }
+        $parent = $this->instagram_request($base . '/media', array(
+            'media_type' => 'CAROUSEL',
+            'children' => implode(',', $children),
+            'caption' => $caption,
+            'access_token' => $token,
+        ));
+        if (is_wp_error($parent) || empty($parent['id'])) {
+            return is_wp_error($parent) ? $parent : new WP_Error('tr_ai_wire_ig_container', 'Instagram did not return a carousel container ID.');
+        }
+        $wait = $this->instagram_wait_for_container((string) $parent['id'], $token);
+        if (is_wp_error($wait)) {
+            return $wait;
+        }
+        return $this->instagram_publish_container((string) $parent['id'], $credentials);
+    }
+
+    private function instagram_wait_for_container($container_id, $token) {
+        $container_id = (string) $container_id;
         for ($attempt = 0; $attempt < 6; $attempt++) {
             $status_url = add_query_arg(array(
                 'fields' => 'status_code',
-                'access_token' => $credentials['instagram_user_access_token'],
+                'access_token' => $token,
             ), 'https://graph.facebook.com/' . self::INSTAGRAM_GRAPH_VERSION . '/' . rawurlencode($container_id));
             $status_response = wp_remote_get($status_url, array('timeout' => 30));
             if (is_wp_error($status_response)) {
@@ -1521,17 +1848,18 @@ trait TechnoRapper_AI_Wire_Social {
             $status_data = json_decode(wp_remote_retrieve_body($status_response), true);
             $code = (string) ($status_data['status_code'] ?? '');
             if ($code === 'FINISHED') {
-                $ready = true;
-                break;
+                return true;
             }
             if ($code === 'ERROR' || $code === 'EXPIRED') {
                 return new WP_Error('tr_ai_wire_ig_processing', 'Instagram could not prepare the image container.');
             }
             sleep(1);
         }
-        if (!$ready) {
-            return new WP_Error('tr_ai_wire_ig_processing', 'Instagram image processing did not finish in time. Check the Social distribution queue before retrying.');
-        }
+        return new WP_Error('tr_ai_wire_ig_processing', 'Instagram image processing did not finish in time. Check the Social distribution queue before retrying.');
+    }
+
+    private function instagram_publish_container($container_id, $credentials) {
+        $base = 'https://graph.facebook.com/' . self::INSTAGRAM_GRAPH_VERSION . '/' . rawurlencode($credentials['instagram_user_id']);
         $published = $this->instagram_request($base . '/media_publish', array(
             'creation_id' => $container_id,
             'access_token' => $credentials['instagram_user_access_token'],
@@ -1737,6 +2065,18 @@ trait TechnoRapper_AI_Wire_Social {
         return !empty($data['permalink']) ? esc_url_raw($data['permalink']) : new WP_Error('tr_ai_wire_ig_permalink', 'Instagram did not return a permalink.');
     }
 
+    private function social_pack_size($remote_id) {
+        $remote_id = sanitize_text_field((string) $remote_id);
+        if ($remote_id === '') {
+            return 0;
+        }
+        global $wpdb;
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->social_table()} WHERE remote_id = %s AND platform = 'instagram'",
+            $remote_id
+        ));
+    }
+
     private function finish_social_item($id, $status, $remote_id, $remote_url, $error) {
         global $wpdb;
         $id = (int) $id;
@@ -1921,7 +2261,15 @@ trait TechnoRapper_AI_Wire_Social {
                 'class' => 'tr-ai-wire-social-preview-image',
                 'alt' => (string) ($copy['instagram_alt'] ?? $copy['on_image_headline'] ?? 'Generated social graphic'),
             ));
-            echo '<span class="tr-ai-wire-social-preview-label">' . ($this->social_image_is_current($image_id) ? 'Generated graphic' : 'Old graphic — retry rebuilds this') . '</span></a>';
+            $label = 'Generated graphic';
+            $remote_id = (string) ($row['remote_id'] ?? '');
+            if ($remote_id !== '' && $status === 'published') {
+                $pack_size = $this->social_pack_size($remote_id);
+                if ($pack_size > 1) {
+                    $label = 'Posted in a ' . $pack_size . '-story Instagram post';
+                }
+            }
+            echo '<span class="tr-ai-wire-social-preview-label">' . ($this->social_image_is_current($image_id) ? esc_html($label) : 'Old graphic — retry rebuilds this') . '</span></a>';
         } else {
             echo '<div class="tr-ai-wire-social-preview-empty">Graphic not generated yet. The worker creates it before posting.</div>';
         }
@@ -1989,6 +2337,15 @@ trait TechnoRapper_AI_Wire_Social {
             <?php $this->render_site_context_card('tr-ai-wire-social'); ?>
             <p>Automatic distribution is <?php echo !empty($settings['social_distribution_enabled']) ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Turning it off pauses queued work. Today: <?php echo esc_html((string) $this->social_published_today()); ?> / <?php echo esc_html((string) (int) ($settings['social_daily_limit'] ?? 10)); ?> articles distributed.</p>
             <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated.</p>
+            <?php
+            $format_labels = array(
+                'single' => 'one Instagram post per article',
+                'carousel' => 'a carousel of 3–4 website articles in one Instagram post',
+                'collage' => 'a collage of 3–4 website articles in one Instagram image',
+            );
+            $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
+            ?>
+            <p>The social job currently posts <strong><?php echo esc_html($format_labels[$format] ?? 'one Instagram post per article'); ?></strong><?php echo ($format !== 'single') ? ' (packs ' . esc_html((string) $this->social_slide_count($settings)) . ' queued articles when they are ready)' : ''; ?>. Change this under Settings → Social distribution. X still posts one tweet per article.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);
