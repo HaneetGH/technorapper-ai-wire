@@ -58,11 +58,7 @@ jobs:
 
       - name: Build installable plugin ZIP
         run: |
-          mkdir -p dist/technorapper-ai-wire/includes dist/technorapper-ai-wire/assets/fonts
-          cp technorapper-ai-wire.php README.md readme.txt LICENSE dist/technorapper-ai-wire/
-          cp includes/*.php dist/technorapper-ai-wire/includes/
-          cp assets/index.php dist/technorapper-ai-wire/assets/
-          cp assets/fonts/Anton-Regular.ttf assets/fonts/OFL.txt assets/fonts/index.php dist/technorapper-ai-wire/assets/fonts/
+          bash scripts/package-plugin.sh
           cd dist
           zip -r technorapper-ai-wire.zip technorapper-ai-wire
           sha256sum technorapper-ai-wire.zip > technorapper-ai-wire.zip.sha256
