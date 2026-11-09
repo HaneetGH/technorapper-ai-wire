@@ -529,6 +529,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, (int) $settings['social_distribution_enabled']);
         $this->assertSame('single', $settings['social_post_format']);
         $this->assertSame(4, $settings['social_slide_count']);
+        $this->assertSame(120, $settings['social_pack_wait_minutes']);
     }
 
     public function test_activation_keeps_a_fresh_install_paused() {
@@ -2411,6 +2412,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(4, $rejected['social_slide_count']);
         $this->assertSame(1, $this->invoke_private('social_slide_count', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertSame(3, $this->invoke_private('social_slide_count', array($clean)));
+        $wait = $this->plugin->sanitize_settings(array('social_pack_wait_minutes' => 5));
+        $this->assertSame(15, $wait['social_pack_wait_minutes']);
     }
 
     public function test_instagram_job_packs_three_website_articles_into_one_carousel() {
@@ -2520,7 +2523,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(3, $this->invoke_private('social_published_today'));
     }
 
-    public function test_instagram_carousel_setting_still_posts_a_single_article_when_only_one_is_queued() {
+    public function test_instagram_carousel_waits_for_a_full_pack_instead_of_posting_one_article() {
         $attachment_id = $this->create_social_jpeg_attachment();
         if ($attachment_id < 1) {
             $this->markTestSkipped('GD and uploads are required for the Instagram fallback path.');
@@ -2554,8 +2557,56 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'created_at' => $now,
             'updated_at' => $now,
         ));
-        $parents = 0;
-        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$parents) {
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, '/media') !== false || strpos((string) $url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Instagram should wait for a full pack.');
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
+        $this->assertSame('queued', $row['status']);
+        $this->assertSame('', (string) $row['remote_id']);
+        $this->assertFalse($this->invoke_private('instagram_pack_ready', array($this->invoke_private('settings'))));
+        $this->assertGreaterThan(time() + 60, (int) wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
+    }
+
+    public function test_instagram_pack_wait_expires_so_a_lone_article_still_posts() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the Instagram wait expiry path.');
+        }
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_slide_count' => 4,
+            'social_pack_wait_minutes' => 15,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Held too long',
+            'post_excerpt' => 'Timer expired.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 92);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Held too long',
+            'on_image_headline' => 'Held too long',
+            'x' => 'Held too long',
+            'instagram' => 'Held too long',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $old = gmdate('Y-m-d H:i:s', time() - (20 * MINUTE_IN_SECONDS));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'image_attachment_id' => $attachment_id,
+            'created_at' => $old,
+            'updated_at' => $old,
+        ));
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
             if (strpos((string) $url, 'api.openai.com') !== false) {
                 return new WP_Error('blocked', 'Should reuse the cached graphic.');
             }
@@ -2566,28 +2617,24 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
             }
             if (strpos((string) $url, '/media_publish') !== false) {
-                return $this->mock_http_ok(array('id' => 'ig-single-fallback'));
+                return $this->mock_http_ok(array('id' => 'ig-wait-expired'));
             }
             if (strpos((string) $url, '/media') !== false) {
-                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
-                if (($body['media_type'] ?? '') === 'CAROUSEL' || ($body['is_carousel_item'] ?? '') === 'true') {
-                    $parents++;
-                }
-                return $this->mock_http_ok(array('id' => 'ig-single-container'));
+                return $this->mock_http_ok(array('id' => 'ig-wait-container'));
             }
             if (strpos((string) $url, 'fields=status_code') !== false) {
                 return $this->mock_http_ok(array('status_code' => 'FINISHED'));
             }
             if (strpos((string) $url, 'fields=permalink') !== false) {
-                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/one/'));
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/expired/'));
             }
             return new WP_Error('blocked', 'Unexpected URL ' . $url);
         }, 10, 3);
+        $this->assertTrue($this->invoke_private('instagram_pack_ready', array($this->invoke_private('settings'))));
         $this->plugin->process_social_queue();
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
         $this->assertSame('published', $row['status']);
-        $this->assertSame('ig-single-fallback', $row['remote_id']);
-        $this->assertSame(0, $parents);
+        $this->assertSame('ig-wait-expired', $row['remote_id']);
     }
 
     public function test_social_collage_is_one_instagram_portrait() {
