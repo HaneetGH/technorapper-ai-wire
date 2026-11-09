@@ -513,7 +513,7 @@ trait TechnoRapper_AI_Wire_Social {
         $table = $this->social_table();
         $wpdb->query("UPDATE {$table} SET status = 'needs_review', error_text = 'The worker stopped before recording an outcome. Check the platform before retrying.' WHERE status = 'processing' AND updated_at < UTC_TIMESTAMP() - INTERVAL 15 MINUTE");
         $this->requeue_instagram_prepublish_quota_failures();
-        $rows = $wpdb->get_results("SELECT * FROM {$table} WHERE status = 'queued' ORDER BY created_at ASC LIMIT 25", ARRAY_A);
+        $rows = $this->social_queued_rows_for_worker($limit);
         foreach ((array) $rows as $row) {
             if (empty($this->settings()['social_distribution_enabled'])) {
                 break;
@@ -560,6 +560,9 @@ trait TechnoRapper_AI_Wire_Social {
                 // Do not auto-retry an ambiguous publish response: the platform
                 // may have accepted the post before the connection failed.
                 $this->finish_social_item($row['id'], 'needs_review', '', '', $result->get_error_message());
+                if ($this->social_finishable_queued_count() > 0) {
+                    $this->kick_social_queue(5);
+                }
                 break;
             }
             $this->finish_social_item($row['id'], 'published', $result['id'], $result['url'], '');
@@ -567,10 +570,54 @@ trait TechnoRapper_AI_Wire_Social {
         }
 
         $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE status = 'queued'");
-        $finishable = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} q WHERE q.status = 'queued' AND EXISTS (SELECT 1 FROM {$table} p WHERE p.post_id = q.post_id AND p.status = 'published' AND p.updated_at >= UTC_DATE())");
+        $finishable = $this->social_finishable_queued_count();
         if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0)) {
-            $this->kick_social_queue(60);
+            $this->kick_social_queue($finishable > 0 ? 5 : 60);
         }
+    }
+
+    private function social_queued_rows_for_worker($limit) {
+        global $wpdb;
+        $table = $this->social_table();
+        if ($this->social_published_today() < $limit) {
+            return $wpdb->get_results("SELECT * FROM {$table} WHERE status = 'queued' ORDER BY created_at ASC LIMIT 25", ARRAY_A);
+        }
+        return $wpdb->get_results(
+            "SELECT q.* FROM {$table} q
+             WHERE q.status = 'queued'
+               AND (
+                    EXISTS (
+                        SELECT 1 FROM {$table} p
+                        WHERE p.post_id = q.post_id
+                          AND p.status = 'published'
+                          AND p.updated_at >= UTC_DATE()
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} m
+                        WHERE m.post_id = q.post_id
+                          AND m.meta_key = CONCAT('_tr_ai_wire_social_repost_', q.id)
+                          AND m.meta_value = '1'
+                    )
+               )
+             ORDER BY q.created_at ASC
+             LIMIT 25",
+            ARRAY_A
+        );
+    }
+
+    private function social_finishable_queued_count() {
+        global $wpdb;
+        $table = $this->social_table();
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$table} q
+             WHERE q.status = 'queued'
+               AND EXISTS (
+                    SELECT 1 FROM {$table} p
+                    WHERE p.post_id = q.post_id
+                      AND p.status = 'published'
+                      AND p.updated_at >= UTC_DATE()
+               )"
+        );
     }
 
     private function social_queued_count() {
@@ -609,17 +656,20 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $this->flush_social_batch(true, true);
         $processed = 0;
-        for ($i = 0; $i < 5; $i++) {
+        for ($i = 0; $i < 15; $i++) {
             $before = $this->social_queued_count();
             if ($before < 1) {
                 break;
             }
             $this->process_social_queue();
             $after = $this->social_queued_count();
-            if ($after >= $before) {
+            if ($after < $before) {
+                $processed++;
+                continue;
+            }
+            if ($this->social_finishable_queued_count() < 1) {
                 break;
             }
-            $processed++;
         }
         $this->kick_social_queue(5);
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&social_ran=' . (int) $processed));
@@ -1599,9 +1649,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($updated !== 1) {
             return false;
         }
-        if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
-            wp_schedule_single_event(time() + 5, self::SOCIAL_CRON_HOOK);
-        }
+        $this->kick_social_queue(5);
         return true;
     }
 
@@ -2676,7 +2724,29 @@ trait TechnoRapper_AI_Wire_Social {
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <?php if (isset($_GET['social_ran'])) : ?><div class="notice notice-success is-dismissible"><p><?php echo ((int) $_GET['social_ran'] > 0) ? 'Processed queued social posts. Refresh in a minute if a graphic is still generating.' : 'No queued social post could be processed now. If items are still waiting, check the daily limit, image budget, and WP-Cron.'; ?></p></div><?php endif; ?>
             <?php $this->render_site_context_card('tr-ai-wire-social'); ?>
-            <p>Automatic distribution is <?php echo !empty($settings['social_distribution_enabled']) ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Turning it off pauses queued work. Today: <?php echo esc_html((string) $this->social_published_today()); ?> / <?php echo esc_html((string) (int) ($settings['social_daily_limit'] ?? 10)); ?> articles distributed.</p>
+            <?php
+            $published_today = $this->social_published_today();
+            $daily_limit = (int) ($settings['social_daily_limit'] ?? 10);
+            $failed_x = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->social_table()} WHERE platform = 'x' AND status = 'needs_review'");
+            $failed_ig = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->social_table()} WHERE platform = 'instagram' AND status = 'needs_review'");
+            $finishable_now = $this->social_finishable_queued_count();
+            ?>
+            <p>Automatic distribution is <?php echo !empty($settings['social_distribution_enabled']) ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Turning it off pauses queued work. Today: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?> articles distributed. That cap counts unique website articles, not each platform. A successful Instagram post does not spend an extra slot for X on the same article.</p>
+            <?php if ($published_today >= $daily_limit && ($failed_x > 0 || $failed_ig > 0 || $finishable_now > 0)) : ?>
+            <div class="notice notice-warning"><p><?php
+            $parts = array();
+            if ($failed_x > 0) {
+                $parts[] = (string) $failed_x . ' failed X post' . ($failed_x === 1 ? '' : 's');
+            }
+            if ($failed_ig > 0) {
+                $parts[] = (string) $failed_ig . ' failed Instagram post' . ($failed_ig === 1 ? '' : 's');
+            }
+            if ($finishable_now > 0) {
+                $parts[] = (string) $finishable_now . ' queued platform post' . ($finishable_now === 1 ? '' : 's') . ' still finishing today';
+            }
+            echo 'The article cap is full, but ' . esc_html(implode(' and ', $parts)) . ' can still run. Retry a failed row or Process now — you do not need to raise the daily limit.';
+            ?></p></div>
+            <?php endif; ?>
             <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated.</p>
             <?php
             $wanted = $this->social_slide_count($settings);
@@ -2710,7 +2780,7 @@ trait TechnoRapper_AI_Wire_Social {
                 <input type="hidden" name="action" value="tr_ai_wire_run_social_queue">
                 <?php wp_nonce_field('tr_ai_wire_run_social_queue'); ?>
                 <?php submit_button('Process queued social posts now', 'secondary', 'submit', false); ?>
-                <p class="description" style="display:inline;margin-left:8px;">Generates missing graphics and tries to publish up to 5 waiting rows. Use this after raising the daily limit, or to ship a leftover batch before the count is full.</p>
+                <p class="description" style="display:inline;margin-left:8px;">Generates missing graphics and tries waiting rows now, including X or Instagram for articles already counted today. Use this after a failed platform, after raising the daily limit, or to ship a leftover batch.</p>
             </form>
             <p class="description">Each row is one platform post for a published AI Wire article. The graphic on the right is the branded social card — not the article featured image. The worker generates that card, writes a caption, then tries to publish it.<?php
             if ($next_run) {

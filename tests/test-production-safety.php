@@ -3045,6 +3045,125 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertFalse($this->invoke_private('social_post_published_today', array($second)));
     }
 
+    public function test_failed_x_still_runs_when_instagram_already_filled_the_daily_cap() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required for the social publish path.');
+        }
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 1,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'IG ok X retry',
+            'post_excerpt' => 'Finish X after the article cap.',
+        ));
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to finish X after Instagram.');
+        }
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 41);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'IG ok X retry',
+            'on_image_headline' => 'IG ok X retry',
+            'x' => 'IG ok X retry',
+            'instagram' => 'IG ok X retry',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => 'ig-already',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'queued',
+            'image_attachment_id' => $attachment_id,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $other = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'New article behind the cap'));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $other,
+            'platform' => 'x',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Should reuse the cached graphic.');
+            }
+            if (strpos((string) $url, 'graph.facebook.com') !== false) {
+                return new WP_Error('blocked', 'Instagram already published.');
+            }
+            if (strpos((string) $url, 'media/upload/initialize') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'x-media-cap')));
+            }
+            if (strpos((string) $url, '/append') !== false || strpos((string) $url, '/finalize') !== false) {
+                return $this->mock_http_ok(array('data' => array('processing_info' => array('state' => 'succeeded'))));
+            }
+            if (strpos((string) $url, 'api.x.com/2/tweets') !== false) {
+                return $this->mock_http_ok(array('data' => array('id' => 'x-after-cap')));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $x = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('published', $x['status']);
+        $this->assertSame('x-after-cap', $x['remote_id']);
+        $blocked = $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $other));
+        $this->assertSame('queued', $blocked);
+        $this->assertSame(1, $this->invoke_private('social_published_today'));
+    }
+
+    public function test_retry_kicks_failed_x_even_when_the_worker_was_deferred_until_tomorrow() {
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 1,
+        )), false);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Retry X after cap'));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'needs_review',
+            'error_text' => 'X rejected the token.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $x_id = (int) $wpdb->insert_id;
+        $tomorrow = strtotime('tomorrow 00:20:00 UTC');
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        wp_schedule_single_event($tomorrow, TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($x_id, false)));
+        $next = wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        $this->assertNotFalse($next);
+        $this->assertLessThan($tomorrow, $next);
+        $this->assertLessThanOrEqual(time() + 20, $next);
+        $status = $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $x_id));
+        $this->assertSame('queued', $status);
+    }
+
     public function test_site_context_job_stores_profile_from_openai() {
         $this->onboard_social(array('x'));
         add_filter('pre_http_request', function ($preempt, $args, $url) {
