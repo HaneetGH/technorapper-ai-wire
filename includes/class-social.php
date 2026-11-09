@@ -1817,6 +1817,14 @@ trait TechnoRapper_AI_Wire_Social {
         $post_id = (int) $row['post_id'];
         $from_published = $status === 'published';
         if ($from_published) {
+            $deleted = $this->delete_live_social_post($row);
+            if (is_wp_error($deleted)) {
+                $wpdb->update($table, array(
+                    'error_text' => $deleted->get_error_message(),
+                    'updated_at' => current_time('mysql', true),
+                ), array('id' => $id, 'status' => 'published'));
+                return false;
+            }
             $regenerate_image = true;
             update_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id, '1');
         }
@@ -1841,6 +1849,96 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $this->kick_social_queue(5);
         return true;
+    }
+
+    private function delete_live_social_post($row) {
+        $platform = (string) ($row['platform'] ?? '');
+        $remote_id = sanitize_text_field((string) ($row['remote_id'] ?? ''));
+        if ($remote_id === '') {
+            return true;
+        }
+        $credentials = $this->social_credentials();
+        if ($platform === 'instagram') {
+            return $this->delete_instagram_media($remote_id, $credentials);
+        }
+        if ($platform === 'x') {
+            return $this->delete_x_post($remote_id, $credentials);
+        }
+        return true;
+    }
+
+    private function delete_instagram_media($media_id, $credentials) {
+        $credentials = $this->instagram_resolve_publish_credentials($credentials);
+        if (is_wp_error($credentials)) {
+            return $credentials;
+        }
+        $media_id = preg_replace('/[^0-9_]/', '', (string) $media_id);
+        if ($media_id === '') {
+            return true;
+        }
+        $url = add_query_arg(
+            array('access_token' => $credentials['instagram_user_access_token']),
+            'https://graph.facebook.com/' . self::INSTAGRAM_GRAPH_VERSION . '/' . rawurlencode($media_id)
+        );
+        $response = wp_remote_request($url, array('timeout' => 30, 'method' => 'DELETE'));
+        return $this->social_delete_result($response, 'Instagram');
+    }
+
+    private function delete_x_post($tweet_id, $credentials) {
+        if (!self::x_credentials_ready($credentials)) {
+            return new WP_Error('tr_ai_wire_x_delete', 'X Keys and tokens are no longer configured.');
+        }
+        $tweet_id = preg_replace('/[^0-9]/', '', (string) $tweet_id);
+        if ($tweet_id === '') {
+            return true;
+        }
+        $url = 'https://api.x.com/2/tweets/' . rawurlencode($tweet_id);
+        $response = wp_remote_request($url, array(
+            'timeout' => 30,
+            'method' => 'DELETE',
+            'headers' => array('Authorization' => $this->x_authorization_header('DELETE', $url, $credentials)),
+        ));
+        return $this->social_delete_result($response, 'X');
+    }
+
+    private function social_delete_result($response, $platform) {
+        if (is_wp_error($response)) {
+            if ($this->social_remote_already_gone($response->get_error_message())) {
+                return true;
+            }
+            return new WP_Error('tr_ai_wire_social_delete', $platform . ' could not delete the live post: ' . $response->get_error_message());
+        }
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        $data = is_array($data) ? $data : array();
+        $message = sanitize_text_field(
+            $data['error']['message']
+            ?? $data['detail']
+            ?? $data['title']
+            ?? ($data['errors'][0]['message'] ?? '')
+        );
+        if ($status >= 200 && $status < 300) {
+            return true;
+        }
+        if ($this->social_remote_already_gone($message, $status)) {
+            return true;
+        }
+        if ($message === '') {
+            $message = $platform . ' returned HTTP ' . $status . ' while deleting the live post.';
+        }
+        return new WP_Error('tr_ai_wire_social_delete', $platform . ' could not delete the live post: ' . $message);
+    }
+
+    private function social_remote_already_gone($message, $status = 0) {
+        if (in_array((int) $status, array(404, 410), true)) {
+            return true;
+        }
+        $message = (string) $message;
+        return stripos($message, 'does not exist') !== false
+            || stripos($message, 'not found') !== false
+            || stripos($message, 'already deleted') !== false
+            || stripos($message, 'cannot be loaded') !== false
+            || stripos($message, 'unknown media') !== false;
     }
 
     private function brand_social_image($bytes, $copy) {
@@ -2725,7 +2823,9 @@ trait TechnoRapper_AI_Wire_Social {
         if (empty($_POST['confirmed_not_published'])) {
             wp_die(esc_html__('Confirm that this item is not already live on the platform before retrying.', 'technorapper-ai-wire'));
         }
-        $this->requeue_social_item($id, !empty($_POST['regenerate_image']));
+        if (!$this->requeue_social_item($id, !empty($_POST['regenerate_image']))) {
+            wp_die(esc_html__('Could not delete the live post and queue a replacement. The original post was left up so you do not get a duplicate. Check the Social distribution error, then try again.', 'technorapper-ai-wire'));
+        }
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social'));
         exit;
     }
@@ -2740,8 +2840,8 @@ trait TechnoRapper_AI_Wire_Social {
         echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
         wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
         if ($published) {
-            echo '<p class="description">This plugin cannot delete the live ' . esc_html($platform_label) . ' post. Delete it yourself, then regenerate a huge-type poster and publish again.</p>';
-            echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I deleted the live ' . esc_html($platform_label) . ' post (or confirmed it is not live)</label><br>';
+            echo '<p class="description">This deletes the live ' . esc_html($platform_label) . ' post, then generates a new huge-type poster and publishes it. If that post is already gone, the replacement still goes out.</p>';
+            echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> Delete the live ' . esc_html($platform_label) . ' post and replace it</label><br>';
             echo '<input type="hidden" name="regenerate_image" value="1">';
             echo '<button class="button button-primary">Regenerate graphic and post again</button>';
             echo '</form>';
@@ -2800,7 +2900,7 @@ trait TechnoRapper_AI_Wire_Social {
         $map = array(
             'queued' => 'Waiting. If a graphic already exists, the worker posts that file and does not generate another.',
             'processing' => 'In progress: generating the graphic or talking to the platform.',
-            'published' => 'Posted on this platform. If the graphic is wrong, delete the live post yourself, then regenerate and post again.',
+            'published' => 'Posted on this platform. If the graphic is wrong, regenerate and post again — the plugin deletes the live post first, then publishes a new graphic.',
             'needs_review' => 'The platform response was unclear. Confirm this is not already live, then post the saved graphic or generate a new one.',
         );
         $status = sanitize_key((string) $status);

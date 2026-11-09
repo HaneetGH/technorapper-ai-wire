@@ -95,6 +95,23 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         return $this->mock_http_ok(array('id' => '17841400000000000', 'username' => 'techno.rapper'));
     }
 
+    private function stub_http_for_social_delete(&$deleted_urls) {
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$deleted_urls) {
+            $method = strtoupper((string) ($args['method'] ?? 'GET'));
+            $url = (string) $url;
+            if ($method === 'DELETE') {
+                $deleted_urls[] = $url;
+                if (strpos($url, 'graph.facebook.com') !== false || strpos($url, 'api.x.com/2/tweets/') !== false) {
+                    return $this->mock_http_ok(array('success' => true));
+                }
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            return $preempt;
+        }, 5, 3);
+    }
+
     private function graph_error_http($message, $http = 400) {
         return array(
             'headers' => array(),
@@ -4126,7 +4143,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->social_distribution_page();
         $html = ob_get_clean();
         $this->assertStringContainsString('Regenerate graphic and post again', $html);
-        $this->assertStringContainsString('I deleted the live Instagram post', $html);
+        $this->assertStringContainsString('Delete the live Instagram post and replace it', $html);
+        $this->assertStringContainsString('This deletes the live Instagram post', $html);
         $this->assertStringContainsString('name="regenerate_image"', $html);
         $this->assertStringContainsString('View live post', $html);
         $this->assertStringNotContainsString('Retry this platform post', $html);
@@ -4214,7 +4232,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
             'post_title' => 'Repost with new graphic',
-            'post_excerpt' => 'Delete the live Instagram post first.',
+            'post_excerpt' => 'Replace the live Instagram post.',
         ));
         update_post_meta($post_id, '_tr_ai_wire_queue_id', 44);
         update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
@@ -4233,13 +4251,17 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'platform' => 'instagram',
             'status' => 'published',
             'image_attachment_id' => $attachment_id,
-            'remote_id' => 'ig-old-live',
+            'remote_id' => '17841400000000001',
             'remote_url' => 'https://www.instagram.com/p/old-live/',
             'created_at' => $now,
             'updated_at' => $now,
         ));
         $id = (int) $wpdb->insert_id;
+        $deleted_urls = array();
+        $this->stub_http_for_social_delete($deleted_urls);
         $this->assertTrue($this->invoke_private('requeue_social_item', array($id, false)));
+        $this->assertCount(1, $deleted_urls);
+        $this->assertStringContainsString('17841400000000001', $deleted_urls[0]);
         $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
         $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
         $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id, true));
@@ -4329,12 +4351,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'platform' => 'instagram',
             'status' => 'published',
             'image_attachment_id' => $attachment_id,
-            'remote_id' => 'ig-replace-me',
+            'remote_id' => '17841400000000002',
             'created_at' => $now,
             'updated_at' => $now,
         ));
         $id = (int) $wpdb->insert_id;
+        $deleted_urls = array();
+        $this->stub_http_for_social_delete($deleted_urls);
         $this->assertTrue($this->invoke_private('requeue_social_item', array($id, true)));
+        $this->assertCount(1, $deleted_urls);
+        $this->assertStringContainsString('17841400000000002', $deleted_urls[0]);
         add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg) {
             $url = (string) $url;
             if (strpos($url, 'api.openai.com/v1/images/generations') !== false) {
@@ -4431,5 +4457,123 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Queued posts are waiting until', $html);
         $this->assertStringContainsString('Process queued social posts now', $html);
         $this->assertStringContainsString('Raising the daily limit does not start them by itself', $html);
+    }
+
+    public function test_social_needs_review_retry_does_not_delete_live_post() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social retry path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Ambiguous Instagram outcome',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => '17841400000000003',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $deleted_urls = array();
+        $this->stub_http_for_social_delete($deleted_urls);
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($id, false)));
+        $this->assertSame(array(), $deleted_urls);
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('queued', $row['status']);
+        $this->assertSame('', (string) $row['remote_id']);
+        $this->assertSame($attachment_id, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
+    }
+
+    public function test_social_published_repost_continues_if_instagram_already_deleted() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social repost path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Already deleted on Instagram',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => '17841400000000004',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            $method = strtoupper((string) ($args['method'] ?? 'GET'));
+            $url = (string) $url;
+            if ($method === 'DELETE') {
+                return $this->graph_error_http('(#100) Object with ID does not exist', 400);
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($id, true)));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('queued', $row['status']);
+        $this->assertSame('', (string) $row['remote_id']);
+    }
+
+    public function test_social_published_repost_keeps_live_post_if_delete_fails() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social repost path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Delete blocked',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => '17841400000000005',
+            'remote_url' => 'https://www.instagram.com/p/still-live/',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            $method = strtoupper((string) ($args['method'] ?? 'GET'));
+            $url = (string) $url;
+            if ($method === 'DELETE') {
+                return $this->graph_error_http('(#200) Permissions error', 403);
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->assertFalse($this->invoke_private('requeue_social_item', array($id, true)));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id, remote_url, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertSame('17841400000000005', $row['remote_id']);
+        $this->assertSame('https://www.instagram.com/p/still-live/', $row['remote_url']);
+        $this->assertStringContainsString('could not delete the live post', $row['error_text']);
+        $this->assertSame($attachment_id, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id, true));
     }
 }
