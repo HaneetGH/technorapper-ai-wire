@@ -114,7 +114,7 @@ The local implementation is already intended to provide:
 - One Luna JSON copy pass writes hook, on-image headline, captions and visual brief. GPT Image 2 low then generates a portrait photograph; GD overlays TechnoRapper branding, headline, supporting line and handle as a 1080×1350 JPEG using one of five hashed poster layouts so posts do not share one identical template. Same attachment is reused across platforms and is never the article featured image.
 - A separate local monthly social-image estimate at `$0.006` per image, with `$5` default budget. This is a conservative app-side estimate, not an OpenAI provider-side hard cap or invoice.
 - X v2 media initialize/append/finalize/status followed by post creation with media and a link. X media calls/posts incur X plan or usage charges outside the image budget.
-- Instagram Graph API container creation/status/publish, including optional carousel packing of 4–6 website articles (count from Settings) into one Instagram post after that many site publishes, or a collage of those posters; an account quota lookup; the public Media Library URL; caption and alt text. The count then resets to zero.
+- Instagram Graph API container creation/status/publish, including optional carousel packing of 4–6 website articles into one Instagram post, or a collage of those posters. Daily settings choose how many carousel posts and how many independent posts. X uses the same mix, with up to 4 images on a carousel tweet. The article count then resets to zero.
 - An admin queue view, published links, error text, and manual retry flow requiring an explicit “not already published” confirmation.
 - README and image-cost documentation describing requirements, toggle, cost, and rollout.
 
@@ -124,7 +124,7 @@ These are **worktree intentions, not verified release behavior**. Review the act
 
 ### X
 
-- Requires an X developer app and a user access token for the account that will publish, with post and media write access. Tokens can expire or be revoked.
+- Requires an X developer app with Read and Write access. Prefer the four Keys and tokens values (API Key, API Key Secret, Access Token, Access Token Secret) and sign requests with OAuth 1.0a. The Access Token + Secret popup is not an OAuth 2.0 Bearer token; pasting only that Access Token as Bearer is why posting fails. An OAuth 2.0 user token remains an optional fallback. Tokens can expire or be revoked.
 - Image publishing is a multi-step operation: initialize upload, append the file segment, finalize, wait for processing if required, then create the post with the media ID.
 - Current image implementation rejects empty or over-5-MB media. The [X chunked media guide](https://docs.x.com/x-api/media/quickstart/media-upload-chunked) documents the v2 flow and `tweet_image`'s typical 5 MB limit.
 - X API charges depend on current account plan and usage. Do not promise a fixed monthly X charge; verify in the developer console before enabling.

@@ -101,11 +101,7 @@ final class TechnoRapper_AI_Wire_Instagram_OAuth {
             self::redirect_with_error('Meta authorized the app but did not return an Instagram Professional account.');
         }
 
-        $credentials = wp_parse_args(get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array()), array(
-            'x_user_access_token' => '',
-            'instagram_user_access_token' => '',
-            'instagram_user_id' => '',
-        ));
+        $credentials = wp_parse_args(get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array()), TechnoRapper_AI_Wire::social_credential_defaults());
         $credentials['instagram_user_access_token'] = $token;
         $credentials['instagram_user_id'] = preg_replace('/[^0-9]/', '', (string) $account['id']);
 
