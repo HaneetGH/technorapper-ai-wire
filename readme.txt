@@ -2,8 +2,8 @@
 Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram
 Requires at least: 6.2
-Tested up to: 6.8
-Stable tag: 0.2.47
+Tested up to: 7.1
+Stable tag: 0.2.48
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -51,6 +51,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.48 =
+* WordPress.org Plugin Check: Tested up to 7.1 in readme only, escape the scores chart, and prepare social/view SQL against prefixed table names.
+
 = 0.2.47 =
 * Ship readme.txt and LICENSE inside the GitHub Release ZIP so WordPress.org Plugin Check can see the GPLv2 license.
 
@@ -61,6 +64,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.48 =
+Required for wordpress.org upload: current Tested up to, readme-only header, and Plugin Check SQL/escaping fixes.
 
 = 0.2.47 =
 Use this GitHub Release ZIP for wordpress.org upload. Older zips omitted readme.txt, which Plugin Check reports as no license.

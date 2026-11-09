@@ -890,24 +890,22 @@ trait TechnoRapper_AI_Wire_Publisher {
         // Atomic per-IP/post throttling; only a keyed hash is persisted, never the IP.
         $remote_addr = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
         $rate_key = hash_hmac('sha256', $post_id . '|' . $remote_addr, wp_salt('auth'));
-        $limits_table = $wpdb->prefix . 'tr_ai_wire_view_limits';
         $wpdb->query($wpdb->prepare(
-            "INSERT INTO {$limits_table} (rate_key, window_started, requests) VALUES (%s, UTC_TIMESTAMP(), 1)
+            "INSERT INTO {$wpdb->prefix}tr_ai_wire_view_limits (rate_key, window_started, requests) VALUES (%s, UTC_TIMESTAMP(), 1)
              ON DUPLICATE KEY UPDATE
              requests = IF(window_started < (UTC_TIMESTAMP() - INTERVAL 1 MINUTE), 1, requests + 1),
              window_started = IF(window_started < (UTC_TIMESTAMP() - INTERVAL 1 MINUTE), UTC_TIMESTAMP(), window_started)",
             $rate_key
         ));
-        $rate_count = (int) $wpdb->get_var($wpdb->prepare("SELECT requests FROM {$limits_table} WHERE rate_key = %s", $rate_key));
+        $rate_count = (int) $wpdb->get_var($wpdb->prepare("SELECT requests FROM {$wpdb->prefix}tr_ai_wire_view_limits WHERE rate_key = %s", $rate_key));
         if ($rate_count > 20) {
             return new WP_Error('tr_ai_wire_view_rate_limited', 'Too many view events.', array('status' => 429));
         }
         if (wp_rand(1, 100) === 1) {
-            $wpdb->query("DELETE FROM {$limits_table} WHERE window_started < (UTC_TIMESTAMP() - INTERVAL 1 DAY)");
+            $wpdb->query("DELETE FROM {$wpdb->prefix}tr_ai_wire_view_limits WHERE window_started < (UTC_TIMESTAMP() - INTERVAL 1 DAY)");
         }
-        $table = $wpdb->prefix . self::VIEWS_TABLE_SUFFIX;
         $result = $wpdb->query($wpdb->prepare(
-            "INSERT INTO {$table} (post_id, view_date, views) VALUES (%d, %s, 1) ON DUPLICATE KEY UPDATE views = views + 1",
+            "INSERT INTO {$wpdb->prefix}tr_ai_wire_views (post_id, view_date, views) VALUES (%d, %s, 1) ON DUPLICATE KEY UPDATE views = views + 1",
             $post_id,
             gmdate('Y-m-d')
         ));

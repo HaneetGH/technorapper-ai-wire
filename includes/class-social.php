@@ -574,7 +574,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($this->social_published_today() >= $limit) {
             global $wpdb;
             $table = $this->social_table();
-            $pending_new = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} q WHERE q.status = 'queued' AND NOT EXISTS (SELECT 1 FROM {$table} p WHERE p.post_id = q.post_id AND p.status = 'published' AND p.updated_at >= UTC_DATE())");
+            $pending_new = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social q WHERE q.status = 'queued' AND NOT EXISTS (SELECT 1 FROM {$wpdb->prefix}tr_ai_wire_social p WHERE p.post_id = q.post_id AND p.status = 'published' AND p.updated_at >= UTC_DATE())");
             if ($pending_new > 0) {
                 $tomorrow = strtotime('tomorrow 00:20:00 UTC');
                 wp_schedule_single_event($tomorrow, self::SOCIAL_CRON_HOOK);
@@ -583,7 +583,7 @@ trait TechnoRapper_AI_Wire_Social {
 
         global $wpdb;
         $table = $this->social_table();
-        $wpdb->query("UPDATE {$table} SET status = 'needs_review', error_text = 'The worker stopped before recording an outcome. Check the platform before retrying.' WHERE status = 'processing' AND updated_at < UTC_TIMESTAMP() - INTERVAL 15 MINUTE");
+        $wpdb->query("UPDATE {$wpdb->prefix}tr_ai_wire_social SET status = 'needs_review', error_text = 'The worker stopped before recording an outcome. Check the platform before retrying.' WHERE status = 'processing' AND updated_at < UTC_TIMESTAMP() - INTERVAL 15 MINUTE");
         $this->requeue_instagram_prepublish_quota_failures();
         $rows = $this->social_queued_rows_for_worker($limit);
         $active = self::connected_social_platforms($credentials, $settings);
@@ -602,7 +602,7 @@ trait TechnoRapper_AI_Wire_Social {
                 continue;
             }
             $claimed = $wpdb->query($wpdb->prepare(
-                "UPDATE {$table} SET status = 'processing', attempts = attempts + 1, updated_at = %s WHERE id = %d AND status = 'queued'",
+                "UPDATE {$wpdb->prefix}tr_ai_wire_social SET status = 'processing', attempts = attempts + 1, updated_at = %s WHERE id = %d AND status = 'queued'",
                 current_time('mysql', true),
                 (int) $row['id']
             ));
@@ -645,7 +645,7 @@ trait TechnoRapper_AI_Wire_Social {
             break;
         }
 
-        $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE status = 'queued'");
+        $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'");
         $finishable = $this->social_finishable_queued_count();
         if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0)) {
             $this->kick_social_queue($finishable > 0 ? 5 : 60);
@@ -660,15 +660,15 @@ trait TechnoRapper_AI_Wire_Social {
             return array();
         }
         if ($this->social_published_today() < $limit) {
-            return $wpdb->get_results("SELECT * FROM {$table} WHERE status = 'queued'{$platform_sql} ORDER BY created_at ASC LIMIT 25", ARRAY_A);
+            return $wpdb->get_results("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'{$platform_sql} ORDER BY created_at ASC LIMIT 25", ARRAY_A);
         }
         $queued_platform_sql = $this->social_active_platform_sql('q');
         return $wpdb->get_results(
-            "SELECT q.* FROM {$table} q
+            "SELECT q.* FROM {$wpdb->prefix}tr_ai_wire_social q
              WHERE q.status = 'queued'{$queued_platform_sql}
                AND (
                     EXISTS (
-                        SELECT 1 FROM {$table} p
+                        SELECT 1 FROM {$wpdb->prefix}tr_ai_wire_social p
                         WHERE p.post_id = q.post_id
                           AND p.status = 'published'
                     )
@@ -703,10 +703,10 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $table = $this->social_table();
         return (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$table} q
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social q
              WHERE q.status = 'queued'
                AND EXISTS (
-                    SELECT 1 FROM {$table} p
+                    SELECT 1 FROM {$wpdb->prefix}tr_ai_wire_social p
                     WHERE p.post_id = q.post_id
                       AND p.status = 'published'
                )"
@@ -715,7 +715,7 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_queued_count() {
         global $wpdb;
-        return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->social_table()} WHERE status = 'queued'");
+        return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'");
     }
 
     private function kick_social_queue($delay = 5, $even_if_empty = false) {
@@ -847,7 +847,7 @@ trait TechnoRapper_AI_Wire_Social {
         $slots_left = max(0, $limit - $this->social_published_today());
         $new_in_pack = ($this->social_post_published_today((int) $lead['post_id']) || $this->social_item_is_manual_repost($lead)) ? 0 : 1;
         $candidates = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM {$table} WHERE status = 'queued' AND platform = %s AND id != %d ORDER BY created_at ASC LIMIT 25",
+            "SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued' AND platform = %s AND id != %d ORDER BY created_at ASC LIMIT 25",
             (string) $lead['platform'],
             (int) $lead['id']
         ), ARRAY_A);
@@ -868,7 +868,7 @@ trait TechnoRapper_AI_Wire_Social {
                 continue;
             }
             $claimed = $wpdb->query($wpdb->prepare(
-                "UPDATE {$table} SET status = 'processing', attempts = attempts + 1, updated_at = %s WHERE id = %d AND status = 'queued'",
+                "UPDATE {$wpdb->prefix}tr_ai_wire_social SET status = 'processing', attempts = attempts + 1, updated_at = %s WHERE id = %d AND status = 'queued'",
                 current_time('mysql', true),
                 (int) $candidate['id']
             ));
@@ -1477,7 +1477,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         global $wpdb;
         $table = $this->social_table();
-        $post_ids = $wpdb->get_col("SELECT DISTINCT post_id FROM {$table} ORDER BY created_at DESC LIMIT 50");
+        $post_ids = $wpdb->get_col("SELECT DISTINCT post_id FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY created_at DESC LIMIT 50");
         $queued = 0;
         $now = current_time('mysql', true);
         foreach ((array) $post_ids as $post_id) {
@@ -1487,7 +1487,7 @@ trait TechnoRapper_AI_Wire_Social {
                 continue;
             }
             $exists = (int) $wpdb->get_var($wpdb->prepare(
-                "SELECT id FROM {$table} WHERE post_id = %d AND platform = %s LIMIT 1",
+                "SELECT id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = %s LIMIT 1",
                 $post_id,
                 $platform
             ));
@@ -1496,14 +1496,14 @@ trait TechnoRapper_AI_Wire_Social {
             }
             $image_id = $this->social_existing_image_id($post_id);
             $sibling = $wpdb->get_row($wpdb->prepare(
-                "SELECT image_attachment_id FROM {$table} WHERE post_id = %d AND image_attachment_id > 0 ORDER BY id DESC LIMIT 1",
+                "SELECT image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND image_attachment_id > 0 ORDER BY id DESC LIMIT 1",
                 $post_id
             ), ARRAY_A);
             if ($image_id < 1 && $sibling) {
                 $image_id = $this->social_image_file_exists((int) $sibling['image_attachment_id']) ? (int) $sibling['image_attachment_id'] : 0;
             }
             $inserted = $wpdb->query($wpdb->prepare(
-                "INSERT IGNORE INTO {$table} (post_id, platform, status, image_attachment_id, created_at, updated_at) VALUES (%d, %s, 'queued', %d, %s, %s)",
+                "INSERT IGNORE INTO {$wpdb->prefix}tr_ai_wire_social (post_id, platform, status, image_attachment_id, created_at, updated_at) VALUES (%d, %s, 'queued', %d, %s, %s)",
                 $post_id,
                 $platform,
                 $image_id,
@@ -1528,9 +1528,9 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $table = $this->social_table();
         return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(DISTINCT s.post_id) FROM {$table} s
+            "SELECT COUNT(DISTINCT s.post_id) FROM {$wpdb->prefix}tr_ai_wire_social s
              WHERE NOT EXISTS (
-                SELECT 1 FROM {$table} p WHERE p.post_id = s.post_id AND p.platform = %s
+                SELECT 1 FROM {$wpdb->prefix}tr_ai_wire_social p WHERE p.post_id = s.post_id AND p.platform = %s
              )",
             $platform
         ));
@@ -1548,7 +1548,7 @@ trait TechnoRapper_AI_Wire_Social {
         $now = current_time('mysql', true);
         foreach ($platforms as $platform) {
             $wpdb->query($wpdb->prepare(
-                "INSERT IGNORE INTO {$table} (post_id, platform, status, created_at, updated_at) VALUES (%d, %s, 'queued', %s, %s)",
+                "INSERT IGNORE INTO {$wpdb->prefix}tr_ai_wire_social (post_id, platform, status, created_at, updated_at) VALUES (%d, %s, 'queued', %s, %s)",
                 $post_id,
                 $platform,
                 $now,
@@ -1795,7 +1795,7 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $table = $this->social_table();
         $updated = $wpdb->query($wpdb->prepare(
-            "UPDATE {$table} SET image_attachment_id = 0, updated_at = %s WHERE post_id = %d AND status IN ('queued', 'needs_review')",
+            "UPDATE {$wpdb->prefix}tr_ai_wire_social SET image_attachment_id = 0, updated_at = %s WHERE post_id = %d AND status IN ('queued', 'needs_review')",
             current_time('mysql', true),
             $post_id
         ));
@@ -1809,7 +1809,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         global $wpdb;
         $table = $this->social_table();
-        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id), ARRAY_A);
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
         $status = (string) ($row['status'] ?? '');
         if (!$row || !in_array($status, array('needs_review', 'published'), true)) {
             return false;
@@ -2733,7 +2733,7 @@ trait TechnoRapper_AI_Wire_Social {
         $table = $this->social_table();
         $like = '%' . $wpdb->esc_like('content_publishing_limit') . '%';
         $updated = $wpdb->query($wpdb->prepare(
-            "UPDATE {$table} SET status = 'queued', error_text = NULL, remote_id = '', remote_url = '', updated_at = %s WHERE platform = 'instagram' AND status = 'needs_review' AND error_text LIKE %s",
+            "UPDATE {$wpdb->prefix}tr_ai_wire_social SET status = 'queued', error_text = NULL, remote_id = '', remote_url = '', updated_at = %s WHERE platform = 'instagram' AND status = 'needs_review' AND error_text LIKE %s",
             current_time('mysql', true),
             $like
         ));
@@ -2758,7 +2758,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         global $wpdb;
         return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->social_table()} WHERE remote_id = %s AND platform = 'instagram'",
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE remote_id = %s AND platform = 'instagram'",
             $remote_id
         ));
     }
@@ -2767,7 +2767,7 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $id = (int) $id;
         $table = $this->social_table();
-        $row = $wpdb->get_row($wpdb->prepare("SELECT post_id FROM {$table} WHERE id = %d", $id), ARRAY_A);
+        $row = $wpdb->get_row($wpdb->prepare("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
         $wpdb->update($table, array(
             'status' => sanitize_key($status),
             'remote_id' => sanitize_text_field($remote_id),
@@ -2793,7 +2793,7 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $table = $this->social_table();
         return (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$table} q
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social q
              INNER JOIN {$wpdb->postmeta} m
                 ON m.post_id = q.post_id
                AND m.meta_key = CONCAT('_tr_ai_wire_social_repost_', q.id)
@@ -2808,7 +2808,7 @@ trait TechnoRapper_AI_Wire_Social {
         $start = gmdate('Y-m-d 00:00:00');
         $end = gmdate('Y-m-d 23:59:59');
         return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(DISTINCT post_id) FROM {$table} WHERE status = 'published' AND updated_at BETWEEN %s AND %s",
+            "SELECT COUNT(DISTINCT post_id) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'published' AND updated_at BETWEEN %s AND %s",
             $start,
             $end
         ));
@@ -2818,7 +2818,7 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $table = $this->social_table();
         return (bool) $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM {$table} WHERE post_id = %d AND status = 'published' AND updated_at >= UTC_DATE() LIMIT 1",
+            "SELECT id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND status = 'published' AND updated_at >= UTC_DATE() LIMIT 1",
             (int) $post_id
         ));
     }
@@ -3010,7 +3010,7 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
         global $wpdb;
-        $rows = $wpdb->get_results('SELECT * FROM ' . $this->social_table() . ' ORDER BY created_at DESC LIMIT 100', ARRAY_A);
+        $rows = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY created_at DESC LIMIT 100", ARRAY_A);
         $settings = $this->settings();
         $image_usage = (float) get_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'), 0);
         ?>
@@ -3047,8 +3047,8 @@ trait TechnoRapper_AI_Wire_Social {
             <?php
             $published_today = $this->social_published_today();
             $daily_limit = (int) ($settings['social_daily_limit'] ?? 10);
-            $failed_x = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->social_table()} WHERE platform = 'x' AND status = 'needs_review'");
-            $failed_ig = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->social_table()} WHERE platform = 'instagram' AND status = 'needs_review'");
+            $failed_x = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'x' AND status = 'needs_review'");
+            $failed_ig = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' AND status = 'needs_review'");
             $finishable_now = $this->social_finishable_queued_count();
             ?>
             <p>X posting is <?php echo !empty($settings['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · Instagram posting is <?php echo !empty($settings['social_instagram_enabled']) && TechnoRapper_AI_Wire::instagram_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Change that on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Today: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?> articles distributed. That cap counts unique website articles, not each platform. A successful Instagram post does not spend an extra slot for X on the same article.</p>
