@@ -853,6 +853,7 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_social_image_key', 'Add the OpenAI API key before generating social images.');
         }
         $copy = is_array($copy) ? $copy : array();
+        $copy['_poster_variant'] = $this->social_poster_variant_for_post($post);
         $headline = (string) ($copy['on_image_headline'] ?? $post->post_title);
         $prompt = $this->social_image_prompt($post, $copy);
         $response = wp_remote_post('https://api.openai.com/v1/images/generations', array(
@@ -906,6 +907,7 @@ trait TechnoRapper_AI_Wire_Social {
         update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field((string) ($copy['instagram_alt'] ?? $headline)));
         update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
         update_post_meta($attachment_id, '_tr_ai_wire_social_layout', self::SOCIAL_IMAGE_LAYOUT);
+        update_post_meta($attachment_id, '_tr_ai_wire_social_variant', (string) $copy['_poster_variant']);
         delete_post_meta((int) $post->ID, '_tr_ai_wire_social_regenerate_image');
         return (int) $attachment_id;
     }
@@ -927,19 +929,61 @@ trait TechnoRapper_AI_Wire_Social {
         $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
         $profile = $this->site_context_profile();
         $revision = ($post instanceof WP_Post) ? (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_revision', true) : 0;
+        $variant = $this->normalize_poster_variant($copy['_poster_variant'] ?? $this->social_poster_variant_for_post($post));
         $prompt = 'Untitled photoreal cinematic photograph, vertical 4:5, full-bleed, no graphic design. '
             . 'One real-world scene, magazine lighting, shallow depth of field, high contrast. This is a photograph, not a poster, not a title card, not a thumbnail. '
-            . 'The lower half of the frame is naturally dark and empty of objects so we can overlay type later. '
+            . $this->social_image_safe_zone($variant) . ' '
             . 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. '
             . 'Do not draw a poster, card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup. '
             . 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. '
             . 'Art direction: ' . $this->social_image_art_direction($profile) . '. '
+            . 'Camera: ' . $this->social_image_camera($post, $revision) . '. '
             . ($brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one clear technology-news photograph with a single subject. ')
             . 'Make the picture stop a social-media scroll.';
         if ($revision > 0) {
             $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story. Still no text in the photograph.';
         }
         return $prompt;
+    }
+
+    private function social_poster_variants() {
+        return array('bottom-center', 'left-stack', 'kicker-bar', 'bottom-left', 'cover-top');
+    }
+
+    private function normalize_poster_variant($variant) {
+        $variant = sanitize_key((string) $variant);
+        return in_array($variant, $this->social_poster_variants(), true) ? $variant : 'bottom-center';
+    }
+
+    private function social_poster_variant_for_post($post) {
+        $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
+        $revision = $id > 0 ? (int) get_post_meta($id, '_tr_ai_wire_social_image_revision', true) : 0;
+        $variants = $this->social_poster_variants();
+        $index = (int) (sprintf('%u', crc32($id . ':' . $revision)) % count($variants));
+        return $variants[$index];
+    }
+
+    private function social_image_safe_zone($variant) {
+        if ($variant === 'left-stack') {
+            return 'Keep the left third of the frame naturally dark and empty of objects so we can overlay type later. Put the subject on the right.';
+        }
+        if ($variant === 'cover-top') {
+            return 'Keep the upper third of the frame naturally darker and simpler so we can overlay type later. Put the subject in the lower half.';
+        }
+        return 'The lower half of the frame is naturally dark and empty of objects so we can overlay type later.';
+    }
+
+    private function social_image_camera($post, $revision = 0) {
+        $cameras = array(
+            'tight overhead still life of one device on a dark desk, hard side light',
+            'over-the-shoulder of a person at a glowing monitor, face not identifiable',
+            'extreme close-up of a phone or laptop edge, bokeh lights behind',
+            'wide office floor from behind, one figure walking, dusk windows',
+            'macro of a keyboard, cable, or chip with a single rim light',
+        );
+        $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
+        $index = (int) (sprintf('%u', crc32('cam:' . $id . ':' . (int) $revision)) % count($cameras));
+        return $cameras[$index];
     }
 
     private function social_image_art_direction($profile) {
@@ -1053,32 +1097,135 @@ trait TechnoRapper_AI_Wire_Social {
         imagealphablending($canvas, true);
         imagecopyresampled($canvas, $source, 0, 0, $source_x, $source_y, $target_width, $target_height, $crop_width, $crop_height);
         imagedestroy($source);
-        $this->draw_social_bottom_gradient($canvas, $target_width, $target_height);
+        $variant = $this->normalize_poster_variant($copy['_poster_variant'] ?? 'bottom-center');
+        $this->draw_social_poster_variant($canvas, $variant, $headline, $subhead, $target_width, $target_height);
+        ob_start();
+        imagejpeg($canvas, null, 88);
+        $result = ob_get_clean();
+        imagedestroy($canvas);
+        return $result ? $result : new WP_Error('tr_ai_wire_social_image_render', 'Could not render the branded image.');
+    }
+
+    private function draw_social_poster_variant($canvas, $variant, $headline, $subhead, $width, $height) {
+        $font = $this->social_font_path();
         $cyan = imagecolorallocate($canvas, 43, 213, 255);
         $white = imagecolorallocate($canvas, 255, 255, 255);
         $muted = imagecolorallocate($canvas, 220, 226, 232);
         $stroke = imagecolorallocate($canvas, 0, 0, 0);
-        $font = $this->social_font_path();
-        if ($font) {
-            imagettftext($canvas, 28, 0, 48, 78, $white, $font, 'TECHNORAPPER');
-            imagefilledrectangle($canvas, 48, 90, 268, 98, $cyan);
-        } else {
-            imagestring($canvas, 5, 48, 28, 'TECHNORAPPER', $white);
+        if ($variant === 'left-stack') {
+            $this->draw_social_left_gradient($canvas, $width, $height);
+            $this->draw_social_bottom_gradient($canvas, $width, $height, 0.58);
+            imagefilledrectangle($canvas, 0, 0, 10, $height, $cyan);
+            $this->draw_social_brand_mark($canvas, $font, $white, $cyan, 48, 78);
+            $this->draw_social_type_block($canvas, $headline, $subhead, $font, $white, $muted, $stroke, $width, $height, array(
+                'align' => 'left',
+                'max_width' => 640,
+                'left' => 48,
+                'max_block' => (int) round($height * 0.5),
+                'min_baseline' => 560,
+                'handle' => 'left',
+            ));
+            return;
         }
-        $layout = $this->social_poster_headline_layout($headline, $font, 1000, (int) round($target_height * 0.46), 4);
+        if ($variant === 'bottom-left') {
+            $this->draw_social_bottom_gradient($canvas, $width, $height);
+            $this->draw_social_brand_mark($canvas, $font, $white, $cyan, 48, 78);
+            $this->draw_social_type_block($canvas, $headline, $subhead, $font, $white, $muted, $stroke, $width, $height, array(
+                'align' => 'left',
+                'max_width' => 980,
+                'left' => 48,
+                'max_block' => (int) round($height * 0.46),
+                'min_baseline' => 620,
+                'handle' => 'left',
+            ));
+            return;
+        }
+        if ($variant === 'kicker-bar') {
+            $this->draw_social_bottom_gradient($canvas, $width, $height);
+            $this->draw_social_brand_mark($canvas, $font, $white, $cyan, 48, 78);
+            $this->draw_social_type_block($canvas, $headline, $subhead, $font, $white, $muted, $stroke, $width, $height, array(
+                'align' => 'left',
+                'max_width' => 980,
+                'left' => 48,
+                'max_block' => (int) round($height * 0.42),
+                'min_baseline' => 640,
+                'handle' => 'right',
+                'kicker' => ($subhead !== '') ? $this->social_poster_headline($this->clip_social_text($subhead, 28)) : 'TECH NEWS',
+            ));
+            return;
+        }
+        if ($variant === 'cover-top') {
+            $this->draw_social_top_gradient($canvas, $width, $height);
+            $this->draw_social_bottom_gradient($canvas, $width, $height, 0.78);
+            $this->draw_social_brand_mark($canvas, $font, $white, $cyan, 48, $height - 72);
+            $this->draw_social_type_block($canvas, $headline, $subhead, $font, $white, $muted, $stroke, $width, $height, array(
+                'align' => 'left',
+                'max_width' => 980,
+                'left' => 48,
+                'max_block' => (int) round($height * 0.36),
+                'min_baseline' => 180,
+                'pin_top' => 180,
+                'handle' => 'right',
+            ));
+            return;
+        }
+        $this->draw_social_bottom_gradient($canvas, $width, $height);
+        $this->draw_social_brand_mark($canvas, $font, $white, $cyan, 48, 78);
+        $this->draw_social_type_block($canvas, $headline, $subhead, $font, $white, $muted, $stroke, $width, $height, array(
+            'align' => 'center',
+            'max_width' => 1000,
+            'max_block' => (int) round($height * 0.46),
+            'min_baseline' => 620,
+            'handle' => 'right',
+        ));
+    }
+
+    private function draw_social_brand_mark($canvas, $font, $white, $cyan, $x, $y) {
+        if ($font) {
+            imagettftext($canvas, 28, 0, $x, $y, $white, $font, 'TECHNORAPPER');
+            imagefilledrectangle($canvas, $x, $y + 12, $x + 220, $y + 20, $cyan);
+            return;
+        }
+        imagestring($canvas, 5, $x, $y - 50, 'TECHNORAPPER', $white);
+    }
+
+    private function draw_social_type_block($canvas, $headline, $subhead, $font, $white, $muted, $stroke, $width, $height, $opts) {
+        $opts = is_array($opts) ? $opts : array();
+        $align = (($opts['align'] ?? '') === 'left') ? 'left' : 'center';
+        $left = (int) ($opts['left'] ?? 48);
+        $max_width = (int) ($opts['max_width'] ?? 1000);
+        $layout = $this->social_poster_headline_layout($headline, $font, $max_width, (int) ($opts['max_block'] ?? 620), 4);
         $subhead_size = $font ? max(24, min(32, (int) round($layout['size'] * 0.28))) : 5;
         $subhead_step = (int) round($subhead_size * 1.2);
-        $subhead_lines = ($subhead !== '') ? $this->wrap_social_lines($subhead, 940, $subhead_size, $font, 36, 2) : array();
-        $handle_y = $target_height - 28;
+        $kicker = trim((string) ($opts['kicker'] ?? ''));
+        $kicker_size = $font ? 22 : 5;
+        $subhead_lines = ($subhead !== '' && $kicker === '') ? $this->wrap_social_lines($subhead, min(940, $max_width), $subhead_size, $font, 36, 2) : array();
+        $handle_y = $height - 28;
+            $kicker_block = $kicker !== '' ? ($kicker_size + 28) : 0;
         $subhead_block = $subhead_lines ? (14 + ((count($subhead_lines) - 1) * $subhead_step) + $subhead_size) : 0;
         $line_count = max(1, count($layout['lines']));
-        $first_baseline = $handle_y - 40 - $subhead_block - (($line_count - 1) * $layout['line_height']);
-        if ($first_baseline < 620) {
-            $first_baseline = 620;
+        if (!empty($opts['pin_top'])) {
+            $y = (int) $opts['pin_top'] + $kicker_block;
+        } else {
+            $y = $handle_y - 40 - $subhead_block - $kicker_block - (($line_count - 1) * $layout['line_height']);
+            $min_baseline = (int) ($opts['min_baseline'] ?? 620);
+            if ($y < $min_baseline) {
+                $y = $min_baseline;
+            }
         }
-        $y = $first_baseline;
+            if ($kicker !== '') {
+            $accent = imagecolorallocate($canvas, 43, 213, 255);
+            $ascent = (int) round($layout['size']);
+            if ($font && function_exists('imagettfbbox') && !empty($layout['lines'][0])) {
+                $box = imagettfbbox($layout['size'], 0, $font, (string) $layout['lines'][0]);
+                $ascent = max($ascent, abs((int) $box[7]));
+            }
+            $kicker_y = $y - $ascent - $kicker_size - 16;
+            $this->draw_social_aligned_text($canvas, $kicker, $kicker_size, $kicker_y, $align, $left, $accent, $font, $width, $stroke, 2);
+            imagefilledrectangle($canvas, $left, $kicker_y + 8, $left + 96, $kicker_y + 14, $accent);
+        }
         foreach ($layout['lines'] as $index => $text_line) {
-            $this->draw_social_centered_text($canvas, $text_line, $layout['size'], $y, $white, $font, $target_width, $stroke, 3);
+            $this->draw_social_aligned_text($canvas, $text_line, $layout['size'], $y, $align, $left, $white, $font, $width, $stroke, 3);
             if ($index < $line_count - 1) {
                 $y += $layout['line_height'];
             }
@@ -1086,20 +1233,17 @@ trait TechnoRapper_AI_Wire_Social {
         if ($subhead_lines) {
             $y += 18 + $subhead_size;
             foreach ($subhead_lines as $index => $text_line) {
-                $this->draw_social_centered_text($canvas, $text_line, $subhead_size, $y, $muted, $font, $target_width, $stroke, 2);
+                $this->draw_social_aligned_text($canvas, $text_line, $subhead_size, $y, $align, $left, $muted, $font, $width, $stroke, 2);
                 if ($index < count($subhead_lines) - 1) {
                     $y += $subhead_step;
                 }
             }
         }
+        $handle = (string) ($opts['handle'] ?? 'right');
         if ($font) {
-            imagettftext($canvas, 18, 0, $target_width - 292, $handle_y, $cyan, $font, '@technorapper');
+            $hx = ($handle === 'left') ? $left : ($width - 292);
+            imagettftext($canvas, 18, 0, $hx, $handle_y, imagecolorallocate($canvas, 43, 213, 255), $font, '@technorapper');
         }
-        ob_start();
-        imagejpeg($canvas, null, 88);
-        $result = ob_get_clean();
-        imagedestroy($canvas);
-        return $result ? $result : new WP_Error('tr_ai_wire_social_image_render', 'Could not render the branded image.');
     }
 
     private function social_poster_headline($text) {
@@ -1143,7 +1287,7 @@ trait TechnoRapper_AI_Wire_Social {
         return $chosen;
     }
 
-    private function draw_social_bottom_gradient($canvas, $width, $height) {
+    private function draw_social_bottom_gradient($canvas, $width, $height, $cover_from = 0.62) {
         $start = (int) round($height * 0.36);
         $span = $height - $start;
         if ($span < 1) {
@@ -1156,18 +1300,49 @@ trait TechnoRapper_AI_Wire_Social {
             imageline($canvas, 0, $start + $i, $width, $start + $i, $color);
         }
         $cover = imagecolorallocatealpha($canvas, 0, 0, 0, 18);
-        imagefilledrectangle($canvas, 0, (int) round($height * 0.62), $width, $height, $cover);
+        imagefilledrectangle($canvas, 0, (int) round($height * (float) $cover_from), $width, $height, $cover);
     }
 
-    private function draw_social_centered_text($canvas, $text, $size, $y, $color, $font, $canvas_width, $stroke = null, $stroke_width = 0) {
+    private function draw_social_top_gradient($canvas, $width, $height) {
+        $span = (int) round($height * 0.42);
+        for ($i = 0; $i < $span; $i++) {
+            $t = 1 - ($i / max(1, $span));
+            $alpha = (int) max(0, min(127, (int) round(40 + ($t * 70))));
+            $color = imagecolorallocatealpha($canvas, 0, 0, 0, $alpha);
+            imageline($canvas, 0, $i, $width, $i, $color);
+        }
+    }
+
+    private function draw_social_left_gradient($canvas, $width, $height) {
+        $span = (int) round($width * 0.62);
+        for ($i = 0; $i < $span; $i++) {
+            $t = 1 - ($i / max(1, $span));
+            $alpha = (int) max(0, min(127, (int) round(30 + ($t * 80))));
+            $color = imagecolorallocatealpha($canvas, 0, 0, 0, $alpha);
+            imageline($canvas, $i, 0, $i, $height, $color);
+        }
+    }
+
+    private function draw_social_aligned_text($canvas, $text, $size, $y, $align, $left, $color, $font, $canvas_width, $stroke = null, $stroke_width = 0) {
         $text = (string) $text;
         if ($text === '') {
             return;
         }
-        if ($font && function_exists('imagettfbbox')) {
+        $x = (int) $left;
+        if ($font && function_exists('imagettfbbox') && $align !== 'left') {
             $box = imagettfbbox($size, 0, $font, $text);
             $text_width = abs($box[2] - $box[0]);
             $x = (int) max(32, ($canvas_width - $text_width) / 2);
+        }
+        $this->draw_social_stroked_text($canvas, $text, $size, $x, $y, $color, $font, $stroke, $stroke_width);
+    }
+
+    private function draw_social_stroked_text($canvas, $text, $size, $x, $y, $color, $font, $stroke = null, $stroke_width = 0) {
+        $text = (string) $text;
+        if ($text === '') {
+            return;
+        }
+        if ($font && function_exists('imagettftext')) {
             if ($stroke && $stroke_width > 0) {
                 $width = (int) $stroke_width;
                 for ($ox = -$width; $ox <= $width; $ox++) {
@@ -1182,7 +1357,11 @@ trait TechnoRapper_AI_Wire_Social {
             imagettftext($canvas, $size, 0, $x, $y, $color, $font, $text);
             return;
         }
-        imagestring($canvas, 5, (int) max(20, ($canvas_width / 2) - 80), $y - 24, substr($text, 0, 80), $color);
+        imagestring($canvas, 5, (int) $x, (int) $y - 24, substr($text, 0, 80), $color);
+    }
+
+    private function draw_social_centered_text($canvas, $text, $size, $y, $color, $font, $canvas_width, $stroke = null, $stroke_width = 0) {
+        $this->draw_social_aligned_text($canvas, $text, $size, $y, 'center', 32, $color, $font, $canvas_width, $stroke, $stroke_width);
     }
 
     private function wrap_social_lines($text, $max_width, $size, $font, $fallback_chars, $max_lines) {

@@ -2275,6 +2275,125 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
     }
 
+    public function test_social_layout_version_stays_poster_v2() {
+        $this->assertSame('poster-v2', TechnoRapper_AI_Wire::SOCIAL_IMAGE_LAYOUT);
+        $this->assertSame(
+            array('bottom-center', 'left-stack', 'kicker-bar', 'bottom-left', 'cover-top'),
+            $this->invoke_private('social_poster_variants')
+        );
+        $this->assertSame('bottom-center', $this->invoke_private('normalize_poster_variant', array('not-a-layout')));
+    }
+
+    public function test_social_poster_variants_rotate_across_posts() {
+        $seen = array();
+        $cameras = array();
+        for ($i = 0; $i < 24; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Poster variant ' . $i,
+            ));
+            $post = get_post($post_id);
+            $seen[] = $this->invoke_private('social_poster_variant_for_post', array($post));
+            $cameras[] = $this->invoke_private('social_image_camera', array($post, 0));
+        }
+        $this->assertGreaterThanOrEqual(3, count(array_unique($seen)));
+        $this->assertGreaterThanOrEqual(3, count(array_unique($cameras)));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Revision variant'));
+        $first = $this->invoke_private('social_poster_variant_for_post', array(get_post($post_id)));
+        update_post_meta($post_id, '_tr_ai_wire_social_image_revision', 7);
+        $second = $this->invoke_private('social_poster_variant_for_post', array(get_post($post_id)));
+        $this->assertContains($first, $this->invoke_private('social_poster_variants'));
+        $this->assertContains($second, $this->invoke_private('social_poster_variants'));
+    }
+
+    public function test_social_image_prompt_uses_variant_safe_zone_and_camera() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Safe zone article',
+        ));
+        $post = get_post($post_id);
+        $left = $this->invoke_private('social_image_prompt', array($post, array('_poster_variant' => 'left-stack')));
+        $this->assertStringContainsString('Keep the left third of the frame naturally dark', $left);
+        $this->assertStringContainsString('Camera:', $left);
+        $cover = $this->invoke_private('social_image_prompt', array($post, array('_poster_variant' => 'cover-top')));
+        $this->assertStringContainsString('Keep the upper third of the frame naturally darker', $cover);
+        $default = $this->invoke_private('social_image_prompt', array($post, array('_poster_variant' => 'bottom-center')));
+        $this->assertStringContainsString('The lower half of the frame is naturally dark', $default);
+    }
+
+    public function test_branded_social_image_variants_keep_instagram_portrait() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg') || !function_exists('imagecreatefromstring') || !function_exists('imagecolorsforindex')) {
+            $this->markTestSkipped('GD is required to render poster variants.');
+        }
+        $im = imagecreatetruecolor(1080, 1350);
+        for ($y = 0; $y < 1350; $y++) {
+            $t = $y / 1350;
+            $color = imagecolorallocate($im, (int) (28 + (1 - $t) * 70), (int) (16 + (1 - $t) * 22), (int) (12 + $t * 28));
+            imageline($im, 0, $y, 1079, $y, $color);
+        }
+        $glow = imagecolorallocate($im, 80, 120, 160);
+        imagefilledellipse($im, 760, 430, 420, 320, $glow);
+        ob_start();
+        imagejpeg($im, null, 88);
+        $bytes = ob_get_clean();
+        imagedestroy($im);
+        $examples = array(
+            'bottom-center' => array(
+                'on_image_headline' => '13-inch or 15-inch Air?',
+                'on_image_subhead' => 'Both M5 models are $200 off',
+            ),
+            'left-stack' => array(
+                'on_image_headline' => 'When fake IDs become easier to scale',
+                'on_image_subhead' => 'OnlyFake raises questions about digital identity',
+            ),
+            'kicker-bar' => array(
+                'on_image_headline' => 'When big tech becomes politics',
+                'on_image_subhead' => 'Tech News',
+            ),
+            'bottom-left' => array(
+                'on_image_headline' => 'Siri could edit photos and organize Safari tabs',
+                'on_image_subhead' => 'A reported roadmap points to action inside Apple apps',
+            ),
+            'cover-top' => array(
+                'on_image_headline' => 'Midterm politics put AI stocks under pressure',
+                'on_image_subhead' => 'Washington fears meet deals already building around models',
+            ),
+        );
+        $dir = '/opt/cursor/artifacts';
+        foreach ($examples as $variant => $copy) {
+            $copy['_poster_variant'] = $variant;
+            $branded = $this->invoke_private('brand_social_image', array($bytes, $copy));
+            $this->assertTrue(is_string($branded) && $branded !== '', $variant . ' should render');
+            $info = getimagesizefromstring($branded);
+            $this->assertSame(1080, $info[0], $variant);
+            $this->assertSame(1350, $info[1], $variant);
+            if (is_dir($dir) || mkdir($dir, 0755, true)) {
+                file_put_contents($dir . '/instagram_poster_variant_' . $variant . '.jpg', $branded);
+            }
+        }
+        $default = $this->invoke_private('brand_social_image', array($bytes, array(
+            'on_image_headline' => 'What just happened in 24 hours?',
+            'on_image_subhead' => 'The week Big Tech could not ignore',
+        )));
+        $result = imagecreatefromstring($default);
+        $this->assertNotFalse($result);
+        $sample = imagecolorat($result, 36, 1240);
+        $rgb = imagecolorsforindex($result, $sample);
+        imagedestroy($result);
+        $this->assertLessThan(40, (int) $rgb['red']);
+        $this->assertLessThan(40, (int) $rgb['green']);
+        $this->assertLessThan(40, (int) $rgb['blue']);
+        $left = $this->invoke_private('brand_social_image', array($bytes, array(
+            '_poster_variant' => 'left-stack',
+            'on_image_headline' => 'When fake IDs become easier to scale',
+            'on_image_subhead' => 'OnlyFake raises questions',
+        )));
+        $left_im = imagecreatefromstring($left);
+        $rail = imagecolorsforindex($left_im, imagecolorat($left_im, 4, 640));
+        imagedestroy($left_im);
+        $this->assertGreaterThan(30, (int) $rail['blue']);
+    }
+
     public function test_site_context_needs_refresh_until_a_successful_read() {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         $this->assertTrue($this->plugin->site_context_needs_refresh());
