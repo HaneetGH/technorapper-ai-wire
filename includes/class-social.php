@@ -489,15 +489,17 @@ trait TechnoRapper_AI_Wire_Social {
         $table = $this->social_table();
         $wpdb->query("UPDATE {$table} SET status = 'needs_review', error_text = 'The worker stopped before recording an outcome. Check the platform before retrying.' WHERE status = 'processing' AND updated_at < UTC_TIMESTAMP() - INTERVAL 15 MINUTE");
         $this->requeue_instagram_prepublish_quota_failures();
-        $rows = $wpdb->get_results("SELECT * FROM {$table} WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1", ARRAY_A);
+        $rows = $wpdb->get_results("SELECT * FROM {$table} WHERE status = 'queued' ORDER BY created_at ASC LIMIT 25", ARRAY_A);
         foreach ((array) $rows as $row) {
             if (empty($this->settings()['social_distribution_enabled'])) {
                 break;
             }
-            if ($this->social_published_today() >= $limit && !$this->social_post_published_today((int) $row['post_id'])) {
+            if ($this->social_published_today() >= $limit && !$this->social_post_published_today((int) $row['post_id']) && !$this->social_item_is_manual_repost($row)) {
                 $tomorrow = strtotime('tomorrow 00:20:00 UTC');
-                wp_schedule_single_event($tomorrow, self::SOCIAL_CRON_HOOK);
-                break;
+                if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
+                    wp_schedule_single_event($tomorrow, self::SOCIAL_CRON_HOOK);
+                }
+                continue;
             }
             $claimed = $wpdb->query($wpdb->prepare(
                 "UPDATE {$table} SET status = 'processing', attempts = attempts + 1, updated_at = %s WHERE id = %d AND status = 'queued'",
@@ -512,24 +514,25 @@ trait TechnoRapper_AI_Wire_Social {
                 if ($result->get_error_code() === 'tr_ai_wire_social_image_busy') {
                     $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
                     wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
-                    continue;
+                    break;
                 }
                 if ($result->get_error_code() === 'tr_ai_wire_ig_quota_full') {
                     $wpdb->update($table, array('status' => 'queued', 'error_text' => $result->get_error_message(), 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
                     wp_schedule_single_event(strtotime('+1 hour'), self::SOCIAL_CRON_HOOK);
-                    continue;
+                    break;
                 }
                 // Do not auto-retry an ambiguous publish response: the platform
                 // may have accepted the post before the connection failed.
                 $this->finish_social_item($row['id'], 'needs_review', '', '', $result->get_error_message());
-                continue;
+                break;
             }
             $this->finish_social_item($row['id'], 'published', $result['id'], $result['url'], '');
+            break;
         }
 
         $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE status = 'queued'");
         $finishable = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} q WHERE q.status = 'queued' AND EXISTS (SELECT 1 FROM {$table} p WHERE p.post_id = q.post_id AND p.status = 'published' AND p.updated_at >= UTC_DATE())");
-        if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0) && !wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
+        if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0) && !wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
             wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
         }
     }
@@ -541,7 +544,10 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $copy = $this->social_copy($post, $settings);
         $force_new_image = (string) get_post_meta($post->ID, '_tr_ai_wire_social_regenerate_image', true) === '1';
-        $image_id = $force_new_image ? 0 : (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_id', true);
+        $image_id = (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_id', true);
+        if ($force_new_image || !$this->social_image_is_current($image_id)) {
+            $image_id = 0;
+        }
         if (!$image_id || !get_attached_file($image_id)) {
             $lock_name = 'tr_ai_wire_social_image_lock_' . (int) $post->ID;
             if (!add_option($lock_name, time(), '', false)) {
@@ -847,8 +853,21 @@ trait TechnoRapper_AI_Wire_Social {
         }
         update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field((string) ($copy['instagram_alt'] ?? $headline)));
         update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+        update_post_meta($attachment_id, '_tr_ai_wire_social_layout', self::SOCIAL_IMAGE_LAYOUT);
         delete_post_meta((int) $post->ID, '_tr_ai_wire_social_regenerate_image');
         return (int) $attachment_id;
+    }
+
+    private function social_image_is_current($image_id) {
+        $image_id = (int) $image_id;
+        if ($image_id < 1 || !wp_attachment_is_image($image_id)) {
+            return false;
+        }
+        $path = get_attached_file($image_id);
+        if (!$path || !file_exists($path)) {
+            return false;
+        }
+        return (string) get_post_meta($image_id, '_tr_ai_wire_social_layout', true) === self::SOCIAL_IMAGE_LAYOUT;
     }
 
     private function social_image_prompt($post, $copy = array()) {
@@ -915,19 +934,32 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $table = $this->social_table();
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id), ARRAY_A);
-        if (!$row || ($row['status'] ?? '') !== 'needs_review') {
+        $status = (string) ($row['status'] ?? '');
+        if (!$row || !in_array($status, array('needs_review', 'published'), true)) {
             return false;
         }
-        if ($regenerate_image) {
-            $this->forget_cached_social_image((int) $row['post_id']);
+        $post_id = (int) $row['post_id'];
+        $from_published = $status === 'published';
+        if ($from_published) {
+            $regenerate_image = true;
+            update_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id, '1');
         }
-        $updated = $wpdb->update($table, array(
+        $cached = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true);
+        $rebuild = $regenerate_image || !$this->social_image_is_current($cached);
+        if ($rebuild) {
+            $this->forget_cached_social_image($post_id);
+        }
+        $fields = array(
             'status' => 'queued',
             'error_text' => null,
             'remote_id' => '',
             'remote_url' => '',
             'updated_at' => current_time('mysql', true),
-        ), array('id' => $id, 'status' => 'needs_review'));
+        );
+        if ($rebuild) {
+            $fields['image_attachment_id'] = 0;
+        }
+        $updated = $wpdb->update($table, $fields, array('id' => $id, 'status' => $status));
         if ($updated !== 1) {
             return false;
         }
@@ -1476,13 +1508,41 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function finish_social_item($id, $status, $remote_id, $remote_url, $error) {
         global $wpdb;
-        $wpdb->update($this->social_table(), array(
+        $id = (int) $id;
+        $table = $this->social_table();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT post_id FROM {$table} WHERE id = %d", $id), ARRAY_A);
+        $wpdb->update($table, array(
             'status' => sanitize_key($status),
             'remote_id' => sanitize_text_field($remote_id),
             'remote_url' => esc_url_raw($remote_url),
             'error_text' => $error !== '' ? sanitize_text_field($error) : null,
             'updated_at' => current_time('mysql', true),
-        ), array('id' => (int) $id));
+        ), array('id' => $id));
+        if ($status === 'published' && $row) {
+            delete_post_meta((int) $row['post_id'], '_tr_ai_wire_social_repost_' . $id);
+        }
+    }
+
+    private function social_item_is_manual_repost($row) {
+        $post_id = (int) ($row['post_id'] ?? 0);
+        $id = (int) ($row['id'] ?? 0);
+        if ($post_id < 1 || $id < 1) {
+            return false;
+        }
+        return (string) get_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id, true) === '1';
+    }
+
+    private function social_queued_repost_count() {
+        global $wpdb;
+        $table = $this->social_table();
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$table} q
+             INNER JOIN {$wpdb->postmeta} m
+                ON m.post_id = q.post_id
+               AND m.meta_key = CONCAT('_tr_ai_wire_social_repost_', q.id)
+               AND m.meta_value = '1'
+             WHERE q.status = 'queued'"
+        );
     }
 
     private function social_published_today() {
@@ -1520,6 +1580,29 @@ trait TechnoRapper_AI_Wire_Social {
         exit;
     }
 
+    private function render_social_retry_form($row, $image_id, $status) {
+        $id = (int) ($row['id'] ?? 0);
+        $platform = (string) ($row['platform'] ?? '');
+        $platform_label = $platform === 'instagram' ? 'Instagram' : 'X';
+        $stale = (int) $image_id > 0 && !$this->social_image_is_current($image_id);
+        $published = $status === 'published';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
+        echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
+        echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+        wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
+        if ($published) {
+            echo '<p class="description">This plugin cannot delete the live ' . esc_html($platform_label) . ' post. Delete it yourself, then regenerate a huge-type poster and publish again.</p>';
+            echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I deleted the live ' . esc_html($platform_label) . ' post (or confirmed it is not live)</label><br>';
+            echo '<input type="hidden" name="regenerate_image" value="1">';
+            echo '<button class="button button-primary">Regenerate graphic and post again</button>';
+        } else {
+            echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I checked that it is not already published</label><br>';
+            echo '<label><input type="checkbox" name="regenerate_image" value="1"' . ($stale ? ' checked' : '') . '> Generate a new graphic (uses image budget). Old tiny-caption posters are rebuilt even if this is unchecked.</label><br>';
+            echo '<button class="button button-secondary">Retry this platform post</button>';
+        }
+        echo '</form>';
+    }
+
     private function social_queue_copy($row, $post) {
         $copy = array();
         if (!empty($row['copy_json'])) {
@@ -1554,8 +1637,8 @@ trait TechnoRapper_AI_Wire_Social {
         $map = array(
             'queued' => 'Waiting. The worker generates the branded graphic, then tries to post it.',
             'processing' => 'In progress: generating the graphic or talking to the platform.',
-            'published' => 'Posted on this platform.',
-            'needs_review' => 'The platform response was unclear. Confirm this is not already live, then retry so you do not double-post. Check Generate a new graphic if you want a different image.',
+            'published' => 'Posted on this platform. If the graphic is wrong, delete the live post yourself, then regenerate and post again.',
+            'needs_review' => 'The platform response was unclear. Confirm this is not already live, then retry so you do not double-post. Old tiny-caption posters are rebuilt automatically.',
         );
         $status = sanitize_key((string) $status);
         return isset($map[$status]) ? $map[$status] : '';
@@ -1607,7 +1690,7 @@ trait TechnoRapper_AI_Wire_Social {
                 'class' => 'tr-ai-wire-social-preview-image',
                 'alt' => (string) ($copy['instagram_alt'] ?? $copy['on_image_headline'] ?? 'Generated social graphic'),
             ));
-            echo '<span class="tr-ai-wire-social-preview-label">Generated graphic</span></a>';
+            echo '<span class="tr-ai-wire-social-preview-label">' . ($this->social_image_is_current($image_id) ? 'Generated graphic' : 'Old graphic — retry rebuilds this') . '</span></a>';
         } else {
             echo '<div class="tr-ai-wire-social-preview-empty">Graphic not generated yet. The worker creates it before posting.</div>';
         }
@@ -1636,14 +1719,8 @@ trait TechnoRapper_AI_Wire_Social {
         if ($error !== '') {
             echo '<p class="tr-ai-wire-social-error">' . esc_html($error) . '</p>';
         }
-        if ($status === 'needs_review') {
-            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
-            echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
-            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) (int) $row['id']) . '">';
-            wp_nonce_field('tr_ai_wire_retry_social_item_' . (int) $row['id']);
-            echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I checked that it is not already published</label><br>';
-            echo '<label><input type="checkbox" name="regenerate_image" value="1"> Generate a new graphic with the stronger news-poster prompt (uses image budget; leave unchecked to reuse this preview)</label><br>';
-            echo '<button class="button button-secondary">Retry this platform post</button></form>';
+        if ($status === 'needs_review' || $status === 'published') {
+            $this->render_social_retry_form($row, $image_id, $status);
         }
         echo '</div></div>';
     }

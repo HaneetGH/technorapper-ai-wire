@@ -2542,6 +2542,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('12345', $row['remote_id']);
         $this->assertGreaterThan(0, (int) $row['image_attachment_id']);
         $this->assertSame('1', (string) get_post_meta((int) $row['image_attachment_id'], '_tr_ai_wire_social_asset', true));
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_IMAGE_LAYOUT, (string) get_post_meta((int) $row['image_attachment_id'], '_tr_ai_wire_social_layout', true));
         $this->assertSame(0, $this->invoke_private('real_thumbnail_id', array($post_id)));
         $this->assertNotSame((int) $row['image_attachment_id'], $this->invoke_private('real_thumbnail_id', array($post_id)));
         $this->assertSame('https://cdn.example.com/photo.jpg', $this->invoke_private('display_image_url', array($post_id)));
@@ -2653,6 +2654,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             return 0;
         }
         update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+        update_post_meta($attachment_id, '_tr_ai_wire_social_layout', TechnoRapper_AI_Wire::SOCIAL_IMAGE_LAYOUT);
         return (int) $attachment_id;
     }
 
@@ -2700,7 +2702,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Instagram could not read the daily publishing quota', $html);
         $this->assertStringContainsString('Retry this platform post', $html);
         $this->assertStringContainsString('name="regenerate_image"', $html);
-        $this->assertStringContainsString('Generate a new graphic with the stronger news-poster prompt', $html);
+        $this->assertStringContainsString('Generate a new graphic (uses image budget)', $html);
+        $this->assertStringNotContainsString('Regenerate graphic and post again', $html);
     }
 
     public function test_social_queue_page_shows_placeholder_before_image_exists() {
@@ -3201,11 +3204,276 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertGreaterThan(0, (int) $published['image_attachment_id']);
         $this->assertSame((int) $published['image_attachment_id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
         $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_IMAGE_LAYOUT, (string) get_post_meta((int) $published['image_attachment_id'], '_tr_ai_wire_social_layout', true));
         $this->assertCount(1, $prompts);
         $this->assertStringContainsString('Untitled photoreal cinematic photograph', $prompts[0]);
         $this->assertStringContainsString('Do not render any text', $prompts[0]);
         $this->assertStringContainsString('regeneration attempt 1', $prompts[0]);
         $this->assertStringContainsString('Photoreal phone on a dark desk at dusk', $prompts[0]);
         $this->assertStringNotContainsString('Faster phone chip', $prompts[0]);
+    }
+
+    public function test_social_queue_page_offers_repost_on_published_instagram() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to preview social graphics.');
+        }
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Live Instagram graphic',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => 'ig-old',
+            'remote_url' => 'https://www.instagram.com/p/old/',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Regenerate graphic and post again', $html);
+        $this->assertStringContainsString('I deleted the live Instagram post', $html);
+        $this->assertStringContainsString('name="regenerate_image"', $html);
+        $this->assertStringContainsString('View live post', $html);
+        $this->assertStringNotContainsString('Retry this platform post', $html);
+    }
+
+    public function test_social_queue_page_labels_stale_graphic() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to preview social graphics.');
+        }
+        delete_post_meta($attachment_id, '_tr_ai_wire_social_layout');
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Old tiny caption poster',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Old graphic — retry rebuilds this', $html);
+        $this->assertStringContainsString('name="regenerate_image" value="1" checked', $html);
+    }
+
+    public function test_social_retry_rebuilds_stale_graphic_without_checkbox() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social retry path.');
+        }
+        delete_post_meta($attachment_id, '_tr_ai_wire_social_layout');
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Stale graphic',
+            'post_excerpt' => 'Old tiny captions should not be reused.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 43);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Hook',
+            'on_image_headline' => 'Headline',
+            'x' => 'X text',
+            'instagram' => 'Instagram caption',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($id, false)));
+        $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('queued', $row['status']);
+        $this->assertSame(0, (int) $row['image_attachment_id']);
+    }
+
+    public function test_social_published_repost_regenerates_and_publishes_again() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1 || $jpeg === '') {
+            $this->markTestSkipped('GD and uploads are required for the social repost path.');
+        }
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Repost with new graphic',
+            'post_excerpt' => 'Delete the live Instagram post first.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 44);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Hook',
+            'on_image_headline' => 'New huge type',
+            'visual_brief' => 'Photoreal trader covering his face at a red market board',
+            'x' => 'X text',
+            'instagram' => 'Instagram caption',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => 'ig-old-live',
+            'remote_url' => 'https://www.instagram.com/p/old-live/',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($id, false)));
+        $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', true));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id, true));
+        $queued = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id, remote_id, remote_url FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('queued', $queued['status']);
+        $this->assertSame(0, (int) $queued['image_attachment_id']);
+        $this->assertSame('', (string) $queued['remote_id']);
+
+        $prompts = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg, &$prompts) {
+            $url = (string) $url;
+            if (strpos($url, 'api.openai.com/v1/images/generations') !== false) {
+                $decoded = json_decode((string) ($args['body'] ?? ''), true);
+                $prompts[] = (string) ($decoded['prompt'] ?? '');
+                return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, 'content_publishing_limit') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-media-repost'));
+            }
+            if (strpos($url, '/media') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-container-repost'));
+            }
+            if (strpos($url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos($url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/repost/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $published = $wpdb->get_row($wpdb->prepare("SELECT status, image_attachment_id, remote_id, remote_url FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $published['status']);
+        $this->assertSame('ig-media-repost', $published['remote_id']);
+        $this->assertSame('https://www.instagram.com/p/repost/', $published['remote_url']);
+        $this->assertNotSame($attachment_id, (int) $published['image_attachment_id']);
+        $this->assertGreaterThan(0, (int) $published['image_attachment_id']);
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_IMAGE_LAYOUT, (string) get_post_meta((int) $published['image_attachment_id'], '_tr_ai_wire_social_layout', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id, true));
+        $this->assertCount(1, $prompts);
+        $this->assertStringContainsString('Untitled photoreal cinematic photograph', $prompts[0]);
+        $this->assertStringContainsString('Do not render any text', $prompts[0]);
+    }
+
+    public function test_social_published_repost_skips_daily_cap() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1 || $jpeg === '') {
+            $this->markTestSkipped('GD and uploads are required for the social repost path.');
+        }
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_daily_limit' => 1,
+        )), false);
+        $older = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Already used the daily slot'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Replace live graphic',
+            'post_excerpt' => 'Same-day Instagram replacement.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 45);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Hook',
+            'on_image_headline' => 'Headline',
+            'instagram' => 'Caption',
+            'instagram_alt' => 'Alt',
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $older,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'image_attachment_id' => $attachment_id,
+            'remote_id' => 'ig-replace-me',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $this->assertTrue($this->invoke_private('requeue_social_item', array($id, true)));
+        add_filter('pre_http_request', function ($preempt, $args, $url) use ($jpeg) {
+            $url = (string) $url;
+            if (strpos($url, 'api.openai.com/v1/images/generations') !== false) {
+                return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, 'content_publishing_limit') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-media-cap-repost'));
+            }
+            if (strpos($url, '/media') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-container-cap-repost'));
+            }
+            if (strpos($url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos($url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/cap-repost/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $published = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $published['status']);
+        $this->assertSame('ig-media-cap-repost', $published['remote_id']);
     }
 }
