@@ -1445,18 +1445,20 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_copy_system_prompt($brand) {
         return 'You are the social editor and growth lead for ' . $brand . ', with a newsroom desk and ten years of Instagram and X distribution. '
             . 'Repackage an already-published article. Do not write a new article. Use only supplied article fields plus the site context. '
-            . 'Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. '
-            . 'You only ship posts a busy person would stop for. Safe for a news brand: no nudity, no sexual framing, no gore, no hate, no slurs, no profanity. Return JSON only.';
+            . 'Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake countdown deals or fake scarcity. '
+            . 'Clickbait is allowed and preferred when it is true: the job is stop the scroll and get the tap. '
+            . 'Safe for a news brand: no nudity, no sexual framing, no gore, no hate, no slurs, no profanity. Return JSON only.';
     }
 
     private function social_copy_user_prompt($brand, $profile, $snapshot) {
-        $user = 'Write the package a growth editor would actually post. What gets views on tech/news social: a specific name, number, or change in the first line; a reader stake (phone, job, money, privacy, or status — not “the industry”); curiosity the caption pays off; saveable bullets or one grounded tension. Short. No throat-clearing. '
-            . 'Never use: you won’t believe, wait for it, must see, gone wrong, shocking, this will blow your mind, company announces (with no consequence), or sexual/nude/violent bait. '
-            . 'on_image_headline: 4–9 words, punchy, a number only if it is in the article, short enough for 2–3 lines of huge type. on_image_subhead: one supporting line, max 10 words. '
+        $user = 'Write the package a growth editor would actually post to get views. Clickbait is on. Lead with a specific name, number, or twist; a reader stake (phone, job, money, privacy, or status); a curiosity gap the caption pays off; saveable bullets. Short. No throat-clearing. '
+            . 'You MAY use: you won’t believe, wait for it, must see, gone wrong, shocking, this changes everything, this will blow your mind — if the article supports it. Open a loop the post then pays off. '
+            . 'Never use sexual, nude, or violent bait. Never invent the twist. '
+            . 'on_image_headline: 4–9 words, scroll-stopping, a number only if it is in the article, short enough for 2–3 lines of huge type. on_image_subhead: one supporting line that makes them tap, max 10 words. '
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
-            . 'visual_brief: describe only a fully clothed news photograph (device close-up, office from behind, factory, night city, server hall, product still life). Prefer dusk, night, or hard rim light. All people fully clothed in ordinary work or street clothes, faces not identifiable. No nudity, no sexualized bodies, no lingerie, no children, no gore, no celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
-            . 'x_text: hook plus one curiosity or value line; do not include the URL. instagram_caption: hook, 2–4 short lines of value, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. ';
+            . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. No nudity, no sexualized bodies, no lingerie, no children, no gore, no celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
+            . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook, 2–4 short lines that pay off the curiosity, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }
@@ -1831,9 +1833,10 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_image_prompt_for_format($format, $variant, $post, $revision, $profile, $brief) {
         $art = $this->social_image_art_direction($profile);
         $camera = $this->social_image_camera($post, $revision);
-        $scene = $brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one clear technology-news photograph with a single subject. ';
+        $scene = $brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one scroll-stopping technology-news photograph with a single hero subject filling the frame. ';
         $no_text = 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. ';
         $no_people_brands = 'Do not imitate a specific existing photo. Anonymous fully clothed people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. No real brand logos. ';
+        $stop = $this->social_image_scroll_stop_clause();
         if ($format === 'device_mockup') {
             return 'Untitled photoreal product photograph, vertical 4:5, full-bleed studio or desk still life. '
                 . 'One generic phone, wearable, laptop, or similar device that fits the story. No readable UI, no logos, no model names. '
@@ -1843,7 +1846,7 @@ trait TechnoRapper_AI_Wire_Social {
                 . $no_people_brands
                 . 'Art direction: ' . $art . '. Camera: ' . $camera . '. '
                 . $scene
-                . 'Make the picture stop a social-media scroll.';
+                . $stop;
         }
         if ($format === 'rumor_card') {
             return 'Untitled photoreal studio photograph, vertical 4:5, full-bleed, light background. '
@@ -1854,7 +1857,7 @@ trait TechnoRapper_AI_Wire_Social {
                 . $no_people_brands
                 . 'Art direction: ' . $art . '. Camera: ' . $camera . '. '
                 . $scene
-                . 'Make the picture stop a social-media scroll.';
+                . $stop;
         }
         if ($format === 'photo_brief') {
             return 'Untitled photoreal cinematic photograph, vertical 4:5, full-bleed, no graphic design. '
@@ -1865,7 +1868,7 @@ trait TechnoRapper_AI_Wire_Social {
                 . $no_people_brands
                 . 'Art direction: ' . $art . '. Camera: ' . $camera . '. '
                 . $scene
-                . 'Make the picture stop a social-media scroll.';
+                . $stop;
         }
         return 'Untitled photoreal cinematic photograph, vertical 4:5, full-bleed, no graphic design. '
             . 'One real-world scene, magazine lighting, shallow depth of field, high contrast. This is a photograph, not a poster, not a title card, not a thumbnail. '
@@ -1875,7 +1878,14 @@ trait TechnoRapper_AI_Wire_Social {
             . $no_people_brands
             . 'Art direction: ' . $art . '. Camera: ' . $camera . '. '
             . $scene
-            . 'Make the picture stop a social-media scroll.';
+            . $stop;
+    }
+
+    private function social_image_scroll_stop_clause() {
+        return 'This photo must stop a thumb mid-scroll and make someone tap. '
+            . 'Pattern interrupt: extreme crop, one glowing object, rain on glass, dusk rim light, or a surprising scale. '
+            . 'High contrast, saturated night color, one hero filling the frame. Not a polite stock photo. '
+            . 'Still photoreal news photography, still fully clothed, still no text.';
     }
 
     private function social_poster_variants() {
@@ -2282,11 +2292,11 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_image_camera($post, $revision = 0) {
         $cameras = array(
-            'tight overhead still life of one device on a dark desk, hard side light',
-            'over-the-shoulder of a fully clothed person at a glowing monitor, face not identifiable',
-            'extreme close-up of a phone or laptop edge, bokeh lights behind',
-            'wide office floor from behind, one fully clothed figure walking, dusk windows',
-            'macro of a keyboard, cable, or chip with a single rim light',
+            'tight overhead still life of one device on a dark desk, hard side light, wet reflections',
+            'over-the-shoulder of a fully clothed person frozen at a blooming monitor, face not identifiable',
+            'extreme close-up of a phone or laptop edge, neon bokeh, rain on glass',
+            'wide empty office at night from behind, one fully clothed figure, one light on, dusk windows',
+            'macro of a keyboard, cable, or chip with a single rim light and dust in the beam',
         );
         $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
         $index = (int) (sprintf('%u', crc32('cam:' . $id . ':' . (int) $revision)) % count($cameras));
@@ -2294,7 +2304,7 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function social_image_art_direction($profile) {
-        $default = 'cinematic photoreal news photography, dusk or night rim light, one hero subject filling the frame';
+        $default = 'cinematic photoreal news photography, dusk or night rim light, high contrast, one hero subject filling the frame, built to stop a thumb';
         $style = trim((string) ($profile['visual_style'] ?? ''));
         if ($style === '' || preg_match('/illustrat|cartoon|navy|magazine art|vector|flat design|infographic|collage|3d render/i', $style)) {
             return $default;

@@ -4152,6 +4152,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('No nudity', $prompt);
         $this->assertStringContainsString('fully clothed', $prompt);
         $this->assertStringContainsString('No children', $prompt);
+        $this->assertStringContainsString('stop a thumb mid-scroll', $prompt);
+        $this->assertStringContainsString('make someone tap', $prompt);
     }
 
     public function test_unsafe_visual_brief_is_dropped_before_the_image_api() {
@@ -4191,10 +4193,14 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNull($this->invoke_private('social_copy_policy_error', array($news)));
         $desk = $this->invoke_private('social_copy_system_prompt', array('TechnoRapper'));
         $this->assertStringContainsString('growth lead', $desk);
+        $this->assertStringContainsString('Clickbait is allowed', $desk);
         $this->assertStringContainsString('no nudity', strtolower($desk));
         $user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news')));
         $this->assertStringContainsString('reader stake', $user);
+        $this->assertStringContainsString('Clickbait is on', $user);
+        $this->assertStringContainsString('you won’t believe', $user);
         $this->assertStringContainsString('fully clothed', $user);
+        $this->assertStringNotContainsString('Never use: you won’t believe', $user);
         $this->assertNull($this->invoke_private('sanitize_social_idea_item', array(array(
             'title' => 'Nude recap cover',
             'description' => 'A naked model as the hero of the graphic.',
