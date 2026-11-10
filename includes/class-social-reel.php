@@ -13,8 +13,18 @@ if (!defined('ABSPATH')) {
  * then a last-frame hold and a brand sting.
  */
 trait TechnoRapper_AI_Wire_Social_Reel {
-    private function social_wants_reel($settings = null) {
+    private function social_wants_reel($settings = null, $post_id = 0) {
         $settings = is_array($settings) ? $settings : $this->settings();
+        $post_id = (int) $post_id;
+        if ($post_id > 0) {
+            $mode = sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+            if ($mode === 'reel') {
+                return true;
+            }
+            if (in_array($mode, array('single', 'pack', 'carousel', 'collage'), true)) {
+                return false;
+            }
+        }
         return $this->normalize_social_post_format($settings['social_post_format'] ?? 'single') === 'reel';
     }
 

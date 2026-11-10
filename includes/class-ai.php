@@ -449,6 +449,7 @@ trait TechnoRapper_AI_Wire_AI {
             (string) ($copy['hook'] ?? ''),
             (string) ($copy['on_image_headline'] ?? ''),
             (string) ($copy['on_image_subhead'] ?? ''),
+            (string) ($copy['on_image_kicker'] ?? ''),
             (string) ($copy['visual_brief'] ?? ''),
             (string) ($copy['cta'] ?? ''),
             (string) ($copy['x'] ?? ''),
@@ -456,6 +457,9 @@ trait TechnoRapper_AI_Wire_AI {
             (string) ($copy['instagram_alt'] ?? ''),
             (string) ($copy['reel_script'] ?? ''),
         );
+        foreach ((array) ($copy['on_image_bullets'] ?? array()) as $bullet) {
+            $parts[] = is_array($bullet) ? (string) ($bullet['text'] ?? implode(' ', $bullet)) : (string) $bullet;
+        }
         foreach ((array) ($copy['reel_captions'] ?? array()) as $caption) {
             if (is_array($caption)) {
                 $parts[] = (string) ($caption['caption'] ?? implode(' ', $caption));

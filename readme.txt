@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.51
+Stable tag: 0.2.53
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -51,9 +51,14 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.53 =
+* Optional spoken Instagram Reels, off until you set Reels per day above 0. Writer GPT writes the 15–18s script; Fal motion (suggested Veo 3.1 Lite) animates the photo; Mini TTS and ffmpeg mux captions. A local profanity/slur list plus OpenAI Moderation hold unsafe copy. X still gets the still graphic.
+
+= 0.2.52 =
+* Social copy is written like a newsroom growth desk: clickbait that is true, a curiosity gap, and a photo built to stop the thumb. Operators set how many carousel, collage, and single-story posts go out each day. Carousels add a swipe cue on the cover and one curiosity slide before the last story. Image prompts refuse nudity, sexualized bodies, children, gore, and other policy violations before the image API is called. Unsafe captions are held for review.
+
 = 0.2.51 =
-* Optional Instagram Reels: one spoken story per article. The current Writer model writes the 15–18s script; Fal motion (suggested Veo 3.1 Lite, ~$0.24 / 8s, $10/month default) animates the social photo. Operators can pick Veo Fast, Veo 3.1, Kling Standard, or Kling Pro; each model has a price info icon and a Price estimate page. Mini TTS and ffmpeg mux voiceover plus captions. Not a Ken Burns slideshow. X still gets the still graphic.
-* Profanity and policy guardrails: a local slur/profanity list plus OpenAI Moderation run on every article and social caption before it is published. Violations are held, never posted.
+* Social settings lists every news graphic format the plugin can produce, lets you select several at once, and accepts a written idea plus optional reference image. Those are format types, not example headlines from other accounts.
 
 = 0.2.50 =
 * Keep the previous Run now, review-score, homepage pin, and social outcomes on the decoupled pipeline: writer quality and the 85 review scale stay the same, scheduled ticks still do one stage, and auto-publish still pins and syndicates after a verified publish.
@@ -75,8 +80,14 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Upgrade Notice ==
 
+= 0.2.53 =
+Adds optional spoken Instagram Reels you can turn on or off. Writer GPT writes the script; Fal motion and ffmpeg mux the rest. Policy holds block unsafe copy.
+
+= 0.2.52 =
+Social posts now use scroll-stopping copy and photos. Set how many carousel, collage, and single-story posts go out each day. Violating image briefs are dropped at prompt level; unsafe captions stay in the social queue for review.
+
 = 0.2.51 =
-Adds an optional spoken Instagram Reel format. Writer GPT writes the script; Fal motion (suggested Veo 3.1 Lite) supplies 8s of clip inside a $10/month video budget, with other Veo and Kling models selectable; Mini TTS and ffmpeg mux the rest. Not a slideshow of stills.
+Choose which news graphic formats to rotate, and upload your own idea. Example posts you have seen elsewhere are not the selectable options.
 
 = 0.2.50 =
 Same publish, homepage, and social results as before, with committed pipeline stages so an API or adapter failure cannot roll back a finished step.

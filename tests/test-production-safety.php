@@ -32,6 +32,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_BATCH_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_MIX_OPTION . '_' . gmdate('Ymd'));
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_IDEAS_OPTION);
         delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
         delete_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'));
         delete_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'));
@@ -609,7 +610,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('single', $settings['social_post_format']);
         $this->assertSame(5, $settings['social_slide_count']);
         $this->assertSame(2, $settings['social_carousel_daily_limit']);
+        $this->assertSame(0, $settings['social_collage_daily_limit']);
         $this->assertSame(3, $settings['social_single_daily_limit']);
+        $this->assertSame(0, $settings['social_reel_daily_limit']);
+        $this->assertSame(0, (int) $settings['social_mix_saved']);
+        $this->assertSame(array_keys(TechnoRapper_AI_Wire::social_news_formats()), $settings['social_news_formats']);
         $this->assertArrayNotHasKey('social_pack_wait_minutes', $settings);
     }
 
@@ -2594,6 +2599,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $this->assertSame('reel', $reel['social_post_format']);
         $this->assertSame(1, $this->invoke_private('social_slide_count', array($reel)));
+        $this->assertSame(0, (int) $reel['social_reel_daily_limit']);
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 0, 'reel' => 10), $this->invoke_private('social_daily_mix_limits', array($reel)));
         $this->assertSame(10.0, (float) $reel['social_video_budget_usd']);
         $this->assertSame('veo-lite', $reel['social_reel_video_model']);
         $this->assertSame(8, (int) $reel['social_reel_clip_seconds']);
@@ -2645,12 +2652,284 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $this->assertSame(2, $mix['social_carousel_daily_limit']);
         $this->assertSame(4, $mix['social_single_daily_limit']);
+        $counts = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
+            'social_collage_daily_limit' => 1,
+            'social_single_daily_limit' => 4,
+        ));
+        $this->assertSame(1, (int) $counts['social_mix_saved']);
+        $this->assertSame(3, $counts['social_carousel_daily_limit']);
+        $this->assertSame(1, $counts['social_collage_daily_limit']);
+        $this->assertSame(4, $counts['social_single_daily_limit']);
+        $this->assertSame('carousel', $counts['social_post_format']);
+        $singles_only = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 6,
+        ));
+        $this->assertSame('single', $singles_only['social_post_format']);
+        $this->assertSame(1, $this->invoke_private('social_slide_count', array($singles_only)));
         $clamped = $this->plugin->sanitize_settings(array(
             'social_carousel_daily_limit' => 99,
+            'social_collage_daily_limit' => 99,
             'social_single_daily_limit' => 99,
         ));
         $this->assertSame(10, $clamped['social_carousel_daily_limit']);
+        $this->assertSame(10, $clamped['social_collage_daily_limit']);
         $this->assertSame(10, $clamped['social_single_daily_limit']);
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 3, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(array('carousel' => 3, 'collage' => 1, 'single' => 4, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array($counts)));
+        $reel_mix = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 1,
+            'social_carousel_daily_limit' => 2,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 3,
+        ));
+        $this->assertSame(1, $reel_mix['social_reel_daily_limit']);
+        $this->assertSame('carousel', $reel_mix['social_post_format']);
+        $this->assertSame(array('carousel' => 2, 'collage' => 0, 'single' => 3, 'reel' => 1), $this->invoke_private('social_daily_mix_limits', array($reel_mix)));
+        $reels_only = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 2,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 0,
+        ));
+        $this->assertSame('reel', $reels_only['social_post_format']);
+        $this->assertSame('collage', $this->invoke_private('social_next_pack_kind', array(array(
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 2,
+            'social_single_daily_limit' => 1,
+            'social_post_format' => 'single',
+        ))));
+    }
+
+    public function test_social_news_formats_are_types_not_example_headlines() {
+        $catalog = TechnoRapper_AI_Wire::social_news_formats();
+        $this->assertArrayHasKey('editorial_poster', $catalog);
+        $this->assertArrayHasKey('photo_brief', $catalog);
+        $this->assertArrayHasKey('weekly_recap', $catalog);
+        $this->assertArrayHasKey('numbered_roundup', $catalog);
+        $this->assertArrayHasKey('product_roundup', $catalog);
+        $this->assertArrayHasKey('rumor_card', $catalog);
+        $this->assertArrayHasKey('device_mockup', $catalog);
+        $this->assertArrayHasKey('breaking_kicker', $catalog);
+        $blob = wp_json_encode($catalog);
+        foreach (array(
+            'Google for Startups',
+            'Ray-Ban',
+            'Anthropic',
+            'Bengaluru',
+            'ChatGPT',
+            'iPhone Duo',
+            'itsmangalore',
+            'aadhunik',
+            'TechSavvy',
+            'BetaProfiles',
+            'Siri Could Act',
+        ) as $banned) {
+            $this->assertStringNotContainsString($banned, $blob);
+        }
+        $this->assertSame('cover', $catalog['weekly_recap']['role']);
+        $this->assertSame('story', $catalog['photo_brief']['role']);
+    }
+
+    public function test_social_news_format_settings_are_multi_select_and_sanitized() {
+        $clean = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => '1',
+            'social_news_formats' => array('photo_brief', 'weekly_recap', 'not-a-format', 'photo_brief'),
+        ));
+        $this->assertSame(array('photo_brief', 'weekly_recap'), $clean['social_news_formats']);
+        $empty = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => '1',
+            'social_news_formats' => array(),
+        ));
+        $this->assertSame(array('editorial_poster'), $empty['social_news_formats']);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_news_formats' => array('device_mockup', 'rumor_card'),
+        )), false);
+        $preserved = $this->plugin->sanitize_settings(array(
+            'auto_publish' => 1,
+            'max_posts_per_day' => 10,
+        ));
+        $this->assertSame(array('device_mockup', 'rumor_card'), $preserved['social_news_formats']);
+    }
+
+    public function test_custom_social_idea_joins_selected_story_formats() {
+        $this->invoke_private('save_social_custom_ideas', array(array(
+            array(
+                'id' => 'idea_neon01',
+                'title' => 'Night neon recap',
+                'description' => 'Dark gradient, huge stacked title, one cyan accent bar.',
+                'image_id' => 0,
+                'enabled' => 1,
+            ),
+            array(
+                'id' => 'idea_off02',
+                'title' => 'Unused sketch',
+                'description' => 'Should stay out of rotation while disabled.',
+                'enabled' => 0,
+            ),
+        )));
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_news_formats' => array('editorial_poster'),
+        ));
+        $story = $this->invoke_private('selected_social_news_formats', array($settings, 'story'));
+        $this->assertContains('editorial_poster', $story);
+        $this->assertContains('idea_neon01', $story);
+        $this->assertNotContains('idea_off02', $story);
+        $cover = $this->invoke_private('selected_social_news_formats', array($settings, 'cover'));
+        $this->assertNotContains('idea_neon01', $cover);
+        $rejected = $this->invoke_private('sanitize_social_idea_item', array(array(
+            'title' => 'Missing description',
+            'description' => '',
+        )));
+        $this->assertNull($rejected);
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_news_formats' => array('editorial_poster', 'photo_brief'),
+        ));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'No cover wanted'));
+        $cover_id = $this->invoke_private('maybe_social_pack_cover', array(array(
+            array('post' => get_post($post_id), 'copy' => array(), 'image_path' => ''),
+            array('post' => get_post($post_id), 'copy' => array(), 'image_path' => ''),
+        ), $settings));
+        $this->assertSame(0, $cover_id);
+        $_POST['social_idea_title'] = 'Studio stack';
+        $_POST['social_idea_description'] = 'White background, clustered generic devices, headline at the top.';
+        $this->invoke_private('process_social_ideas_from_request');
+        unset($_POST['social_idea_title'], $_POST['social_idea_description']);
+        $uploaded = $this->invoke_private('social_custom_ideas');
+        $titles = array();
+        foreach ($uploaded as $idea) {
+            $titles[] = $idea['title'];
+        }
+        $this->assertContains('Studio stack', $titles);
+        $this->assertContains('Night neon recap', $titles);
+    }
+
+    public function test_social_copy_keeps_highlighted_bullets() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'A new cloud grant for founders',
+            'post_excerpt' => 'The program adds credits. Mentors join next month. Early tool access is included.',
+        ));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(
+            'on_image_headline' => 'Cloud grants for founders',
+            'on_image_kicker' => 'AI NEWS',
+            'on_image_bullets' => array(
+                'New program to support **AI-first founders**.',
+                'Offers **cloud credits** and mentorship.',
+                'Focus on healthcare, education, and SMEs.',
+            ),
+        ), get_post($post_id)));
+        $this->assertSame('AI NEWS', $copy['on_image_kicker']);
+        $this->assertCount(3, $copy['on_image_bullets']);
+        $this->assertStringContainsString('**AI-first founders**', $copy['on_image_bullets'][0]);
+        $segments = $this->invoke_private('social_highlight_segments', array($copy['on_image_bullets'][0]));
+        $this->assertTrue($segments[1]['highlight']);
+        $this->assertSame('AI-first founders', $segments[1]['text']);
+    }
+
+    public function test_photo_brief_and_weekly_recap_render_instagram_portrait() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg') || !function_exists('imagecreatefromstring')) {
+            $this->markTestSkipped('GD is required to render news graphic formats.');
+        }
+        $im = imagecreatetruecolor(64, 96);
+        imagefilledrectangle($im, 0, 0, 63, 95, imagecolorallocate($im, 12, 28, 64));
+        ob_start();
+        imagejpeg($im, null, 80);
+        $bytes = ob_get_clean();
+        imagedestroy($im);
+        $brief = $this->invoke_private('brand_social_image', array($bytes, array(
+            '_news_format' => 'photo_brief',
+            'on_image_headline' => 'A new program for founders',
+            'on_image_bullets' => array(
+                'Support **AI-first founders**.',
+                'Offers **cloud credits** and mentors.',
+                'Focus on healthcare and education.',
+            ),
+        )));
+        $this->assertTrue(is_string($brief) && $brief !== '');
+        $info = getimagesizefromstring($brief);
+        $this->assertSame(1080, $info[0]);
+        $this->assertSame(1350, $info[1]);
+        $cover = $this->invoke_private('render_local_social_graphic', array(array(
+            '_news_format' => 'weekly_recap',
+            'on_image_headline' => 'THIS WEEK IN TECH',
+            'on_image_subhead' => 'Stories from this site',
+        )));
+        $this->assertTrue(is_string($cover) && $cover !== '');
+        $cover_info = getimagesizefromstring($cover);
+        $this->assertSame(1080, $cover_info[0]);
+        $this->assertSame(1350, $cover_info[1]);
+        $dir = '/opt/cursor/artifacts';
+        if (is_dir($dir) || mkdir($dir, 0755, true)) {
+            file_put_contents($dir . '/instagram_photo_brief.jpg', $brief);
+            file_put_contents($dir . '/instagram_weekly_recap.jpg', $cover);
+        }
+    }
+
+    public function test_device_mockup_prompt_allows_product_photography() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Foldable phone display news',
+        ));
+        $prompt = $this->invoke_private('social_image_prompt', array(get_post($post_id), array(
+            '_news_format' => 'device_mockup',
+            'visual_brief' => 'A generic foldable phone on a pale desk',
+        )));
+        $this->assertStringContainsString('product photograph', $prompt);
+        $this->assertStringContainsString('Do not render any text', $prompt);
+        $this->assertStringNotContainsString('or product mockup', $prompt);
+        $this->assertStringContainsString('A generic foldable phone', $prompt);
+        $idea_prompt = $this->invoke_private('social_image_prompt', array(get_post($post_id), array(
+            '_news_format' => 'idea_missing',
+            'visual_brief' => 'Night city from a rooftop',
+        )));
+        $this->assertStringContainsString('Untitled photoreal cinematic photograph', $idea_prompt);
+    }
+
+    public function test_carousel_cover_and_curiosity_slide_ask_for_a_swipe() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render the curiosity slide.');
+        }
+        $posts = array();
+        foreach (array('First story', 'Second story', 'Third story') as $title) {
+            $posts[] = array(
+                'post' => get_post($this->factory()->post->create(array(
+                    'post_status' => 'publish',
+                    'post_title' => $title,
+                    'post_excerpt' => $title,
+                ))),
+                'copy' => array('on_image_headline' => $title, 'cta' => 'Read more'),
+                'image_url' => 'https://example.org/' . sanitize_title($title) . '.jpg',
+            );
+        }
+        $cover = $this->invoke_private('social_cover_copy', array($posts, 'weekly_recap'));
+        $this->assertStringContainsString('THIS WEEK IN', $cover['on_image_headline']);
+        $this->assertStringContainsString('SWIPE', $cover['on_image_subhead']);
+        $numbered = $this->invoke_private('social_cover_copy', array($posts, 'numbered_roundup'));
+        $this->assertStringContainsString('Wait for the last one', $numbered['on_image_headline']);
+        $product = $this->invoke_private('social_cover_copy', array($posts, 'product_roundup'));
+        $this->assertSame('SWIPE TO THE LAST ONE', $product['on_image_subhead']);
+        $curiosity = $this->invoke_private('social_curiosity_slide_copy', array($posts));
+        $this->assertSame('THE NEXT SLIDE IS THE ONE', $curiosity['on_image_headline']);
+        $this->assertStringContainsString('SWIPE', $curiosity['on_image_subhead']);
+        $caption = $this->invoke_private('instagram_pack_caption', array($posts));
+        $this->assertStringContainsString('Don\'t skip the last slide.', $caption);
+        $this->assertStringContainsString('First story', $caption);
+        $urls = $this->invoke_private('instagram_carousel_urls', array($posts, array(
+            'social_news_formats' => array('editorial_poster'),
+        )));
+        $this->assertCount(4, $urls);
+        $this->assertSame($posts[0]['image_url'], $urls[0]);
+        $this->assertSame($posts[1]['image_url'], $urls[1]);
+        $this->assertSame($posts[2]['image_url'], $urls[3]);
+        $this->assertNotSame($posts[2]['image_url'], $urls[2]);
     }
 
     public function test_instagram_job_packs_three_website_articles_into_one_carousel() {
@@ -2659,6 +2938,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'social_post_format' => 'carousel',
             'social_slide_count' => 3,
             'social_daily_limit' => 10,
+            'social_news_formats' => array('editorial_poster', 'weekly_recap'),
         )), false);
         $headlines = array(
             '13-inch or 15-inch Air?',
@@ -2751,8 +3031,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 $pack_caption = (string) ($body['caption'] ?? '');
             }
         }
-        $this->assertSame(3, $child_items);
+        $this->assertSame(5, $child_items);
         $this->assertSame(1, $parents);
+        $this->assertStringContainsString('Don\'t skip the last slide.', $pack_caption);
         $this->assertStringContainsString('Today on ' . get_bloginfo('name'), $pack_caption);
         $this->assertStringContainsString('13-inch or 15-inch Air?', $pack_caption);
         $this->assertStringContainsString('When fake IDs become easier to scale', $pack_caption);
@@ -2852,7 +3133,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertSame(10, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
         $this->assertSame('pack', (string) get_post_meta((int) $wpdb->get_var("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC LIMIT 1"), '_tr_ai_wire_social_mode', true));
-        $this->assertSame(array('carousel' => 1, 'single' => 0), $this->invoke_private('social_mix_today'));
+        $this->assertSame(array('carousel' => 1, 'collage' => 0, 'single' => 0, 'reel' => 0), $this->invoke_private('social_mix_today'));
 
         $independent = $this->factory()->post->create(array(
             'post_status' => 'publish',
@@ -2863,7 +3144,29 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
         $this->assertSame('single', (string) get_post_meta($independent, '_tr_ai_wire_social_mode', true));
         $this->assertSame(12, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
-        $this->assertSame(array('carousel' => 1, 'single' => 1), $this->invoke_private('social_mix_today'));
+        $this->assertSame(array('carousel' => 1, 'collage' => 0, 'single' => 1, 'reel' => 0), $this->invoke_private('social_mix_today'));
+    }
+
+    public function test_mix_counts_can_run_only_single_stories() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_post_format' => 'carousel',
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+            'social_slide_count' => 5,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Just one story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 81);
+        $this->fire_social_publish($post_id);
+        $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        global $wpdb;
+        $this->assertSame(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = " . (int) $post_id));
     }
 
     public function test_x_keys_and_tokens_sign_oauth1_requests() {
@@ -3273,10 +3576,60 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $rows = $wpdb->get_results("SELECT post_id, platform, status FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC", ARRAY_A);
         $this->assertCount(3, $rows);
         foreach ($post_ids as $post_id) {
-            $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+            $this->assertSame('reel', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
         }
         $this->assertFalse($this->invoke_private('social_row_is_pack', array($rows[0], $settings)));
         $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 0, 'reel' => 3), $this->invoke_private('social_mix_today'));
+    }
+
+    public function test_reel_daily_limit_zero_keeps_reels_off() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 0,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Still story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 910);
+        $this->invoke_private('collect_social_article', array($post_id, $settings));
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertFalse($this->invoke_private('social_wants_reel', array($settings, $post_id)));
+    }
+
+    public function test_reel_daily_limit_one_uses_the_days_lead() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $lead = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Lead story',
+        ));
+        $follow = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Follow story',
+        ));
+        update_post_meta($lead, '_tr_ai_wire_queue_id', 911);
+        update_post_meta($follow, '_tr_ai_wire_queue_id', 912);
+        $this->invoke_private('collect_social_article', array($lead, $settings));
+        $this->invoke_private('collect_social_article', array($follow, $settings));
+        $this->assertSame('reel', (string) get_post_meta($lead, '_tr_ai_wire_social_mode', true));
+        $this->assertSame('single', (string) get_post_meta($follow, '_tr_ai_wire_social_mode', true));
+        $this->assertTrue($this->invoke_private('social_wants_reel', array($settings, $lead)));
+        $this->assertFalse($this->invoke_private('social_wants_reel', array($settings, $follow)));
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 1, 'reel' => 1), $this->invoke_private('social_mix_today'));
     }
 
     public function test_instagram_reel_publishes_video_container_not_carousel() {
@@ -3784,6 +4137,22 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('API Key Secret', $html);
         $this->assertStringContainsString('Access Token Secret', $html);
         $this->assertStringContainsString('Bearer is not needed', $html);
+        $this->assertStringContainsString('How many of each post', $html);
+        $this->assertStringContainsString('Carousel posts per day', $html);
+        $this->assertStringContainsString('Collage posts per day', $html);
+        $this->assertStringContainsString('Single-story posts per day', $html);
+        $this->assertStringNotContainsString('Instagram post format', $html);
+        $this->assertStringContainsString('News graphics we can produce', $html);
+        $this->assertStringContainsString('Editorial news poster', $html);
+        $this->assertStringContainsString('Photo news brief', $html);
+        $this->assertStringContainsString('Weekly recap cover', $html);
+        $this->assertStringContainsString('Your ideas', $html);
+        $this->assertStringContainsString('name="social_idea_image"', $html);
+        $this->assertStringNotContainsString('Google for Startups', $html);
+        $this->assertStringNotContainsString('Ray-Ban', $html);
+        $this->assertStringNotContainsString('Anthropic', $html);
+        $this->assertStringNotContainsString('iPhone Duo', $html);
+        $this->assertStringNotContainsString('itsmangalore', $html);
         $this->assertStringNotContainsString('access token saved', strtolower($html));
         $this->assertSame(
             'Keys and tokens saved (API Key, API Key Secret, Access Token, Access Token Secret). Bearer is not needed.',
@@ -3812,6 +4181,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, (int) $clean['social_instagram_enabled']);
         $this->assertSame(1, (int) $clean['social_distribution_enabled']);
         $this->assertSame(7, (int) $clean['social_daily_limit']);
+        $this->assertSame(array_keys(TechnoRapper_AI_Wire::social_news_formats()), $clean['social_news_formats']);
     }
 
     public function test_switch_off_pauses_queued_delivery() {
@@ -4534,6 +4904,62 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('Symbolic chip glow', $prompt);
         $this->assertStringNotContainsString('regeneration attempt', $prompt);
         $this->assertStringNotContainsString('Subject:', $prompt);
+        $this->assertStringContainsString('No nudity', $prompt);
+        $this->assertStringContainsString('fully clothed', $prompt);
+        $this->assertStringContainsString('No children', $prompt);
+        $this->assertStringContainsString('stop a thumb mid-scroll', $prompt);
+        $this->assertStringContainsString('make someone tap', $prompt);
+    }
+
+    public function test_unsafe_visual_brief_is_dropped_before_the_image_api() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Safety brief',
+        ));
+        $prompt = $this->invoke_private('social_image_prompt', array(get_post($post_id), array(
+            'visual_brief' => 'A nude model holding a phone on a bed',
+        )));
+        $this->assertStringNotContainsString('nude model', strtolower($prompt));
+        $this->assertStringNotContainsString('on a bed', $prompt);
+        $this->assertStringContainsString('No nudity', $prompt);
+        $this->assertTrue($this->invoke_private('social_image_brief_is_unsafe', array('sexy woman with a laptop')));
+        $this->assertFalse($this->invoke_private('social_image_brief_is_unsafe', array('Photoreal office workers carrying boxes at dusk')));
+    }
+
+    public function test_social_copy_policy_holds_explicit_captions_not_news_policy_words() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Policy copy',
+            'post_excerpt' => 'A platform update.',
+        ));
+        $unsafe = $this->invoke_private('sanitize_social_copy', array(array(
+            'hook' => 'This is porn bait for clicks',
+            'on_image_headline' => 'Porn bait',
+            'instagram_caption' => 'This is porn bait for clicks',
+        ), get_post($post_id)));
+        $blocked = $this->invoke_private('social_copy_policy_error', array($unsafe));
+        $this->assertWPError($blocked);
+        $this->assertSame('tr_ai_wire_social_policy', $blocked->get_error_code());
+        $news = $this->invoke_private('sanitize_social_copy', array(array(
+            'hook' => 'Instagram updates nudity rules',
+            'on_image_headline' => 'New nudity rules',
+            'instagram_caption' => 'Instagram updates nudity rules for apps',
+        ), get_post($post_id)));
+        $this->assertNull($this->invoke_private('social_copy_policy_error', array($news)));
+        $desk = $this->invoke_private('social_copy_system_prompt', array('TechnoRapper'));
+        $this->assertStringContainsString('growth lead', $desk);
+        $this->assertStringContainsString('Clickbait is allowed', $desk);
+        $this->assertStringContainsString('no nudity', strtolower($desk));
+        $user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news')));
+        $this->assertStringContainsString('reader stake', $user);
+        $this->assertStringContainsString('Clickbait is on', $user);
+        $this->assertStringContainsString('you won’t believe', $user);
+        $this->assertStringContainsString('fully clothed', $user);
+        $this->assertStringNotContainsString('Never use: you won’t believe', $user);
+        $this->assertNull($this->invoke_private('sanitize_social_idea_item', array(array(
+            'title' => 'Nude recap cover',
+            'description' => 'A naked model as the hero of the graphic.',
+        ))));
     }
 
     public function test_social_image_prompt_adds_variation_after_regenerate() {
@@ -4549,6 +4975,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('regeneration attempt 2', $prompt);
         $this->assertStringContainsString('different camera angle', $prompt);
         $this->assertStringContainsString('Photoreal office workers', $prompt);
+        $this->assertStringContainsString('No nudity', $prompt);
     }
 
     public function test_social_retry_without_regenerate_reuses_cached_image() {
@@ -4786,6 +5213,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->markTestSkipped('GD and uploads are required for the social regenerate path.');
         }
         $this->onboard_social(array('instagram', 'x'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_news_formats' => array('editorial_poster'),
+        )), false);
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
             'post_title' => 'New graphic please',
@@ -4991,6 +5421,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->markTestSkipped('GD and uploads are required for the social repost path.');
         }
         $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_news_formats' => array('editorial_poster'),
+        )), false);
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
             'post_title' => 'Repost with new graphic',
