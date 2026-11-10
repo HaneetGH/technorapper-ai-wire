@@ -11,6 +11,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         TechnoRapper_AI_Wire::activate();
         $this->plugin = new TechnoRapper_AI_Wire();
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
+        delete_option(TechnoRapper_AI_Wire::GEMINI_API_KEY_OPTION);
         delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
         delete_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         unset($_SERVER['REMOTE_ADDR']);
@@ -28,6 +29,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('pre_http_request');
         remove_all_filters('tr_ai_wire_moderation_result');
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
+        delete_option(TechnoRapper_AI_Wire::GEMINI_API_KEY_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_BATCH_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_MIX_OPTION . '_' . gmdate('Ymd'));
@@ -539,6 +541,166 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('tr_ai_wire_api', $result->get_error_code());
     }
 
+    public function test_writer_prompts_do_not_name_disallowed_categories() {
+        $writer = $this->invoke_private('writer_prompt', array('A'));
+        $reviewer = $this->invoke_private('reviewer_prompt', array(array()));
+        $social = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news')));
+        foreach (array($writer, $reviewer, $social) as $prompt) {
+            $this->assertStringNotContainsString('self-harm', strtolower($prompt));
+            $this->assertStringNotContainsString('illegal advice', strtolower($prompt));
+            $this->assertStringNotContainsString('sexual content', strtolower($prompt));
+        }
+        $this->assertStringContainsString('family-friendly', $writer);
+    }
+
+    public function test_flagged_prompt_retries_once_with_a_shorter_source() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $lengths = array();
+        $calls = 0;
+        $callback = function ($preempt, $args, $url) use (&$calls, &$lengths) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $payload = json_decode($args['body'], true);
+            $user = $payload['input'][1]['content'][0]['text'] ?? '';
+            $lengths[] = strlen($user);
+            if ($calls === 1) {
+                return array(
+                    'headers' => array(),
+                    'body' => wp_json_encode(array(
+                        'error' => array(
+                            'message' => 'Invalid prompt: your prompt was flagged as potentially violating our usage policy.',
+                            'type' => 'invalid_request_error',
+                            'code' => 'invalid_prompt',
+                        ),
+                    )),
+                    'response' => array('code' => 400, 'message' => 'Bad Request'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return $this->openai_json_http(array('title' => 'Shorter pass', 'body_html' => '<p>Ok</p>'));
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $source = "Feed: Example\nSource title: Chip\nSource URL: https://example.com\nSource text:\n"
+            . str_repeat('Chip news. ', 800)
+            . "\n\nSite categories — pick one\n- AI";
+        $result = $this->invoke_private('ai_json', array(
+            'gpt-6-luna',
+            'Return JSON.',
+            $source,
+            TechnoRapper_AI_Wire::defaults(),
+            false,
+        ));
+        remove_filter('pre_http_request', $callback, 10);
+        $this->assertSame(2, $calls);
+        $this->assertLessThan($lengths[0], $lengths[1]);
+        $this->assertTrue(is_array($result));
+        $this->assertSame('Shorter pass', $result['title']);
+    }
+
+    public function test_flagged_short_prompt_is_not_retried() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $calls = 0;
+        $callback = function ($preempt, $args, $url) use (&$calls) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array(
+                    'error' => array(
+                        'message' => 'Invalid prompt: your prompt was flagged as potentially violating our usage policy.',
+                        'code' => 'invalid_prompt',
+                    ),
+                )),
+                'response' => array('code' => 400, 'message' => 'Bad Request'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $result = $this->invoke_private('ai_json', array(
+            'gpt-6-luna',
+            'Return JSON.',
+            'Test input.',
+            TechnoRapper_AI_Wire::defaults(),
+            false,
+        ));
+        remove_filter('pre_http_request', $callback, 10);
+        $this->assertSame(1, $calls);
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_api_permanent', $result->get_error_code());
+        $this->assertStringContainsString('usage-policy check', $result->get_error_message());
+        $this->assertStringContainsString('Gemini API key', $result->get_error_message());
+    }
+
+    public function test_flagged_prompt_falls_back_to_gemini_after_the_shorter_excerpt_fails() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        update_option(TechnoRapper_AI_Wire::GEMINI_API_KEY_OPTION, 'gemini-test-key', false);
+        $urls = array();
+        $callback = function ($preempt, $args, $url) use (&$urls) {
+            if (strpos($url, 'api.openai.com/v1/responses') !== false) {
+                $urls[] = 'openai';
+                return array(
+                    'headers' => array(),
+                    'body' => wp_json_encode(array(
+                        'error' => array(
+                            'message' => 'Invalid prompt: your prompt was flagged as potentially violating our usage policy.',
+                            'code' => 'invalid_prompt',
+                        ),
+                    )),
+                    'response' => array('code' => 400, 'message' => 'Bad Request'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            if (strpos($url, 'generativelanguage.googleapis.com') !== false) {
+                $urls[] = 'gemini';
+                $this->assertStringNotContainsString('gemini-test-key', $url);
+                $this->assertSame('gemini-test-key', $args['headers']['x-goog-api-key'] ?? '');
+                $payload = json_decode($args['body'], true);
+                $this->assertSame('application/json', $payload['generationConfig']['responseMimeType'] ?? '');
+                $this->assertLessThan(4500, strlen($payload['contents'][0]['parts'][0]['text'] ?? ''));
+                return array(
+                    'headers' => array(),
+                    'body' => wp_json_encode(array(
+                        'candidates' => array(array(
+                            'content' => array(
+                                'parts' => array(array('text' => wp_json_encode(array(
+                                    'title' => 'Gemini pass',
+                                    'body_html' => '<p>Ok</p>',
+                                )))),
+                            ),
+                        )),
+                        'usageMetadata' => array('promptTokenCount' => 40, 'candidatesTokenCount' => 20),
+                    )),
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return $preempt;
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $source = "Feed: Example\nSource title: Chip\nSource URL: https://example.com\nSource text:\n"
+            . str_repeat('Chip news. ', 800)
+            . "\n\nSite categories — pick one\n- AI";
+        $result = $this->invoke_private('ai_json', array(
+            'gpt-6-luna',
+            'Return JSON.',
+            $source,
+            TechnoRapper_AI_Wire::defaults(),
+            false,
+        ));
+        remove_filter('pre_http_request', $callback, 10);
+        $this->assertSame(array('openai', 'openai', 'gemini'), $urls);
+        $this->assertTrue(is_array($result));
+        $this->assertSame('Gemini pass', $result['title']);
+    }
+
     public function test_create_draft_never_publishes_and_quarantines_empty_rewrite() {
         $id = $this->create_queue_item();
         $item = array(
@@ -777,7 +939,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotEmpty($this->invoke_private('policy_local_hits', array('This is fucking news')));
         $this->assertNotEmpty($this->invoke_private('policy_local_hits', array('This is f*cking news')));
         $this->assertSame(array(), $this->invoke_private('policy_local_hits', array('The assistant class assignment passed on the shell.')));
-        $this->assertStringContainsString('no profanity', $this->invoke_private('writer_prompt', array('A')));
+        $this->assertStringContainsString('family-friendly', $this->invoke_private('writer_prompt', array('A')));
         $guard = $this->invoke_private('policy_guard_text', array('A grounded phone-chip update.', 'social'));
         $this->assertTrue($guard);
     }

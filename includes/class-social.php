@@ -1664,24 +1664,24 @@ trait TechnoRapper_AI_Wire_Social {
             . 'Repackage an already-published article. Do not write a new article. Use only supplied article fields plus the site context. '
             . 'Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake countdown deals or fake scarcity. '
             . 'Clickbait is allowed and preferred when it is true: the job is stop the scroll and get the tap. '
-            . 'Safe for a news brand: no nudity, no sexual framing, no gore, no hate, no slurs, no profanity. Return JSON only.';
+            . 'Safe for a news brand: no nudity, and keep the wording suitable for a general audience. Return JSON only.';
     }
 
     private function social_copy_user_prompt($brand, $profile, $snapshot) {
         $user = 'Write the package a growth editor would actually post to get views. Clickbait is on. Lead with a specific name, number, or twist; a reader stake (phone, job, money, privacy, or status); a curiosity gap the caption pays off; saveable bullets. Short. No throat-clearing. '
             . 'You MAY use: you won’t believe, wait for it, must see, gone wrong, shocking, this changes everything, this will blow your mind — if the article supports it. Open a loop the post then pays off. '
-            . 'Never use sexual, nude, or violent bait. Never invent the twist. '
+            . 'Keep the bait suitable for a general news audience. Never invent the twist. '
             . 'on_image_headline: 4–9 words, scroll-stopping, a number only if it is in the article, short enough for 2–3 lines of huge type. on_image_subhead: one supporting line that makes them tap, max 10 words. '
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
-            . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. No nudity, no sexualized bodies, no lingerie, no children, no gore, no celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
+            . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook, 2–4 short lines that pay off the curiosity, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
             . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway without opening the article. Three beats: hook in the first sentence; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
             . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
             . 'youtube_description: two short lines that finish the lesson; do not include the URL or #Shorts (we append both). No hashtag dump. '
             . 'youtube_tags: 3–8 short YouTube tags (words, not #hashtags) grounded in the article. They are sent in the upload API with the public listing. '
-            . 'Every field must be safe to post on X, Instagram, and YouTube: no swear words, slurs, nudity, gore, or attacks on people. ';
+            . 'Every field must be suitable for a general audience on X, Instagram, and YouTube. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }

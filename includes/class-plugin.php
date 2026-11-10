@@ -25,6 +25,7 @@ final class TechnoRapper_AI_Wire {
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
     const OPTION = 'tr_ai_wire_settings';
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
+    const GEMINI_API_KEY_OPTION = 'tr_ai_wire_gemini_api_key';
     const FAL_API_KEY_OPTION = 'tr_ai_wire_fal_api_key';
     const SOCIAL_CREDENTIALS_OPTION = 'tr_ai_wire_social_credentials';
     const SOCIAL_CONTEXT_OPTION = 'tr_ai_wire_site_context';
@@ -46,6 +47,8 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_CONTEXT_TTL = 1209600;
     const TABLE_SUFFIX = 'tr_ai_wire_items';
     const API_URL = 'https://api.openai.com/v1/responses';
+    const GEMINI_MODEL = 'gemini-2.5-flash';
+    const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
     const SEARCH_CALL_USD = 0.01;
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
     const PROCESSING_LOCK_TTL = 2700;
