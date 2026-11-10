@@ -95,7 +95,7 @@ Suggested output (the exact limits must be checked against each platform at impl
 }
 ```
 
-Output validation checks schema, allowed priority/visual type, link correctness, text limits, forbidden unsupported claims and required fields before enqueueing. Invalid output is retried under the normal bounded retry policy or held for review; it is never sent directly to an adapter.
+Output validation checks schema, allowed priority/visual type, link correctness, text limits, forbidden unsupported claims and required fields before enqueueing. Invalid output is retried under the normal bounded retry policy or held for review; it is never sent directly to an adapter. Before any X or Instagram publish, outbound copy (captions, Reel script, on-image lines, pack captions) is scanned with a local profanity/slur list and OpenAI Moderation. A hit is held for review and is never posted.
 
 ## End-to-end data flow
 

@@ -12,6 +12,7 @@ trait TechnoRapper_AI_Wire_Admin {
         add_submenu_page('tr-ai-wire', 'A/B experiments', 'A/B experiments', 'manage_options', 'tr-ai-wire-experiments', array($this, 'experiments_page'));
         add_submenu_page('tr-ai-wire', 'Social settings', 'Social settings', 'manage_options', 'tr-ai-wire-social-settings', array($this, 'social_settings_page'));
         add_submenu_page('tr-ai-wire', 'Social queue', 'Social queue', 'manage_options', 'tr-ai-wire-social', array($this, 'social_distribution_page'));
+        add_submenu_page('tr-ai-wire', 'Price estimate', 'Price estimate', 'manage_options', 'tr-ai-wire-costs', array($this, 'costs_page'));
     }
 
     public function settings_page() {
@@ -108,7 +109,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_new]" value="1" <?php checked($s['draft_require_new'], 1); ?>> Require original writing vs the source</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_policy_flags]" value="1" <?php checked($s['draft_block_policy_flags'], 1); ?>> Block if policy flags are present</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_fact_flags]" value="1" <?php checked($s['draft_block_fact_flags'], 1); ?>> Block if fact flags are present</label></p>
-                        <p class="description">Reject and a score below the minimum never publish — including Retry. Fact flags mean a concrete claim is missing from or contradicts the source. Style notes and labeled analysis are not fact flags. Auto-publish is at the top of this form.</p>
+                        <p class="description">Reject and a score below the minimum never publish — including Retry. Fact flags mean a concrete claim is missing from or contradicts the source. Style notes and labeled analysis are not fact flags. A local profanity/slur list and OpenAI Moderation also run on every article and social caption before it goes out; those holds cannot be turned off. Auto-publish is at the top of this form.</p>
                     </td></tr>
                     <tr><th scope="row">After rewrite: SEO tests</th><td>
                         <p><label for="tr-seo-min-score"><strong>Minimum SEO score</strong></label> <input id="tr-seo-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[seo_min_score]" value="<?php echo esc_attr($s['seo_min_score']); ?>"> <span class="description">Visibility, keyphrase, readability and social markup. 0–100.</span></p>
@@ -199,20 +200,123 @@ trait TechnoRapper_AI_Wire_Admin {
                 <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
                     <h2>Distribution</h2>
                     <p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per network that is turned on.</span></p>
+                    <p class="description">Outbound captions, Reel scripts, and on-image lines are scanned for profanity/slurs and sent through OpenAI Moderation before X or Instagram. A fail holds the job for review — it does not post.</p>
                     <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_mix_saved]" value="1">
                     <h3 style="margin:16px 0 8px;">How many of each post</h3>
-                    <p class="description">Set a type to 0 to turn it off. The job fills carousel quota first, then collages, then single stories.</p>
+                    <p class="description">Set a type to 0 to turn it off. The job fills Reel quota first (one spoken story), then carousel, then collages, then single stories.</p>
+                    <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"> <span class="description">Spoken 9:16 Instagram video of one article. 0 keeps Reels off. X still gets the still poster.</span></p>
                     <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 2); ?>"> <span class="description">Swipeable Instagram posts. Each one uses several website articles and a curiosity slide so people keep swiping.</span></p>
                     <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
                     <p><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"> <span class="description">Several website articles in one grid image.</span></p>
                     <p><label for="tr-social-single-daily">Single-story posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 3); ?>"> <span class="description">One website article, one social post.</span></p>
-                    <p class="description">Artwork is GPT Image 2 low; type is overlaid locally. That file is a social asset only — it never becomes the article featured image. Local image estimate is $0.006 each; X API charges are separate.</p>
+                    <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label> <input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"> <span class="description">Default $10 covers about one 8s Veo Lite clip per day. Raise this before switching to Fast, full Veo, or Kling. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
+                    <fieldset id="tr-social-reel-model">
+                        <legend>Reel motion model</legend>
+                        <p class="description">Suggested: <strong>Veo 3.1 Lite</strong> on a $10 budget. Click the info icon on a model for its price, or open the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> page.</p>
+                        <?php
+                        $selected_model = (string) ($s['social_reel_video_model'] ?? 'veo-lite');
+                        foreach ($this->social_reel_video_models() as $value => $spec) :
+                            $info_id = 'tr-model-info-' . $value;
+                            $clip_example = $this->social_reel_clip_seconds(array_merge($s, array('social_reel_video_model' => $value, 'social_reel_clip_seconds' => 8)));
+                            $clip_cost = round($clip_example * (float) $spec['usd_per_second'], 4);
+                            $month_cost = $clip_cost * 30;
+                            ?>
+                        <div style="margin:8px 0 12px;">
+                            <label for="tr-reel-model-<?php echo esc_attr($value); ?>">
+                                <input id="tr-reel-model-<?php echo esc_attr($value); ?>" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_video_model]" value="<?php echo esc_attr($value); ?>" <?php checked($selected_model, $value); ?>>
+                                <strong><?php echo esc_html((string) $spec['label']); ?></strong>
+                                <?php if (!empty($spec['recommended'])) : ?><span class="description">(suggested)</span><?php endif; ?>
+                                — <?php echo esc_html((string) $spec['short']); ?>
+                            </label>
+                            <details style="display:inline-block;margin-left:6px;vertical-align:middle;">
+                                <summary style="cursor:pointer;list-style:none;display:inline-flex;align-items:center;" title="<?php echo esc_attr('Pricing for ' . $spec['label']); ?>">
+                                    <span class="dashicons dashicons-info" aria-hidden="true"></span>
+                                    <span class="screen-reader-text"><?php echo esc_html('Pricing for ' . $spec['label']); ?></span>
+                                </summary>
+                                <div class="notice notice-info inline" id="<?php echo esc_attr($info_id); ?>" style="margin:8px 0 0;padding:8px 12px;">
+                                    <p><strong><?php echo esc_html((string) $spec['label']); ?></strong> — about $<?php echo esc_html(number_format_i18n((float) $spec['usd_per_second'], 3)); ?>/s silent.
+                                    <?php echo esc_html((string) $clip_example); ?>s ≈ $<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?>.
+                                    One Reel/day ≈ $<?php echo esc_html(number_format_i18n($month_cost, 2)); ?>/month.
+                                    <?php echo $month_cost <= 10 ? 'Fits the $10 default.' : 'Raise the video budget before using this daily.'; ?></p>
+                                    <p><?php echo esc_html((string) $spec['blurb']); ?> Allowed lengths: <?php echo esc_html(implode('/', array_map('strval', (array) $spec['durations']))); ?>s.
+                                    <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs#tr-cost-' . $value)); ?>">Full estimate</a>
+                                    · <a href="<?php echo esc_url((string) $spec['docs']); ?>" target="_blank" rel="noopener noreferrer">Fal page</a></p>
+                                </div>
+                            </details>
+                        </div>
+                        <?php endforeach; ?>
+                    </fieldset>
+                    <p><label for="tr-social-reel-clip">Generated motion length</label> <select id="tr-social-reel-clip" name="<?php echo esc_attr($option); ?>[social_reel_clip_seconds]"><?php foreach (array(4, 5, 6, 8, 10, 15) as $clip_n) : ?><option value="<?php echo esc_attr((string) $clip_n); ?>" <?php selected((int) ($s['social_reel_clip_seconds'] ?? 8), $clip_n); ?>><?php echo esc_html((string) $clip_n); ?> seconds</option><?php endforeach; ?></select> <span class="description">Veo allows 4/6/8s. Kling allows 5–15s; the worker sends the nearest length that model accepts. Writer voiceover can run 15–18s; extra time holds the last frame, then the brand sting.</span></p>
+                    <p><label for="tr-fal-key">Fal.ai API key</label><br><input id="tr-fal-key" name="social[fal_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo $this->fal_api_key() !== '' ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Required for Reel motion (Veo via Fal)'); ?>"></p>
+                    <?php if ($this->fal_api_key() !== '') : ?><p><label><input type="checkbox" name="remove_fal_api_key" value="1"> Remove saved Fal.ai key</label></p><?php endif; ?>
+                    <?php
+                    $clip_cost = $this->social_reel_video_estimate_usd($s);
+                    ?>
+                    <p class="description">This clip estimate: $<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?>. At one Reel/day that is about $<?php echo esc_html(number_format_i18n($clip_cost * 30, 2)); ?>/month on the selected model. See <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> for every model.</p>
+                    <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->social_ffmpeg_path() === '') : ?>
+                    <div class="notice notice-warning inline"><p>Reels need <code>ffmpeg</code> on this host. Until it is installed, Instagram Reel jobs will be held for review. The plugin will not fall back to a slideshow of posters.</p></div>
+                    <?php endif; ?>
+                    <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->fal_api_key() === '') : ?>
+                    <div class="notice notice-warning inline"><p>Reels need a Fal.ai API key to generate motion. Until it is saved, Instagram Reel jobs will be held. The plugin will not Ken Burns the posters instead.</p></div>
+                    <?php endif; ?>
+                    <p class="description">Artwork is GPT Image 2 low; type is overlaid locally for stills. A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal model you selected to animate the social photograph, and ffmpeg to mux captions. One article only — not a roundup of the day’s posts. X still gets the still poster. That file is a social asset only — it never becomes the article featured image. Image estimate $0.006 each; Mini TTS about $0.004. X API charges are separate.</p>
                 </div>
                 <?php $this->render_social_news_formats_card($s, $option); ?>
                 <?php submit_button('Save social settings'); ?>
             </form>
             <?php $this->render_site_context_card('tr-ai-wire-social-settings'); ?>
+        </div>
+        <?php
+    }
+
+    public function costs_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        $s = $this->settings();
+        $clip = $this->social_reel_clip_seconds($s);
+        ?>
+        <div class="wrap">
+            <h1>Price estimate</h1>
+            <p>Local estimates the plugin uses to pause spend. They are not Fal or OpenAI invoices. Recheck provider pricing before raising a budget. Social stills stay on the <strong>$<?php echo esc_html(number_format_i18n((float) ($s['social_image_budget_usd'] ?? 5), 2)); ?></strong> image budget. Reel motion stays on the <strong>$<?php echo esc_html(number_format_i18n((float) ($s['social_video_budget_usd'] ?? 10), 2)); ?></strong> video budget.</p>
+            <p><a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Back to Social settings</a></p>
+            <h2>Suggested Reel model</h2>
+            <p><strong>Veo 3.1 Lite</strong>, 8 seconds, silent 720p. About <strong>$0.24 per clip</strong> and <strong>$7/month</strong> at one Reel/day — that is what the $10 video budget is sized for. Switch models below only after traffic can pay for them.</p>
+            <h2>Reel motion models (Fal.ai, silent)</h2>
+            <table class="widefat striped" style="max-width:960px;">
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Per second</th>
+                        <th>This length (<?php echo esc_html((string) $clip); ?>s)</th>
+                        <th>1 Reel/day</th>
+                        <th>Fits $10?</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($this->social_reel_video_models() as $value => $spec) :
+                    $seconds = $this->social_reel_clip_seconds(array_merge($s, array('social_reel_video_model' => $value)));
+                    $each = round($seconds * (float) $spec['usd_per_second'], 4);
+                    $month = $each * 30;
+                    ?>
+                    <tr id="tr-cost-<?php echo esc_attr($value); ?>">
+                        <td>
+                            <strong><?php echo esc_html((string) $spec['label']); ?></strong>
+                            <?php if (!empty($spec['recommended'])) : ?>— suggested<?php endif; ?>
+                            <br><span class="description"><?php echo esc_html((string) $spec['blurb']); ?> Lengths: <?php echo esc_html(implode('/', array_map('strval', (array) $spec['durations']))); ?>s.</span>
+                        </td>
+                        <td>$<?php echo esc_html(number_format_i18n((float) $spec['usd_per_second'], 3)); ?></td>
+                        <td>$<?php echo esc_html(number_format_i18n($each, 2)); ?> <span class="description">(<?php echo esc_html((string) $seconds); ?>s)</span></td>
+                        <td>$<?php echo esc_html(number_format_i18n($month, 2)); ?></td>
+                        <td><?php echo $month <= 10 ? 'Yes at 1/day' : 'Raise budget'; ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <p class="description">Writer GPT script tokens stay on the article budget. Mini TTS is about $0.004 per voiceover on the image budget. X API credits and Instagram quota are separate. Fal bills the motion clip; the plugin only reserves the local estimate above.</p>
+            <h2>Social stills</h2>
+            <p>GPT Image 2 low is about <strong>$0.006</strong> per branded poster. Default image budget is $5/month. Details: plugin file <code>docs/IMAGE-GENERATION-COST.md</code>.</p>
         </div>
         <?php
     }

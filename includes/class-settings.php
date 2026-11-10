@@ -35,11 +35,15 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_instagram_enabled' => 0,
             'social_daily_limit' => 10,
             'social_image_budget_usd' => 5,
+            'social_video_budget_usd' => 10,
+            'social_reel_video_model' => 'veo-lite',
+            'social_reel_clip_seconds' => 8,
             'social_post_format' => 'single',
             'social_slide_count' => 5,
             'social_carousel_daily_limit' => 2,
             'social_collage_daily_limit' => 0,
             'social_single_daily_limit' => 3,
+            'social_reel_daily_limit' => 0,
             'social_mix_saved' => 0,
             'social_news_formats' => array_keys(self::social_news_formats()),
             'seo_min_score' => 50,
@@ -74,11 +78,15 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_instagram_enabled',
             'social_daily_limit',
             'social_image_budget_usd',
+            'social_video_budget_usd',
+            'social_reel_video_model',
+            'social_reel_clip_seconds',
             'social_post_format',
             'social_slide_count',
             'social_carousel_daily_limit',
             'social_collage_daily_limit',
             'social_single_daily_limit',
+            'social_reel_daily_limit',
             'social_mix_saved',
             'social_news_formats',
         );
@@ -250,7 +258,13 @@ trait TechnoRapper_AI_Wire_Settings {
         }
         $out['social_daily_limit'] = min(20, max(1, absint($input['social_daily_limit'] ?? $defaults['social_daily_limit'])));
         $out['social_image_budget_usd'] = min(10000, max(0, (float) ($input['social_image_budget_usd'] ?? $defaults['social_image_budget_usd'])));
-        $formats = array('single', 'carousel', 'collage');
+        $out['social_video_budget_usd'] = min(10000, max(0, (float) ($input['social_video_budget_usd'] ?? $defaults['social_video_budget_usd'])));
+        $video_models = array_keys($this->social_reel_video_models());
+        $video_model = sanitize_key((string) ($input['social_reel_video_model'] ?? $defaults['social_reel_video_model']));
+        $out['social_reel_video_model'] = in_array($video_model, $video_models, true) ? $video_model : 'veo-lite';
+        $clip = absint($input['social_reel_clip_seconds'] ?? $defaults['social_reel_clip_seconds']);
+        $out['social_reel_clip_seconds'] = in_array($clip, array(4, 5, 6, 8, 10, 15), true) ? $clip : 8;
+        $formats = array('single', 'carousel', 'collage', 'reel');
         $format = sanitize_key((string) ($input['social_post_format'] ?? $defaults['social_post_format']));
         $out['social_post_format'] = in_array($format, $formats, true) ? $format : 'single';
         $pack = absint($input['social_slide_count'] ?? $defaults['social_slide_count']);
@@ -258,9 +272,12 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_carousel_daily_limit'] = min(10, max(0, absint($input['social_carousel_daily_limit'] ?? $defaults['social_carousel_daily_limit'])));
         $out['social_collage_daily_limit'] = min(10, max(0, absint($input['social_collage_daily_limit'] ?? $defaults['social_collage_daily_limit'])));
         $out['social_single_daily_limit'] = min(10, max(0, absint($input['social_single_daily_limit'] ?? $defaults['social_single_daily_limit'])));
+        $out['social_reel_daily_limit'] = min(10, max(0, absint($input['social_reel_daily_limit'] ?? $defaults['social_reel_daily_limit'])));
         $out['social_mix_saved'] = empty($input['social_mix_saved']) ? 0 : 1;
         if ($out['social_mix_saved']) {
-            if ($out['social_carousel_daily_limit'] > 0) {
+            if ($out['social_reel_daily_limit'] > 0 && $out['social_carousel_daily_limit'] < 1 && $out['social_collage_daily_limit'] < 1 && $out['social_single_daily_limit'] < 1) {
+                $out['social_post_format'] = 'reel';
+            } elseif ($out['social_carousel_daily_limit'] > 0) {
                 $out['social_post_format'] = 'carousel';
             } elseif ($out['social_collage_daily_limit'] > 0) {
                 $out['social_post_format'] = 'collage';
@@ -362,6 +379,20 @@ trait TechnoRapper_AI_Wire_Settings {
         }
         if (defined('TR_AI_WIRE_OPENAI_API_KEY') && TR_AI_WIRE_OPENAI_API_KEY) {
             return TR_AI_WIRE_OPENAI_API_KEY;
+        }
+        return '';
+    }
+
+    private function fal_api_key() {
+        $dashboard_key = get_option(self::FAL_API_KEY_OPTION, '');
+        if (is_string($dashboard_key) && $dashboard_key !== '') {
+            return $dashboard_key;
+        }
+        if (defined('TR_AI_WIRE_FAL_API_KEY') && TR_AI_WIRE_FAL_API_KEY) {
+            return TR_AI_WIRE_FAL_API_KEY;
+        }
+        if (defined('FAL_KEY') && FAL_KEY) {
+            return FAL_KEY;
         }
         return '';
     }

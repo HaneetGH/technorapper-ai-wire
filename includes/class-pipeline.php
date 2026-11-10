@@ -227,6 +227,18 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $rewrite = $this->prepare_rewrite_seo($rewrite);
+        $guard = $this->policy_guard_rewrite($rewrite);
+        if (is_wp_error($guard)) {
+            if ($guard->get_error_code() === 'tr_ai_wire_policy_unavailable') {
+                $this->handle_stage_error($id, $guard);
+                return;
+            }
+            $this->quarantine_item($id, $guard->get_error_message(), $item, array(
+                'rewrite_json' => wp_json_encode($rewrite),
+                'review_json' => wp_json_encode($review),
+            ));
+            return;
+        }
         $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s);
         if ($seo_blockers) {
             $this->quarantine_item($id, 'Held after rewrite SEO tests: ' . implode(', ', $seo_blockers), $item, array(
@@ -263,6 +275,8 @@ trait TechnoRapper_AI_Wire_Pipeline {
         }
         if ($error->get_error_code() === 'tr_ai_wire_limit') {
             $this->update_item($id, array('status' => 'waiting_budget', 'error_text' => $error->get_error_message()));
+        } elseif ($error->get_error_code() === 'tr_ai_wire_policy') {
+            $this->quarantine_item($id, $error->get_error_message());
         } elseif ($error->get_error_code() === 'tr_ai_wire_api_permanent') {
             $this->update_item($id, array('status' => 'error', 'error_text' => $error->get_error_message()));
         } else {

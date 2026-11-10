@@ -14,10 +14,19 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
         delete_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         unset($_SERVER['REMOTE_ADDR']);
+        add_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10, 2);
+    }
+
+    public function allow_moderation_in_tests($result, $text) {
+        if (is_array($result)) {
+            return $result;
+        }
+        return array('flagged' => false, 'categories' => array());
     }
 
     public function tear_down() {
         remove_all_filters('pre_http_request');
+        remove_all_filters('tr_ai_wire_moderation_result');
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_BATCH_OPTION);
@@ -26,7 +35,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_IDEAS_OPTION);
         delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
         delete_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'));
+        delete_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'));
+        delete_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION);
         delete_option('tr_ai_wire_social_worker_lock');
+        remove_all_filters('tr_ai_wire_ffmpeg_path');
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK);
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
         parent::tear_down();
@@ -599,6 +612,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(2, $settings['social_carousel_daily_limit']);
         $this->assertSame(0, $settings['social_collage_daily_limit']);
         $this->assertSame(3, $settings['social_single_daily_limit']);
+        $this->assertSame(0, $settings['social_reel_daily_limit']);
         $this->assertSame(0, (int) $settings['social_mix_saved']);
         $this->assertSame(array_keys(TechnoRapper_AI_Wire::social_news_formats()), $settings['social_news_formats']);
         $this->assertArrayNotHasKey('social_pack_wait_minutes', $settings);
@@ -748,6 +762,40 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('quarantined', $row['status']);
         $this->assertEmpty($row['wp_post_id']);
         $this->assertStringContainsString('verdict=reject', (string) $row['error_text']);
+    }
+
+    public function test_policy_local_hits_catch_profanity_not_class() {
+        $this->assertNotEmpty($this->invoke_private('policy_local_hits', array('This is fucking news')));
+        $this->assertNotEmpty($this->invoke_private('policy_local_hits', array('This is f*cking news')));
+        $this->assertSame(array(), $this->invoke_private('policy_local_hits', array('The assistant class assignment passed on the shell.')));
+        $this->assertStringContainsString('no profanity', $this->invoke_private('writer_prompt', array('A')));
+        $guard = $this->invoke_private('policy_guard_text', array('A grounded phone-chip update.', 'social'));
+        $this->assertTrue($guard);
+    }
+
+    public function test_profane_rewrite_stays_quarantined() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>This is a fucking disaster for the chip roadmap.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'safe_to_publish' => true,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults()));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertStringContainsString('profanity', (string) $row['error_text']);
     }
 
     public function test_min_score_setting_can_hold_a_revise_item() {
@@ -2252,6 +2300,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains('ai', $copy['hashtags']);
         $this->assertContains('qualcomm', $copy['hashtags']);
         $this->assertStringContainsString('Read the full story on TechnoRapper', $copy['instagram']);
+        $this->assertNotSame('', $copy['reel_script']);
+        $this->assertGreaterThanOrEqual(3, count($copy['reel_captions']));
+        $this->assertStringNotContainsString('•', $copy['reel_script']);
     }
 
     public function test_zero_social_image_budget_blocks_generation() {
@@ -2543,6 +2594,49 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'social_slide_count' => 6,
         ));
         $this->assertSame(6, $six['social_slide_count']);
+        $reel = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'reel',
+        ));
+        $this->assertSame('reel', $reel['social_post_format']);
+        $this->assertSame(1, $this->invoke_private('social_slide_count', array($reel)));
+        $this->assertSame(0, (int) $reel['social_reel_daily_limit']);
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 0, 'reel' => 10), $this->invoke_private('social_daily_mix_limits', array($reel)));
+        $this->assertSame(10.0, (float) $reel['social_video_budget_usd']);
+        $this->assertSame('veo-lite', $reel['social_reel_video_model']);
+        $this->assertSame(8, (int) $reel['social_reel_clip_seconds']);
+        $upgraded = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'reel',
+            'social_video_budget_usd' => 40,
+            'social_reel_video_model' => 'veo-fast',
+            'social_reel_clip_seconds' => 6,
+        ));
+        $this->assertSame(40.0, (float) $upgraded['social_video_budget_usd']);
+        $this->assertSame('veo-fast', $upgraded['social_reel_video_model']);
+        $this->assertSame(6, (int) $upgraded['social_reel_clip_seconds']);
+        $this->assertSame(0.24, $this->invoke_private('social_reel_video_estimate_usd', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertLessThan(10.0, $this->invoke_private('social_reel_video_estimate_usd', array(TechnoRapper_AI_Wire::defaults())) * 30);
+        $kling = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'reel',
+            'social_reel_video_model' => 'kling-pro',
+            'social_reel_clip_seconds' => 15,
+        ));
+        $this->assertSame('kling-pro', $kling['social_reel_video_model']);
+        $this->assertSame(15, (int) $kling['social_reel_clip_seconds']);
+        $this->assertTrue(!empty($this->invoke_private('social_reel_video_models')['veo-lite']['recommended']));
+        $this->assertSame(5, $this->invoke_private('social_reel_clip_seconds', array(array(
+            'social_reel_video_model' => 'kling-std',
+            'social_reel_clip_seconds' => 4,
+        ))));
+        $kling_payload = $this->invoke_private('social_fal_motion_payload', array(
+            'kling-std',
+            'https://example.org/broll.jpg',
+            'Slow cinematic push-in',
+            8,
+        ));
+        $this->assertSame('https://example.org/broll.jpg', $kling_payload['start_image_url'] ?? '');
+        $this->assertArrayNotHasKey('image_url', $kling_payload);
+        $this->assertSame('8', $kling_payload['duration'] ?? '');
+        $this->assertFalse($kling_payload['generate_audio'] ?? true);
         $rejected = $this->plugin->sanitize_settings(array(
             'social_post_format' => 'album',
             'social_slide_count' => 9,
@@ -2585,8 +2679,26 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(10, $clamped['social_carousel_daily_limit']);
         $this->assertSame(10, $clamped['social_collage_daily_limit']);
         $this->assertSame(10, $clamped['social_single_daily_limit']);
-        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 3), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
-        $this->assertSame(array('carousel' => 3, 'collage' => 1, 'single' => 4), $this->invoke_private('social_daily_mix_limits', array($counts)));
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 3, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(array('carousel' => 3, 'collage' => 1, 'single' => 4, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array($counts)));
+        $reel_mix = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 1,
+            'social_carousel_daily_limit' => 2,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 3,
+        ));
+        $this->assertSame(1, $reel_mix['social_reel_daily_limit']);
+        $this->assertSame('carousel', $reel_mix['social_post_format']);
+        $this->assertSame(array('carousel' => 2, 'collage' => 0, 'single' => 3, 'reel' => 1), $this->invoke_private('social_daily_mix_limits', array($reel_mix)));
+        $reels_only = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 2,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 0,
+        ));
+        $this->assertSame('reel', $reels_only['social_post_format']);
         $this->assertSame('collage', $this->invoke_private('social_next_pack_kind', array(array(
             'social_mix_saved' => 1,
             'social_carousel_daily_limit' => 0,
@@ -3021,7 +3133,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertSame(10, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
         $this->assertSame('pack', (string) get_post_meta((int) $wpdb->get_var("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC LIMIT 1"), '_tr_ai_wire_social_mode', true));
-        $this->assertSame(array('carousel' => 1, 'collage' => 0, 'single' => 0), $this->invoke_private('social_mix_today'));
+        $this->assertSame(array('carousel' => 1, 'collage' => 0, 'single' => 0, 'reel' => 0), $this->invoke_private('social_mix_today'));
 
         $independent = $this->factory()->post->create(array(
             'post_status' => 'publish',
@@ -3032,7 +3144,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
         $this->assertSame('single', (string) get_post_meta($independent, '_tr_ai_wire_social_mode', true));
         $this->assertSame(12, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
-        $this->assertSame(array('carousel' => 1, 'collage' => 0, 'single' => 1), $this->invoke_private('social_mix_today'));
+        $this->assertSame(array('carousel' => 1, 'collage' => 0, 'single' => 1, 'reel' => 0), $this->invoke_private('social_mix_today'));
     }
 
     public function test_mix_counts_can_run_only_single_stories() {
@@ -3260,6 +3372,550 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertSame(3, $child_items);
         $this->assertSame(1, $parents);
+    }
+
+    public function test_reel_copy_is_one_spoken_story_not_a_pack() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Qualcomm pushes into data centers',
+            'post_excerpt' => 'The chipmaker wants a larger share of AI servers this year.',
+        ));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(
+            'hook' => 'Your next phone chip has a server cousin',
+            'on_image_headline' => 'Qualcomm wants the data center',
+            'on_image_subhead' => 'AI servers are the new battleground',
+            'reel_script' => 'Your next phone chip has a server cousin. Qualcomm is chasing data-center silicon, not just handsets. That shift is why the next laptop and the next rack look related. Full story on TechnoRapper.',
+            'reel_captions' => array(
+                'Your next phone chip',
+                'has a server cousin',
+                'Data-center silicon now',
+                'Full story on TechnoRapper',
+            ),
+        ), get_post($post_id)));
+        $this->assertStringContainsString('server cousin', $copy['reel_script']);
+        $this->assertStringNotContainsString('Today on', $copy['reel_script']);
+        $this->assertCount(4, $copy['reel_captions']);
+        $timeline = $this->invoke_private('build_social_reel_timeline', array($copy, 16));
+        $kinds = array();
+        foreach ($timeline as $clip) {
+            $kinds[] = $clip['kind'];
+            $this->assertArrayHasKey('caption', $clip);
+            $this->assertGreaterThan(0.4, $clip['duration']);
+        }
+        $this->assertSame('broll', $kinds[0]);
+        $this->assertSame('end', $kinds[count($kinds) - 1]);
+        $this->assertContains('broll', $kinds);
+        $this->assertNotContains('open', $kinds);
+        $this->assertNotContains('slide', $kinds);
+        $this->assertSame(1, substr_count(implode(' ', $kinds), 'end'));
+        $broll_count = 0;
+        foreach ($kinds as $kind) {
+            if ($kind === 'broll') {
+                $broll_count++;
+            }
+        }
+        $this->assertGreaterThanOrEqual(3, $broll_count);
+    }
+
+    public function test_reel_script_fallback_teaches_the_article_takeaway() {
+        $queue_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'rewrite_json' => wp_json_encode(array(
+                'lede' => 'A lede that is not the takeaway.',
+                'key_takeaways' => array('The same silicon family now ships in phones and AI racks.'),
+            )),
+        ), array('id' => $queue_id));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Qualcomm pushes into data centers',
+            'post_excerpt' => 'The chipmaker wants a larger share of AI servers this year.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', $queue_id);
+        $script = $this->invoke_private('fallback_reel_script', array(array(
+            'hook' => 'Your next phone chip has a server cousin',
+        ), get_post($post_id)));
+        $this->assertStringContainsString('Your next phone chip has a server cousin', $script);
+        $this->assertStringContainsString('same silicon family', $script);
+        $this->assertStringNotContainsString('Today on', $script);
+        $this->assertSame('gpt-4o-mini-tts', TechnoRapper_AI_Wire::SOCIAL_TTS_MODEL);
+        $this->assertSame('cedar', TechnoRapper_AI_Wire::SOCIAL_TTS_VOICE);
+    }
+
+    public function test_reel_script_is_written_by_the_current_writer_model() {
+        $this->onboard_social(array('instagram'));
+        $settings = array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'writer_model' => 'gpt-6.1-terra',
+            'social_post_format' => 'reel',
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $queue_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'rewrite_json' => wp_json_encode(array(
+                'lede' => 'Qualcomm is putting phone silicon into AI servers.',
+                'key_takeaways' => array('The same chip family now ships in phones and racks.'),
+            )),
+        ), array('id' => $queue_id));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Qualcomm pushes into data centers',
+            'post_excerpt' => 'The chipmaker wants a larger share of AI servers this year.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', $queue_id);
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            if (strpos((string) $url, 'api.openai.com/v1/responses') === false) {
+                return new WP_Error('blocked', 'Unexpected URL ' . $url);
+            }
+            $payload = json_decode((string) ($args['body'] ?? ''), true);
+            $captured['model'] = is_array($payload) ? (string) ($payload['model'] ?? '') : '';
+            $captured['user'] = '';
+            foreach ((array) ($payload['input'] ?? array()) as $message) {
+                if (($message['role'] ?? '') !== 'user') {
+                    continue;
+                }
+                foreach ((array) ($message['content'] ?? array()) as $content) {
+                    $captured['user'] .= (string) ($content['text'] ?? '');
+                }
+            }
+            return $this->openai_json_http(array(
+                'hook' => 'Your next phone chip has a server cousin',
+                'on_image_headline' => 'Qualcomm wants the rack',
+                'on_image_subhead' => 'AI servers are the new battleground',
+                'visual_brief' => 'Night server hall with a phone in the foreground',
+                'cta' => 'Read the full story on TechnoRapper',
+                'x_text' => 'Qualcomm is chasing data-center silicon, not just handsets.',
+                'instagram_caption' => 'Your next phone chip has a server cousin.',
+                'instagram_alt' => 'A phone in front of a server hall',
+                'hashtags' => array('AI', 'Qualcomm'),
+                'reel_script' => 'Your next phone chip has a server cousin. The same silicon family now ships in phones and AI racks, so the next laptop and the next server look related. That is why this push matters for your next device. Full story on TechnoRapper.',
+                'reel_captions' => array(
+                    'Your next phone chip',
+                    'has a server cousin',
+                    'Same silicon in racks',
+                    'That is the shift',
+                ),
+            ));
+        }, 10, 3);
+        $raw = $this->invoke_private('generate_social_copy', array(get_post($post_id), $settings));
+        $this->assertFalse(is_wp_error($raw), is_wp_error($raw) ? $raw->get_error_message() : '');
+        $this->assertSame('gpt-6.1-terra', $captured['model']);
+        $this->assertStringContainsString('same Writer pass', $captured['user']);
+        $this->assertStringContainsString('no swear words', $captured['user']);
+        $this->assertStringContainsString('reel_script', $captured['user']);
+        $this->assertStringContainsString('key_takeaways', $captured['user']);
+        $this->assertStringContainsString('same chip family', $captured['user']);
+        $copy = $this->invoke_private('sanitize_social_copy', array($raw, get_post($post_id)));
+        $this->assertStringContainsString('same silicon family now ships', $copy['reel_script']);
+        $this->assertGreaterThanOrEqual(40, count(preg_split('/\s+/', $copy['reel_script'], -1, PREG_SPLIT_NO_EMPTY)));
+    }
+
+    public function test_reel_format_asks_writer_again_when_cached_copy_has_no_script() {
+        $this->onboard_social(array('instagram'));
+        $settings = array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'writer_model' => 'gpt-6.1-terra',
+            'social_post_format' => 'reel',
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Qualcomm pushes into data centers',
+            'post_excerpt' => 'The chipmaker wants a larger share of AI servers this year.',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'Your next phone chip has a server cousin',
+            'on_image_headline' => 'Qualcomm wants the rack',
+            'x' => 'Cached X caption',
+            'instagram' => 'Cached Instagram caption',
+            'instagram_alt' => 'Alt',
+        )));
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            if (strpos((string) $url, 'api.openai.com/v1/responses') === false) {
+                return new WP_Error('blocked', 'Unexpected URL ' . $url);
+            }
+            $payload = json_decode((string) ($args['body'] ?? ''), true);
+            $captured['model'] = is_array($payload) ? (string) ($payload['model'] ?? '') : '';
+            return $this->openai_json_http(array(
+                'hook' => 'Your next phone chip has a server cousin',
+                'on_image_headline' => 'Qualcomm wants the rack',
+                'on_image_subhead' => 'AI servers are the new battleground',
+                'cta' => 'Read the full story on TechnoRapper',
+                'x_text' => 'Writer X caption',
+                'instagram_caption' => 'Writer Instagram caption',
+                'instagram_alt' => 'Alt',
+                'reel_script' => 'Your next phone chip has a server cousin. Qualcomm is putting that same family into AI racks, not just pockets. That is the takeaway before you tap through. Full story on TechnoRapper.',
+                'reel_captions' => array('Phone chip, server cousin', 'Same family in racks', 'That is the takeaway'),
+            ));
+        }, 10, 3);
+        $copy = $this->invoke_private('social_copy', array(get_post($post_id), $settings));
+        $this->assertSame('gpt-6.1-terra', $captured['model']);
+        $this->assertStringContainsString('putting that same family into AI racks', $copy['reel_script']);
+    }
+
+    public function test_reel_format_never_packs_multiple_articles() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'reel',
+            'social_slide_count' => 5,
+            'social_carousel_daily_limit' => 2,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $post_ids = array();
+        for ($i = 0; $i < 3; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Reel story ' . (string) ($i + 1),
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 800 + $i);
+            $this->invoke_private('collect_social_article', array($post_id, $settings));
+            $post_ids[] = $post_id;
+        }
+        global $wpdb;
+        $rows = $wpdb->get_results("SELECT post_id, platform, status FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC", ARRAY_A);
+        $this->assertCount(3, $rows);
+        foreach ($post_ids as $post_id) {
+            $this->assertSame('reel', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        }
+        $this->assertFalse($this->invoke_private('social_row_is_pack', array($rows[0], $settings)));
+        $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 0, 'reel' => 3), $this->invoke_private('social_mix_today'));
+    }
+
+    public function test_reel_daily_limit_zero_keeps_reels_off() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 0,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Still story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 910);
+        $this->invoke_private('collect_social_article', array($post_id, $settings));
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertFalse($this->invoke_private('social_wants_reel', array($settings, $post_id)));
+    }
+
+    public function test_reel_daily_limit_one_uses_the_days_lead() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $lead = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Lead story',
+        ));
+        $follow = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Follow story',
+        ));
+        update_post_meta($lead, '_tr_ai_wire_queue_id', 911);
+        update_post_meta($follow, '_tr_ai_wire_queue_id', 912);
+        $this->invoke_private('collect_social_article', array($lead, $settings));
+        $this->invoke_private('collect_social_article', array($follow, $settings));
+        $this->assertSame('reel', (string) get_post_meta($lead, '_tr_ai_wire_social_mode', true));
+        $this->assertSame('single', (string) get_post_meta($follow, '_tr_ai_wire_social_mode', true));
+        $this->assertTrue($this->invoke_private('social_wants_reel', array($settings, $lead)));
+        $this->assertFalse($this->invoke_private('social_wants_reel', array($settings, $follow)));
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 1, 'reel' => 1), $this->invoke_private('social_mix_today'));
+    }
+
+    public function test_instagram_reel_publishes_video_container_not_carousel() {
+        $this->onboard_social(array('instagram'));
+        $requests = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$requests) {
+            $requests[] = array('url' => (string) $url, 'body' => $args['body'] ?? array());
+            if (strpos((string) $url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos((string) $url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos((string) $url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-reel-media'));
+            }
+            if (strpos((string) $url, '/media') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-reel-container'));
+            }
+            if (strpos((string) $url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos((string) $url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/reel/spoken/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $result = $this->invoke_private('publish_instagram_post', array(
+            'Spoken reel caption',
+            'Alt text',
+            'https://example.org/poster.jpg',
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION),
+            'https://example.org/story.mp4',
+        ));
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame('ig-reel-media', $result['id']);
+        $this->assertSame('https://www.instagram.com/reel/spoken/', $result['url']);
+        $reels = 0;
+        $carousels = 0;
+        foreach ($requests as $request) {
+            if (strpos($request['url'], '/media_publish') !== false || strpos($request['url'], '/media') === false) {
+                continue;
+            }
+            $body = is_array($request['body']) ? $request['body'] : array();
+            if (($body['media_type'] ?? '') === 'REELS') {
+                $reels++;
+                $this->assertSame('https://example.org/story.mp4', $body['video_url'] ?? '');
+                $this->assertSame('Spoken reel caption', $body['caption'] ?? '');
+                $this->assertArrayNotHasKey('image_url', $body);
+                $this->assertArrayNotHasKey('children', $body);
+            }
+            if (($body['media_type'] ?? '') === 'CAROUSEL') {
+                $carousels++;
+            }
+        }
+        $this->assertSame(1, $reels);
+        $this->assertSame(0, $carousels);
+    }
+
+    public function test_reel_renderer_uses_captions_not_poster_slides() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render Reel frames.');
+        }
+        $photo = $this->tiny_jpeg_bytes();
+        $copy = array(
+            'hook' => 'Your next phone chip has a server cousin',
+            'cta' => 'Read the full story on TechnoRapper',
+            'reel_script' => 'Your next phone chip has a server cousin. Qualcomm wants the rack, not just the pocket.',
+            'reel_captions' => array('Phone chip, server cousin', 'Qualcomm wants the rack'),
+        );
+        $open = $this->invoke_private('render_social_reel_frame', array('open', $copy, $photo, 'Your next phone chip'));
+        $broll = $this->invoke_private('render_social_reel_frame', array('broll', $copy, $photo, 'Qualcomm wants the rack'));
+        $end = $this->invoke_private('render_social_reel_frame', array('end', $copy, $photo, $copy['cta']));
+        $this->assertTrue(is_string($open) && $open !== '');
+        $this->assertTrue(is_string($broll) && $broll !== '');
+        $this->assertTrue(is_string($end) && $end !== '');
+        $open_im = imagecreatefromstring($open);
+        $broll_im = imagecreatefromstring($broll);
+        $end_im = imagecreatefromstring($end);
+        $this->assertSame(1080, imagesx($open_im));
+        $this->assertSame(1920, imagesy($open_im));
+        $this->assertSame(1080, imagesx($broll_im));
+        $this->assertSame(1920, imagesy($broll_im));
+        $this->assertSame(1080, imagesx($end_im));
+        $this->assertSame(1920, imagesy($end_im));
+        imagedestroy($open_im);
+        imagedestroy($broll_im);
+        imagedestroy($end_im);
+        $broll_crop = $this->invoke_private('crop_social_broll', array($photo));
+        $this->assertTrue(is_string($broll_crop) && $broll_crop !== '');
+        $crop_im = imagecreatefromstring($broll_crop);
+        $this->assertSame(1080, imagesx($crop_im));
+        $this->assertSame(1920, imagesy($crop_im));
+        imagedestroy($crop_im);
+    }
+
+    public function test_reel_without_ffmpeg_does_not_fall_back_to_slideshow() {
+        add_filter('tr_ai_wire_ffmpeg_path', function () {
+            return '/tmp/missing-ffmpeg-binary';
+        });
+        $this->assertSame('', $this->invoke_private('social_ffmpeg_path'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'No slideshow fallback',
+        ));
+        $result = $this->invoke_private('ensure_social_reel', array(
+            get_post($post_id),
+            array_merge(TechnoRapper_AI_Wire::defaults(), array('social_post_format' => 'reel')),
+            array('reel_script' => 'Your next phone chip has a server cousin and that is the whole story.'),
+            '/tmp/missing-broll.jpg',
+        ));
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_ffmpeg', $result->get_error_code());
+        $this->assertStringContainsString('slideshow', strtolower($result->get_error_message()));
+        remove_all_filters('tr_ai_wire_ffmpeg_path');
+    }
+
+    public function test_reel_without_fal_key_does_not_fall_back_to_slideshow() {
+        if ($this->invoke_private('social_ffmpeg_path') === '') {
+            $this->markTestSkipped('ffmpeg is required to reach the Fal key gate.');
+        }
+        delete_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'No Fal key',
+        ));
+        $broll = sys_get_temp_dir() . '/tr-broll-' . wp_generate_uuid4() . '.jpg';
+        file_put_contents($broll, $this->tiny_jpeg_bytes());
+        $result = $this->invoke_private('ensure_social_reel', array(
+            get_post($post_id),
+            array_merge(TechnoRapper_AI_Wire::defaults(), array('social_post_format' => 'reel')),
+            array('reel_script' => 'Your next phone chip has a server cousin and that is the whole story.'),
+            $broll,
+        ));
+        @unlink($broll);
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_fal_key', $result->get_error_code());
+        $this->assertStringContainsString('slideshow', strtolower($result->get_error_message()));
+    }
+
+    public function test_reel_without_video_budget_does_not_fall_back_to_slideshow() {
+        if ($this->invoke_private('social_ffmpeg_path') === '') {
+            $this->markTestSkipped('ffmpeg is required to reach the video budget gate.');
+        }
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'No video budget',
+        ));
+        $broll = sys_get_temp_dir() . '/tr-broll-' . wp_generate_uuid4() . '.jpg';
+        file_put_contents($broll, $this->tiny_jpeg_bytes());
+        $result = $this->invoke_private('ensure_social_reel', array(
+            get_post($post_id),
+            array_merge(TechnoRapper_AI_Wire::defaults(), array(
+                'social_post_format' => 'reel',
+                'social_video_budget_usd' => 0,
+            )),
+            array('reel_script' => 'Your next phone chip has a server cousin and that is the whole story.'),
+            $broll,
+        ));
+        @unlink($broll);
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_video_budget', $result->get_error_code());
+    }
+
+    public function test_reel_motion_submit_is_silent_vertical_lite() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, '/requests/') === false) {
+                $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
+                $captured['auth'] = (string) (($args['headers']['Authorization'] ?? ''));
+                return $this->mock_http_ok(array(
+                    'request_id' => 'fal-req-1',
+                    'status' => 'IN_QUEUE',
+                ));
+            }
+            if (strpos($url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                return $this->mock_http_ok(array('video' => array('url' => 'https://example.org/fal-motion.mp4')));
+            }
+            if (strpos($url, 'example.org/fal-motion.mp4') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => str_repeat('m', 2048),
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Lite motion',
+        ));
+        $broll = sys_get_temp_dir() . '/tr-broll-' . wp_generate_uuid4() . '.jpg';
+        file_put_contents($broll, $this->tiny_jpeg_bytes() !== '' ? $this->tiny_jpeg_bytes() : 'jpeg');
+        $result = $this->invoke_private('generate_social_reel_motion', array(
+            get_post($post_id),
+            TechnoRapper_AI_Wire::defaults(),
+            array(
+                'hook' => 'Your next phone chip has a server cousin',
+                'visual_brief' => 'Night server hall with a phone in the foreground',
+            ),
+            $broll,
+        ));
+        @unlink($broll);
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame('9:16', $captured['submit']['aspect_ratio'] ?? '');
+        $this->assertSame('8s', $captured['submit']['duration'] ?? '');
+        $this->assertSame('720p', $captured['submit']['resolution'] ?? '');
+        $this->assertFalse($captured['submit']['generate_audio'] ?? true);
+        $this->assertSame('Key fal-test-key', $captured['auth']);
+        $this->assertStringContainsString('no text', (string) ($captured['submit']['prompt'] ?? ''));
+        $this->assertSame(0.24, (float) get_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'), 0));
+        $this->assertGreaterThan(0, $this->invoke_private('social_motion_id', array($post_id)));
+    }
+
+    public function test_reel_video_wait_stays_queued() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'IN_PROGRESS'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $result = $this->invoke_private('social_fal_await', array('fal-ai/veo3.1/lite/image-to-video', 'fal-req-wait'));
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_video_wait', $result->get_error_code());
+    }
+
+    public function test_reel_mux_is_hard_cuts_with_voiceover() {
+        $ffmpeg = $this->invoke_private('social_ffmpeg_path');
+        if ($ffmpeg === '' || !function_exists('imagejpeg')) {
+            $this->markTestSkipped('ffmpeg and GD are required to mux a Reel.');
+        }
+        $copy = array(
+            'hook' => 'Your next phone chip has a server cousin',
+            'cta' => 'Read the full story on TechnoRapper',
+            'reel_captions' => array('Phone chip, server cousin', 'The rack is the prize', 'Full story on TechnoRapper'),
+        );
+        $photo = $this->tiny_jpeg_bytes();
+        $tmp = sys_get_temp_dir() . '/tr-reel-test-' . wp_generate_uuid4();
+        $this->assertTrue(mkdir($tmp, 0755, true));
+        $frames = array();
+        foreach (array(
+            array('broll', 'Your next phone chip', 2.0),
+            array('broll', 'Phone chip, server cousin', 2.0),
+            array('broll', 'The rack is the prize', 2.0),
+            array('end', $copy['cta'], 1.2),
+        ) as $index => $spec) {
+            $jpeg = $this->invoke_private('render_social_reel_frame', array($spec[0], $copy, $photo, $spec[1]));
+            $path = $tmp . '/frame-' . (string) $index . '.jpg';
+            file_put_contents($path, $jpeg);
+            $frames[] = array('path' => $path, 'duration' => $spec[2], 'kind' => $spec[0]);
+        }
+        $audio = $tmp . '/voice.wav';
+        $out = $tmp . '/reel.mp4';
+        $silence = $this->invoke_private('social_run_binary', array($ffmpeg, array(
+            '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', '6', '-c:a', 'pcm_s16le', $audio,
+        )));
+        if (is_wp_error($silence) || !file_exists($audio)) {
+            foreach ((array) glob($tmp . '/*') as $file) {
+                @unlink($file);
+            }
+            @rmdir($tmp);
+            $this->markTestSkipped('ffmpeg could not write a silent voiceover fixture.');
+        }
+        $result = $this->invoke_private('compose_social_reel_video', array($frames, $audio, $out));
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertFileExists($out);
+        $this->assertGreaterThan(4000, filesize($out));
+        foreach ((array) glob($tmp . '/*') as $file) {
+            @unlink($file);
+        }
+        @rmdir($tmp);
     }
 
     public function test_site_context_needs_refresh_until_a_successful_read() {
@@ -4392,6 +5048,82 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('ig-media-reuse', $published['remote_id']);
         $this->assertSame($attachment_id, (int) $published['image_attachment_id']);
         $this->assertSame(0, $image_calls);
+    }
+
+    public function test_profane_social_copy_is_held_not_posted() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social policy path.');
+        }
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Chip news',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 91);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'This is fucking news',
+            'on_image_headline' => 'This is fucking news',
+            'x' => 'This is fucking news',
+            'instagram' => 'This is fucking news',
+            'instagram_alt' => 'Alt',
+        )));
+        $this->fire_social_publish($post_id);
+        $posted = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$posted) {
+            if (strpos((string) $url, 'api.x.com') !== false) {
+                $posted++;
+                return new WP_Error('blocked', 'X must not receive policy-violating copy.');
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('needs_review', $row['status']);
+        $this->assertStringContainsString('profanity', (string) $row['error_text']);
+        $this->assertSame(0, $posted);
+    }
+
+    public function test_moderation_flag_holds_social_post() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social policy path.');
+        }
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Chip news',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 92);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'A grounded phone-chip update',
+            'on_image_headline' => 'Phone chip update',
+            'x' => 'A grounded phone-chip update',
+            'instagram' => 'A grounded phone-chip update',
+            'instagram_alt' => 'Alt',
+        )));
+        $this->fire_social_publish($post_id);
+        remove_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10);
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('hate' => true));
+        });
+        $posted = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$posted) {
+            if (strpos((string) $url, 'api.x.com') !== false) {
+                $posted++;
+                return new WP_Error('blocked', 'X must not receive moderated copy.');
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('needs_review', $row['status']);
+        $this->assertStringContainsString('Moderation', (string) $row['error_text']);
+        $this->assertSame(0, $posted);
     }
 
     public function test_late_x_onboard_queues_saved_graphics_without_generating() {

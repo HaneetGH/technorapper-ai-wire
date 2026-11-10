@@ -151,6 +151,18 @@ trait TechnoRapper_AI_Wire_Social {
         if (isset($input['instagram_user_id'])) {
             $next['instagram_user_id'] = preg_replace('/[^0-9]/', '', (string) $input['instagram_user_id']);
         }
+        if (!empty($_POST['remove_fal_api_key'])) {
+            delete_option(self::FAL_API_KEY_OPTION);
+        } elseif (isset($input['fal_api_key']) && trim((string) $input['fal_api_key']) !== '') {
+            $fal_key = trim(sanitize_text_field((string) $input['fal_api_key']));
+            if (strlen($fal_key) <= 512 && !preg_match('/\s/', $fal_key)) {
+                if (get_option(self::FAL_API_KEY_OPTION, null) === null) {
+                    add_option(self::FAL_API_KEY_OPTION, $fal_key, '', false);
+                } else {
+                    update_option(self::FAL_API_KEY_OPTION, $fal_key, false);
+                }
+            }
+        }
         if (empty($next['instagram_user_access_token'])) {
             $next['instagram_user_id'] = '';
         }
@@ -772,6 +784,9 @@ trait TechnoRapper_AI_Wire_Social {
         if ($this->site_context_needs_refresh()) {
             $this->queue_site_context_job(false);
         }
+        if (($this->social_wants_reel($settings) || (int) ($settings['social_reel_daily_limit'] ?? 0) > 0) && function_exists('set_time_limit')) {
+            set_time_limit(300);
+        }
         $credentials = $this->social_credentials();
         $limit = min(20, max(1, (int) ($settings['social_daily_limit'] ?? 10)));
         if ($this->social_published_today() >= $limit) {
@@ -829,6 +844,15 @@ trait TechnoRapper_AI_Wire_Social {
                 if ($result->get_error_code() === 'tr_ai_wire_social_image_busy') {
                     $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
                     wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
+                    break;
+                }
+                if ($result->get_error_code() === 'tr_ai_wire_reel_video_wait') {
+                    $wpdb->update($table, array(
+                        'status' => 'queued',
+                        'error_text' => $result->get_error_message(),
+                        'updated_at' => current_time('mysql', true),
+                    ), array('id' => (int) $row['id']));
+                    wp_schedule_single_event(time() + 45, self::SOCIAL_CRON_HOOK);
                     break;
                 }
                 if ($result->get_error_code() === 'tr_ai_wire_ig_quota_full') {
@@ -987,7 +1011,13 @@ trait TechnoRapper_AI_Wire_Social {
             if (empty($credentials['instagram_user_access_token']) || empty($credentials['instagram_user_id'])) {
                 return new WP_Error('tr_ai_wire_ig_missing_token', 'The Instagram access token or account ID is no longer configured.');
             }
-            return $this->publish_instagram_post($prepared['copy']['instagram'], $prepared['copy']['instagram_alt'], $prepared['image_url'], $credentials);
+            return $this->publish_instagram_post(
+                $prepared['copy']['instagram'],
+                $prepared['copy']['instagram_alt'],
+                $prepared['image_url'],
+                $credentials,
+                (string) ($prepared['video_url'] ?? '')
+            );
         }
         return new WP_Error('tr_ai_wire_social_platform', 'Unknown social platform.');
     }
@@ -998,12 +1028,24 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_social_post', 'The source article is no longer published.');
         }
         $copy = $this->social_copy($post, $settings);
+        if (is_wp_error($copy)) {
+            return $copy;
+        }
         $blocked = $this->social_copy_policy_error($copy);
         if (is_wp_error($blocked)) {
             delete_post_meta($post->ID, '_tr_ai_wire_social_copy');
             return $blocked;
         }
+        $guard = $this->policy_guard_social_copy($copy);
+        if (is_wp_error($guard)) {
+            delete_post_meta($post->ID, '_tr_ai_wire_social_copy');
+            return $guard;
+        }
+        $wants_reel = $this->social_wants_reel($settings, (int) $post->ID) && (($row['platform'] ?? '') === 'instagram');
         $force_new_image = (string) get_post_meta($post->ID, '_tr_ai_wire_social_regenerate_image', true) === '1';
+        if ($wants_reel && $this->social_broll_id($post->ID) < 1) {
+            $force_new_image = true;
+        }
         $image_id = $force_new_image ? 0 : $this->social_existing_image_id($post->ID, $row);
         if ($image_id < 1) {
             $lock_name = 'tr_ai_wire_social_image_lock_' . (int) $post->ID;
@@ -1032,11 +1074,7 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_social_image', 'The generated social image is missing from WordPress Media.');
         }
         global $wpdb;
-        $wpdb->update($this->social_table(), array(
-            'image_attachment_id' => (int) $image_id,
-            'copy_json' => wp_json_encode($copy),
-        ), array('id' => (int) $row['id']));
-        return array(
+        $prepared = array(
             'row' => $row,
             'post' => $post,
             'copy' => $copy,
@@ -1044,6 +1082,22 @@ trait TechnoRapper_AI_Wire_Social {
             'image_path' => $image_path,
             'image_url' => $image_url,
         );
+        if ($wants_reel) {
+            $broll_id = $this->social_broll_id($post->ID);
+            $broll_path = $broll_id > 0 ? get_attached_file($broll_id) : '';
+            $reel = $this->ensure_social_reel($post, $settings, $copy, $broll_path);
+            if (is_wp_error($reel)) {
+                return $reel;
+            }
+            $prepared['video_id'] = (int) $reel['id'];
+            $prepared['video_url'] = (string) $reel['url'];
+            $prepared['video_path'] = (string) $reel['path'];
+        }
+        $wpdb->update($this->social_table(), array(
+            'image_attachment_id' => (int) $image_id,
+            'copy_json' => wp_json_encode($copy),
+        ), array('id' => (int) $row['id']));
+        return $prepared;
     }
 
     private function claim_instagram_pack($lead, $limit, $settings) {
@@ -1256,6 +1310,10 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $format = $this->social_item_pack_format($prepared[0], $settings);
         $caption = $this->instagram_pack_caption($prepared);
+        $guard = $this->policy_guard_text($caption, 'social');
+        if (is_wp_error($guard)) {
+            return $guard;
+        }
         $alt = (string) ($prepared[0]['copy']['instagram_alt'] ?? (self::site_brand_name() . ' stories'));
         if ($format === 'carousel') {
             return $this->publish_instagram_post($caption, $alt, $this->instagram_carousel_urls($prepared, $settings), $credentials);
@@ -1314,7 +1372,12 @@ trait TechnoRapper_AI_Wire_Social {
                 break;
             }
         }
-        return $this->publish_x_post($this->x_pack_caption($prepared), $paths, $credentials);
+        $caption = $this->x_pack_caption($prepared);
+        $guard = $this->policy_guard_text($caption, 'social');
+        if (is_wp_error($guard)) {
+            return $guard;
+        }
+        return $this->publish_x_post($caption, $paths, $credentials);
     }
 
     private function x_pack_caption($prepared) {
@@ -1416,18 +1479,38 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function social_copy($post, $settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
         $cached = get_post_meta($post->ID, '_tr_ai_wire_social_copy', true);
+        $decoded = null;
         if (is_string($cached) && $cached !== '') {
-            $decoded = json_decode($cached, true);
-            if (is_array($decoded) && !empty($decoded['x']) && !empty($decoded['instagram'])) {
-                return $this->sanitize_social_copy($decoded, $post);
+            $maybe = json_decode($cached, true);
+            if (is_array($maybe) && !empty($maybe['x']) && !empty($maybe['instagram'])) {
+                $decoded = $maybe;
+                if (!$this->social_wants_reel($settings, (int) $post->ID) || $this->writer_reel_script_present($decoded)) {
+                    return $this->sanitize_social_copy($decoded, $post);
+                }
             }
         }
-        $generated = $this->generate_social_copy($post, is_array($settings) ? $settings : $this->settings());
+        $generated = $this->generate_social_copy($post, $settings);
         if (!is_wp_error($generated) && is_array($generated)) {
             $copy = $this->sanitize_social_copy($generated, $post);
-        } else {
-            $copy = $this->sanitize_social_copy(array(), $post);
+            $guard = $this->policy_guard_social_copy($copy);
+            if (is_wp_error($guard)) {
+                return $guard;
+            }
+            update_post_meta($post->ID, '_tr_ai_wire_social_copy', wp_json_encode($copy));
+            return $copy;
+        }
+        if (is_wp_error($generated) && $generated->get_error_code() === 'tr_ai_wire_policy') {
+            return $generated;
+        }
+        if (is_array($decoded)) {
+            return $this->sanitize_social_copy($decoded, $post);
+        }
+        $copy = $this->sanitize_social_copy(array(), $post);
+        $guard = $this->policy_guard_social_copy($copy);
+        if (is_wp_error($guard)) {
+            return $guard;
         }
         update_post_meta($post->ID, '_tr_ai_wire_social_copy', wp_json_encode($copy));
         return $copy;
@@ -1490,7 +1573,7 @@ trait TechnoRapper_AI_Wire_Social {
         $system = $this->social_copy_system_prompt($brand);
         $user = $this->social_copy_user_prompt($brand, $profile, $snapshot);
         $copy_settings = $s;
-        $copy_settings['max_output_tokens'] = min(1200, max(400, (int) ($s['max_output_tokens'] ?? 1200)));
+        $copy_settings['max_output_tokens'] = min(1600, max(400, (int) ($s['max_output_tokens'] ?? 1600)));
         return $this->ai_json($s['writer_model'] ?? 'gpt-6-luna', $system, $user, $copy_settings, false);
     }
 
@@ -1510,12 +1593,15 @@ trait TechnoRapper_AI_Wire_Social {
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
             . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. No nudity, no sexualized bodies, no lingerie, no children, no gore, no celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
-            . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook, 2–4 short lines that pay off the curiosity, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. ';
+            . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook, 2–4 short lines that pay off the curiosity, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
+            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway without opening the article. Three beats: hook in the first sentence; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
+            . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
+            . 'Every field must be safe to post on X and Instagram: no swear words, slurs, nudity, gore, or attacks on people. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }
         $user .= "Article JSON:\n" . wp_json_encode($snapshot)
-            . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array).";
+            . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array), reel_script, reel_captions (array).";
         return $user;
     }
 
@@ -1568,7 +1654,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $caption = $this->clip_social_block($caption, 2200);
         $kicker = $this->clip_social_text($raw['on_image_kicker'] ?? $raw['kicker'] ?? '', 28);
-        return array(
+        $copy = array(
             'hook' => $hook,
             'on_image_headline' => $headline,
             'on_image_subhead' => $subhead,
@@ -1581,6 +1667,9 @@ trait TechnoRapper_AI_Wire_Social {
             'instagram_alt' => $alt,
             'hashtags' => $hashtags,
         );
+        $copy['reel_script'] = $this->sanitize_reel_script($raw['reel_script'] ?? '', $copy, $post);
+        $copy['reel_captions'] = $this->sanitize_reel_captions($raw['reel_captions'] ?? array(), $copy['reel_script']);
+        return $copy;
     }
 
     private function sanitize_social_bullets($raw, $post) {
@@ -1652,9 +1741,13 @@ trait TechnoRapper_AI_Wire_Social {
             $copy['x'] ?? '',
             $copy['instagram'] ?? '',
             $copy['instagram_alt'] ?? '',
+            $copy['reel_script'] ?? '',
         );
         foreach ((array) ($copy['on_image_bullets'] ?? array()) as $bullet) {
             $parts[] = is_array($bullet) ? (string) ($bullet['text'] ?? '') : (string) $bullet;
+        }
+        foreach ((array) ($copy['reel_captions'] ?? array()) as $caption) {
+            $parts[] = is_array($caption) ? (string) ($caption['caption'] ?? implode(' ', $caption)) : (string) $caption;
         }
         $reason = $this->social_caption_policy_reason(implode("\n", $parts));
         if ($reason !== '') {
@@ -1825,6 +1918,17 @@ trait TechnoRapper_AI_Wire_Social {
         if (is_wp_error($attachment_id)) {
             return $attachment_id;
         }
+        if ($this->social_wants_reel($settings, (int) $post->ID)) {
+            $broll = $this->crop_social_broll($bytes);
+            if (is_wp_error($broll)) {
+                return $broll;
+            }
+            $broll_id = $this->store_social_broll($post, $broll, $copy);
+            if (is_wp_error($broll_id)) {
+                return $broll_id;
+            }
+            update_post_meta((int) $post->ID, '_tr_ai_wire_social_broll_id', (int) $broll_id);
+        }
         delete_post_meta((int) $post->ID, '_tr_ai_wire_social_regenerate_image');
         return (int) $attachment_id;
     }
@@ -1969,7 +2073,7 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function normalize_social_post_format($format) {
         $format = sanitize_key((string) $format);
-        return in_array($format, array('single', 'carousel', 'collage'), true) ? $format : 'single';
+        return in_array($format, array('single', 'carousel', 'collage', 'reel'), true) ? $format : 'single';
     }
 
     private function social_daily_mix_limits($settings) {
@@ -1978,10 +2082,12 @@ trait TechnoRapper_AI_Wire_Social {
         $carousel = min(10, max(0, (int) ($settings['social_carousel_daily_limit'] ?? 0)));
         $collage = min(10, max(0, (int) ($settings['social_collage_daily_limit'] ?? 0)));
         $single = min(10, max(0, (int) ($settings['social_single_daily_limit'] ?? 0)));
+        $reel = min(10, max(0, (int) ($settings['social_reel_daily_limit'] ?? 0)));
         if (empty($settings['social_mix_saved'])) {
             if ($format === 'single') {
                 $carousel = 0;
                 $collage = 0;
+                $reel = 0;
                 if ($single < 1) {
                     $single = 3;
                 }
@@ -1990,17 +2096,27 @@ trait TechnoRapper_AI_Wire_Social {
                     $carousel = 2;
                 }
                 $collage = 0;
+                $reel = 0;
             } elseif ($format === 'collage') {
                 if ($collage < 1) {
                     $collage = 1;
                 }
                 $carousel = 0;
+                $reel = 0;
+            } elseif ($format === 'reel') {
+                $carousel = 0;
+                $collage = 0;
+                $single = 0;
+                if ($reel < 1) {
+                    $reel = min(10, max(1, (int) ($settings['social_daily_limit'] ?? 10)));
+                }
             }
         }
         return array(
             'carousel' => $carousel,
             'collage' => $collage,
             'single' => $single,
+            'reel' => $reel,
         );
     }
 
@@ -2011,6 +2127,7 @@ trait TechnoRapper_AI_Wire_Social {
             'carousel' => max(0, $limits['carousel'] - $mix['carousel']),
             'collage' => max(0, $limits['collage'] - $mix['collage']),
             'single' => max(0, $limits['single'] - $mix['single']),
+            'reel' => max(0, ($limits['reel'] ?? 0) - ($mix['reel'] ?? 0)),
         );
     }
 
@@ -2036,6 +2153,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if ($mode === 'carousel' || $mode === 'pack') {
             return 'carousel';
+        }
+        if ($mode === 'reel') {
+            return 'reel';
         }
         if ($mode === 'single') {
             return 'single';
@@ -2083,6 +2203,12 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
         $left = $this->social_mix_remaining($settings);
+        if ($left['reel'] > 0) {
+            $this->enqueue_social_article($post_id, 'reel');
+            $this->social_mix_add('reel');
+            $this->kick_social_queue(30);
+            return;
+        }
         if ($left['carousel'] > 0 || $left['collage'] > 0) {
             $ids = $this->social_batch_ids();
             if (!in_array($post_id, $ids, true)) {
@@ -2196,7 +2322,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($mode === 'carousel') {
             $mode = 'pack';
         }
-        if (!in_array($mode, array('pack', 'collage', 'single'), true)) {
+        if (!in_array($mode, array('pack', 'collage', 'single', 'reel'), true)) {
             $mode = 'single';
         }
         update_post_meta($post_id, '_tr_ai_wire_social_mode', $mode);
@@ -2267,12 +2393,13 @@ trait TechnoRapper_AI_Wire_Social {
             'carousel' => max(0, (int) (is_array($stored) ? ($stored['carousel'] ?? 0) : 0)),
             'collage' => max(0, (int) (is_array($stored) ? ($stored['collage'] ?? 0) : 0)),
             'single' => max(0, (int) (is_array($stored) ? ($stored['single'] ?? 0) : 0)),
+            'reel' => max(0, (int) (is_array($stored) ? ($stored['reel'] ?? 0) : 0)),
         );
     }
 
     private function social_mix_add($kind, $by = 1) {
         $mix = $this->social_mix_today();
-        if ($kind !== 'carousel' && $kind !== 'collage') {
+        if ($kind !== 'carousel' && $kind !== 'collage' && $kind !== 'reel') {
             $kind = 'single';
         }
         $mix[$kind] += max(1, (int) $by);
@@ -2281,7 +2408,7 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_row_is_pack($row, $settings) {
         $mode = (string) get_post_meta((int) ($row['post_id'] ?? 0), '_tr_ai_wire_social_mode', true);
-        if ($mode === 'single') {
+        if ($mode === 'single' || $mode === 'reel') {
             return false;
         }
         if ($mode === 'pack' || $mode === 'carousel' || $mode === 'collage') {
@@ -2290,7 +2417,7 @@ trait TechnoRapper_AI_Wire_Social {
         return $this->social_next_pack_kind($settings) !== '';
     }
 
-    private function store_social_jpeg($post, $bytes, $headline, $copy, $variant, $suffix = '') {
+    private function store_social_jpeg($post, $bytes, $headline, $copy, $variant, $suffix = '', $layout = null) {
         $name = 'technorapper-social-' . (int) $post->ID;
         $suffix = sanitize_file_name((string) $suffix);
         if ($suffix !== '') {
@@ -2316,7 +2443,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         update_post_meta($attachment_id, '_wp_attachment_image_alt', sanitize_text_field((string) ($copy['instagram_alt'] ?? $headline)));
         update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
-        update_post_meta($attachment_id, '_tr_ai_wire_social_layout', self::SOCIAL_IMAGE_LAYOUT);
+        update_post_meta($attachment_id, '_tr_ai_wire_social_layout', sanitize_key((string) ($layout ? $layout : self::SOCIAL_IMAGE_LAYOUT)));
         update_post_meta($attachment_id, '_tr_ai_wire_social_variant', sanitize_key((string) $variant));
         $format = sanitize_key((string) ($copy['_news_format'] ?? ''));
         if ($format !== '') {
@@ -2458,6 +2585,10 @@ trait TechnoRapper_AI_Wire_Social {
         }
         delete_post_meta($post_id, '_tr_ai_wire_social_image_id');
         delete_post_meta($post_id, '_tr_ai_wire_social_slide_ids');
+        delete_post_meta($post_id, '_tr_ai_wire_social_broll_id');
+        delete_post_meta($post_id, '_tr_ai_wire_social_motion_id');
+        delete_post_meta($post_id, '_tr_ai_wire_fal_request');
+        delete_post_meta($post_id, '_tr_ai_wire_social_reel_id');
         $revision = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true);
         update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision + 1);
         update_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', '1');
@@ -3346,7 +3477,11 @@ trait TechnoRapper_AI_Wire_Social {
         return $media_id;
     }
 
-    private function publish_instagram_post($caption, $alt_text, $image_url, $credentials) {
+    private function publish_instagram_post($caption, $alt_text, $image_url, $credentials, $video_url = '') {
+        $video_url = is_string($video_url) ? $video_url : '';
+        if ($video_url !== '' && wp_http_validate_url($video_url)) {
+            return $this->publish_instagram_reel($caption, $video_url, $credentials);
+        }
         $urls = is_array($image_url) ? $image_url : array($image_url);
         $urls = array_values(array_filter($urls, function ($url) {
             return is_string($url) && $url !== '' && wp_http_validate_url($url);
@@ -3417,9 +3552,44 @@ trait TechnoRapper_AI_Wire_Social {
         return $this->instagram_publish_container((string) $parent['id'], $credentials);
     }
 
-    private function instagram_wait_for_container($container_id, $token) {
+    private function publish_instagram_reel($caption, $video_url, $credentials) {
+        if (!is_string($video_url) || $video_url === '' || !wp_http_validate_url($video_url)) {
+            return new WP_Error('tr_ai_wire_ig_video_url', 'The Instagram Reel must have a public HTTP(S) Media Library URL.');
+        }
+        $credentials = $this->instagram_resolve_publish_credentials($credentials);
+        if (is_wp_error($credentials)) {
+            return $credentials;
+        }
+        $base = 'https://graph.facebook.com/' . self::INSTAGRAM_GRAPH_VERSION . '/' . rawurlencode($credentials['instagram_user_id']);
+        $limit = $this->instagram_publish_limit($credentials);
+        if (is_wp_error($limit)) {
+            return $limit;
+        }
+        if (isset($limit['quota_usage'], $limit['config']['quota_total']) && (int) $limit['quota_usage'] >= (int) $limit['config']['quota_total']) {
+            return new WP_Error('tr_ai_wire_ig_quota_full', 'Instagram publishing quota is full. The item is queued to try again later.');
+        }
+        $container = $this->instagram_request($base . '/media', array(
+            'media_type' => 'REELS',
+            'video_url' => $video_url,
+            'caption' => $caption,
+            'share_to_feed' => 'true',
+            'access_token' => $credentials['instagram_user_access_token'],
+        ));
+        if (is_wp_error($container) || empty($container['id'])) {
+            return is_wp_error($container) ? $container : new WP_Error('tr_ai_wire_ig_container', 'Instagram did not return a Reel container ID.');
+        }
+        $wait = $this->instagram_wait_for_container((string) $container['id'], $credentials['instagram_user_access_token'], 24, 2);
+        if (is_wp_error($wait)) {
+            return $wait;
+        }
+        return $this->instagram_publish_container((string) $container['id'], $credentials);
+    }
+
+    private function instagram_wait_for_container($container_id, $token, $attempts = 6, $sleep = 1) {
         $container_id = (string) $container_id;
-        for ($attempt = 0; $attempt < 6; $attempt++) {
+        $attempts = max(3, min(30, (int) $attempts));
+        $sleep = max(1, min(5, (int) $sleep));
+        for ($attempt = 0; $attempt < $attempts; $attempt++) {
             $status_url = add_query_arg(array(
                 'fields' => 'status_code',
                 'access_token' => $token,
@@ -3438,11 +3608,11 @@ trait TechnoRapper_AI_Wire_Social {
                 return true;
             }
             if ($code === 'ERROR' || $code === 'EXPIRED') {
-                return new WP_Error('tr_ai_wire_ig_processing', 'Instagram could not prepare the image container.');
+                return new WP_Error('tr_ai_wire_ig_processing', 'Instagram could not prepare the media container.');
             }
-            sleep(1);
+            sleep($sleep);
         }
-        return new WP_Error('tr_ai_wire_ig_processing', 'Instagram image processing did not finish in time. Check the Social distribution queue before retrying.');
+        return new WP_Error('tr_ai_wire_ig_processing', 'Instagram media processing did not finish in time. Check the Social distribution queue before retrying.');
     }
 
     private function instagram_publish_container($container_id, $credentials) {
@@ -3857,7 +4027,7 @@ trait TechnoRapper_AI_Wire_Social {
             'queued' => 'Waiting. If a graphic already exists, the worker posts that file and does not generate another.',
             'processing' => 'In progress: generating the graphic or talking to the platform.',
             'published' => 'Posted on this platform. If the graphic is wrong, regenerate and post again — the plugin deletes the live post first, then publishes a new graphic.',
-            'needs_review' => 'Held for review. If this is a platform error, confirm it is not already live, then post the saved graphic or generate a new one. If this is a safety hold, edit the copy before retrying.',
+            'needs_review' => 'Held for review. If this is a policy hold, edit or regenerate the copy. If it is a platform error, confirm the post is not already live, then retry the saved graphic.',
         );
         $status = sanitize_key((string) $status);
         return isset($map[$status]) ? $map[$status] : '';
@@ -3920,6 +4090,10 @@ trait TechnoRapper_AI_Wire_Social {
                     $label = 'Posted in a ' . $pack_size . '-story Instagram post';
                 }
             }
+            $reel_id = ($post instanceof WP_Post) ? $this->social_reel_id($post->ID) : 0;
+            if ($reel_id > 0 && (string) ($row['platform'] ?? '') === 'instagram') {
+                $label = 'Spoken Instagram Reel';
+            }
             echo '<span class="tr-ai-wire-social-preview-label">' . ($this->social_image_is_current($image_id) ? esc_html($label) : 'Saved graphic — retry posts this file unless you generate a new one') . '</span></a>';
         } else {
             echo '<div class="tr-ai-wire-social-preview-empty">Graphic not generated yet. The worker creates it before posting.</div>';
@@ -3933,6 +4107,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if (!empty($copy['hook']) && (empty($copy['on_image_headline']) || $copy['hook'] !== $copy['on_image_headline'])) {
             echo '<p class="description">' . esc_html($copy['hook']) . '</p>';
+        }
+        if (!empty($copy['reel_script']) && (string) ($row['platform'] ?? '') === 'instagram' && $this->social_wants_reel(null, (int) ($row['post_id'] ?? 0))) {
+            echo '<p class="description"><strong>Reel voiceover:</strong> ' . esc_html(wp_trim_words((string) $copy['reel_script'], 40, '…')) . '</p>';
         }
         if ($caption !== '') {
             echo '<p class="tr-ai-wire-social-caption">' . esc_html(wp_trim_words($caption, 36, '…')) . '</p>';
@@ -4017,13 +4194,13 @@ trait TechnoRapper_AI_Wire_Social {
             echo 'The article cap is full, but ' . esc_html(implode(' and ', $parts)) . ' can still run. Retry a failed row or Process now — you do not need to raise the daily limit.';
             ?></p></div>
             <?php endif; ?>
-            <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated.</p>
+            <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated. Reel video budget: $<?php echo esc_html(number_format_i18n((float) get_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'), 0), 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_video_budget_usd'] ?? 0), 2)); ?> estimated.</p>
             <?php
             $wanted = $this->social_slide_count($settings);
             $mix = $this->social_mix_today();
             $limits = $this->social_daily_mix_limits($settings);
             ?>
-            <p>Today’s mix: <strong><?php echo esc_html((string) $mix['carousel']); ?> / <?php echo esc_html((string) $limits['carousel']); ?> carousels</strong>, <strong><?php echo esc_html((string) $mix['collage']); ?> / <?php echo esc_html((string) $limits['collage']); ?> collages</strong>, <strong><?php echo esc_html((string) $mix['single']); ?> / <?php echo esc_html((string) $limits['single']); ?> single stories</strong><?php
+            <p>Today’s mix: <strong><?php echo esc_html((string) ($mix['reel'] ?? 0)); ?> / <?php echo esc_html((string) ($limits['reel'] ?? 0)); ?> Reels</strong>, <strong><?php echo esc_html((string) $mix['carousel']); ?> / <?php echo esc_html((string) $limits['carousel']); ?> carousels</strong>, <strong><?php echo esc_html((string) $mix['collage']); ?> / <?php echo esc_html((string) $limits['collage']); ?> collages</strong>, <strong><?php echo esc_html((string) $mix['single']); ?> / <?php echo esc_html((string) $limits['single']); ?> single stories</strong><?php
             $holding = count($this->social_batch_ids());
             if ($holding > 0 && $wanted > 1 && $holding < $wanted) {
                 echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' for the next pack of ' . esc_html((string) $wanted);

@@ -56,6 +56,17 @@ Image generation dominates the text pipeline at higher volumes. For the configur
 
 - **Sideload / disk:** generated JPEGs must be stored in WordPress media. ~400 KB × 350 posts/day ≈ **4 GB/month**. Hosting/CDN is usually cents compared with the API.
 - **Prompt writing:** the implementation reuses the article title and excerpt (or a short body excerpt) for the image prompt; prompt tokens are included in the local per-image reserve. Negligible beside image output.
+- **Spoken Reels:** the current Writer model writes the 15–18s script in the same social copy JSON as the captions (Writer/Reviewer budget). GPT-4o Mini TTS is about **$0.004** per voiceover and is reserved from the social image budget. Reel motion is billed by Fal against the separate **$10** video budget. **Suggested model: Veo 3.1 Lite** (silent 720p, **$0.03/s**, 8s ≈ **$0.24**, ~$7/month at one Reel/day). Operators can pick Veo Fast, Veo 3.1, Kling 3.0 Standard, or Kling 3.0 Pro in Social settings; each row has an info icon and the **Price estimate** admin page. Missing Fal key, ffmpeg, or budget holds the job — it does not Ken Burns posters.
+
+Silent Fal image-to-video estimates (not an invoice):
+
+| Model | Per second | 8s clip | 1 Reel/day | $10 budget |
+|---|---|---|---|---|
+| **Veo 3.1 Lite (suggested)** | $0.03 | $0.24 | ~$7 | Fits |
+| Veo 3.1 Fast | $0.10 | $0.80 | ~$24 | Raise budget |
+| Veo 3.1 | $0.20 | $1.60 | ~$48 | Raise budget |
+| Kling 3.0 Standard | $0.084 | $0.67 | ~$20 | Raise budget |
+| Kling 3.0 Pro | $0.112 | $0.90 | ~$27 | Raise budget |
 - **Failed items:** only successfully published AI Wire articles enter the social queue; image API calls are therefore limited to eligible published articles.
 - **X API credits:** automated tweets and media uploads are billed by X, not OpenAI. A queue error of `credits depleted` means the X developer balance (or spending limit) is empty. That is not this image budget. Check the X Developer Console. Manual tweets on x.com do not spend API credits.
 - **Instagram:** Meta does not charge a per-post API fee. The plugin honors Meta’s rolling 24-hour publishing quota and defers when it is full. See [What it costs to run](PLATFORM-COSTS.md).

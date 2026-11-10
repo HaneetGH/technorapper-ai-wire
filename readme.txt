@@ -3,18 +3,18 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.52
+Stable tag: 0.2.53
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Turns your RSS/Atom feeds into AI-reviewed WordPress posts, with optional X and Instagram graphics.
+Turns your RSS/Atom feeds into AI-reviewed WordPress posts, with optional X and Instagram graphics or spoken Reels.
 
 == Description ==
 
 AI Wire is an open-source WordPress plugin any publisher can run. It is licensed under **GPLv2 or later**.
 
-It takes RSS or Atom feeds you configure, writes an attributed draft, runs a separate AI review, and can publish to WordPress. After an article is live, it can optionally create one branded graphic and post it to **your** X and/or Instagram accounts. Site name, desks, and the poster brand mark come from this WordPress site.
+It takes RSS or Atom feeds you configure, writes an attributed draft, runs a separate AI review, and can publish to WordPress. After an article is live, it can optionally create one branded graphic and post it to **your** X and/or Instagram accounts. Instagram can instead publish a spoken 9:16 Reel for that one article — not a slideshow of posters. Site name, desks, and the poster brand mark come from this WordPress site.
 
 Social distribution stays off until you turn each network on. This plugin does not ship API keys. You provide:
 
@@ -51,6 +51,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.53 =
+* Optional spoken Instagram Reels, off until you set Reels per day above 0. Writer GPT writes the 15–18s script; Fal motion (suggested Veo 3.1 Lite) animates the photo; Mini TTS and ffmpeg mux captions. A local profanity/slur list plus OpenAI Moderation hold unsafe copy. X still gets the still graphic.
+
 = 0.2.52 =
 * Social copy is written like a newsroom growth desk: clickbait that is true, a curiosity gap, and a photo built to stop the thumb. Operators set how many carousel, collage, and single-story posts go out each day. Carousels add a swipe cue on the cover and one curiosity slide before the last story. Image prompts refuse nudity, sexualized bodies, children, gore, and other policy violations before the image API is called. Unsafe captions are held for review.
 
@@ -76,6 +79,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.53 =
+Adds optional spoken Instagram Reels you can turn on or off. Writer GPT writes the script; Fal motion and ffmpeg mux the rest. Policy holds block unsafe copy.
 
 = 0.2.52 =
 Social posts now use scroll-stopping copy and photos. Set how many carousel, collage, and single-story posts go out each day. Violating image briefs are dropped at prompt level; unsafe captions stay in the social queue for review.
