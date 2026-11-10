@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.54
+Stable tag: 0.2.55
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -56,6 +56,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.55 =
+* When OpenAI flags a prompt, retry once with a shorter excerpt, then call Gemini 2.5 Flash if a Gemini API key is saved. Writer instructions no longer name disallowed categories, which was causing HTTP 400 invalid_prompt on ordinary tech copy.
+
 = 0.2.54 =
 * Optional YouTube Shorts: the same spoken Reel MP4 uploads through YouTube Data API v3 and goes live as public immediately (not a draft). Title, description, tags, category, language, license, audience, and AI-content disclosure are set in that API call. Still images are not posted to YouTube. Off until you connect a channel and turn posting on.
 
@@ -87,6 +90,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.55 =
+If OpenAI blocks a prompt, AI Wire retries a shorter excerpt and can fall back to Gemini when you save a Gemini API key.
 
 = 0.2.54 =
 Adds optional YouTube Shorts. The spoken Reel file is uploaded with title, description, and tags set through the YouTube API. Still posters stay on X and Instagram.
