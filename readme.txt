@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.50
+Stable tag: 0.2.52
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -51,6 +51,12 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.52 =
+* Social copy is written like a newsroom growth desk: clickbait that is true, a curiosity gap, and a photo built to stop the thumb. Operators set how many carousel, collage, and single-story posts go out each day. Carousels add a swipe cue on the cover and one curiosity slide before the last story. Image prompts refuse nudity, sexualized bodies, children, gore, and other policy violations before the image API is called. Unsafe captions are held for review.
+
+= 0.2.51 =
+* Social settings lists every news graphic format the plugin can produce, lets you select several at once, and accepts a written idea plus optional reference image. Those are format types, not example headlines from other accounts.
+
 = 0.2.50 =
 * Keep the previous Run now, review-score, homepage pin, and social outcomes on the decoupled pipeline: writer quality and the 85 review scale stay the same, scheduled ticks still do one stage, and auto-publish still pins and syndicates after a verified publish.
 
@@ -70,6 +76,12 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.52 =
+Social posts now use scroll-stopping copy and photos. Set how many carousel, collage, and single-story posts go out each day. Violating image briefs are dropped at prompt level; unsafe captions stay in the social queue for review.
+
+= 0.2.51 =
+Choose which news graphic formats to rotate, and upload your own idea. Example posts you have seen elsewhere are not the selectable options.
 
 = 0.2.50 =
 Same publish, homepage, and social results as before, with committed pipeline stages so an API or adapter failure cannot roll back a finished step.

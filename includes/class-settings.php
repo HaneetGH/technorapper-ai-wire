@@ -38,7 +38,10 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_post_format' => 'single',
             'social_slide_count' => 5,
             'social_carousel_daily_limit' => 2,
+            'social_collage_daily_limit' => 0,
             'social_single_daily_limit' => 3,
+            'social_mix_saved' => 0,
+            'social_news_formats' => array_keys(self::social_news_formats()),
             'seo_min_score' => 50,
             'seo_max_readability_errors' => 3,
             'seo_require_keyphrase' => 1,
@@ -74,7 +77,10 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_post_format',
             'social_slide_count',
             'social_carousel_daily_limit',
+            'social_collage_daily_limit',
             'social_single_daily_limit',
+            'social_mix_saved',
+            'social_news_formats',
         );
     }
 
@@ -250,8 +256,100 @@ trait TechnoRapper_AI_Wire_Settings {
         $pack = absint($input['social_slide_count'] ?? $defaults['social_slide_count']);
         $out['social_slide_count'] = in_array($pack, array(4, 5, 6), true) ? $pack : 5;
         $out['social_carousel_daily_limit'] = min(10, max(0, absint($input['social_carousel_daily_limit'] ?? $defaults['social_carousel_daily_limit'])));
+        $out['social_collage_daily_limit'] = min(10, max(0, absint($input['social_collage_daily_limit'] ?? $defaults['social_collage_daily_limit'])));
         $out['social_single_daily_limit'] = min(10, max(0, absint($input['social_single_daily_limit'] ?? $defaults['social_single_daily_limit'])));
+        $out['social_mix_saved'] = empty($input['social_mix_saved']) ? 0 : 1;
+        if ($out['social_mix_saved']) {
+            if ($out['social_carousel_daily_limit'] > 0) {
+                $out['social_post_format'] = 'carousel';
+            } elseif ($out['social_collage_daily_limit'] > 0) {
+                $out['social_post_format'] = 'collage';
+            } else {
+                $out['social_post_format'] = 'single';
+            }
+        }
+        $out['social_news_formats'] = self::sanitize_social_news_format_ids($input['social_news_formats'] ?? array());
         return self::apply_social_platform_toggles($out);
+    }
+
+    /**
+     * Built-in news graphic formats. Labels describe the layout, not a specific story.
+     * Do not add example headlines, brands, or accounts from sample posts.
+     */
+    public static function social_news_formats() {
+        return array(
+            'editorial_poster' => array(
+                'label' => 'Editorial news poster',
+                'group' => 'Single story',
+                'role' => 'story',
+                'family' => 'photo',
+                'description' => 'Photo-led 4:5 poster with a large headline and a supporting line. Best for company, policy, and location news.',
+            ),
+            'photo_brief' => array(
+                'label' => 'Photo news brief',
+                'group' => 'Single story',
+                'role' => 'story',
+                'family' => 'photo',
+                'description' => 'Photograph with a short title and three highlighted bullet points. Best for launches, programs, and feature rundowns.',
+            ),
+            'breaking_kicker' => array(
+                'label' => 'Breaking kicker poster',
+                'group' => 'Single story',
+                'role' => 'story',
+                'family' => 'photo',
+                'description' => 'Photo with a colored kicker bar above a stacked headline. Best for urgent company or market news.',
+            ),
+            'rumor_card' => array(
+                'label' => 'Rumor and product card',
+                'group' => 'Single story',
+                'role' => 'story',
+                'family' => 'photo',
+                'description' => 'Light card with clustered product imagery, a short kicker, and a headline. Use when the article is a rumor or leak.',
+            ),
+            'device_mockup' => array(
+                'label' => 'Device mockup news',
+                'group' => 'Single story',
+                'role' => 'story',
+                'family' => 'photo',
+                'description' => 'Clean product photography of a phone, wearable, or laptop with the news headline. Best for hardware and app-interface stories.',
+            ),
+            'weekly_recap' => array(
+                'label' => 'Weekly recap cover',
+                'group' => 'Cover / roundup',
+                'role' => 'cover',
+                'family' => 'title_card',
+                'description' => 'Bold stacked title card on a gradient. Used as the first slide of a weekly roundup carousel, with a swipe cue so people keep going.',
+            ),
+            'numbered_roundup' => array(
+                'label' => 'Numbered list cover',
+                'group' => 'Cover / roundup',
+                'role' => 'cover',
+                'family' => 'title_card',
+                'description' => 'Category chip plus a large “N shifts this week” title. Used for themed recap covers.',
+            ),
+            'product_roundup' => array(
+                'label' => 'Product roundup cover',
+                'group' => 'Cover / roundup',
+                'role' => 'cover',
+                'family' => 'photo',
+                'description' => 'Dark scene with floating devices and a “N big stories” title. Used for gadget and launch roundups.',
+            ),
+        );
+    }
+
+    public static function sanitize_social_news_format_ids($ids) {
+        $allowed = array_keys(self::social_news_formats());
+        $selected = array();
+        foreach ((array) $ids as $id) {
+            $id = sanitize_key((string) $id);
+            if ($id !== '' && in_array($id, $allowed, true) && !in_array($id, $selected, true)) {
+                $selected[] = $id;
+            }
+        }
+        if (!$selected) {
+            $selected[] = 'editorial_poster';
+        }
+        return $selected;
     }
 
     private function api_key() {

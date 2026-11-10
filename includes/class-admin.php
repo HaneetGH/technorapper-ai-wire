@@ -166,7 +166,7 @@ trait TechnoRapper_AI_Wire_Admin {
             ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <p>Connect X and Instagram here, then turn either network on or off without removing its tokens. Delivery status is on the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Social queue</a>.</p>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data">
                 <input type="hidden" name="action" value="tr_ai_wire_save_social_credentials">
                 <input type="hidden" name="<?php echo esc_attr($option); ?>[social_platform_toggles]" value="1">
                 <?php wp_nonce_field('tr_ai_wire_save_social_credentials'); ?>
@@ -200,15 +200,84 @@ trait TechnoRapper_AI_Wire_Admin {
                     <h2>Distribution</h2>
                     <p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per network that is turned on.</span></p>
                     <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
-                    <p><label for="tr-social-post-format">Instagram post format</label> <select id="tr-social-post-format" name="<?php echo esc_attr($option); ?>[social_post_format]"><option value="single" <?php selected(($s['social_post_format'] ?? 'single'), 'single'); ?>>Single — one website article, one Instagram post</option><option value="carousel" <?php selected(($s['social_post_format'] ?? 'single'), 'carousel'); ?>>Carousel — 4 to 6 website articles in one swipeable Instagram post</option><option value="collage" <?php selected(($s['social_post_format'] ?? 'single'), 'collage'); ?>>Collage — 4 to 6 website articles in one grid image</option></select></p>
-                    <p><label for="tr-social-slide-count">Website articles in each carousel</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
-                    <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 2); ?>"></p>
-                    <p><label for="tr-social-single-daily">Independent posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 3); ?>"></p>
+                    <input type="hidden" name="<?php echo esc_attr($option); ?>[social_mix_saved]" value="1">
+                    <h3 style="margin:16px 0 8px;">How many of each post</h3>
+                    <p class="description">Set a type to 0 to turn it off. The job fills carousel quota first, then collages, then single stories.</p>
+                    <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 2); ?>"> <span class="description">Swipeable Instagram posts. Each one uses several website articles and a curiosity slide so people keep swiping.</span></p>
+                    <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
+                    <p><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"> <span class="description">Several website articles in one grid image.</span></p>
+                    <p><label for="tr-social-single-daily">Single-story posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 3); ?>"> <span class="description">One website article, one social post.</span></p>
                     <p class="description">Artwork is GPT Image 2 low; type is overlaid locally. That file is a social asset only — it never becomes the article featured image. Local image estimate is $0.006 each; X API charges are separate.</p>
                 </div>
+                <?php $this->render_social_news_formats_card($s, $option); ?>
                 <?php submit_button('Save social settings'); ?>
             </form>
             <?php $this->render_site_context_card('tr-ai-wire-social-settings'); ?>
+        </div>
+        <?php
+    }
+
+    private function render_social_news_formats_card($settings, $option) {
+        $catalog = TechnoRapper_AI_Wire::social_news_formats();
+        $selected = TechnoRapper_AI_Wire::sanitize_social_news_format_ids($settings['social_news_formats'] ?? array_keys($catalog));
+        $ideas = $this->social_custom_ideas();
+        $groups = array();
+        foreach ($catalog as $id => $format) {
+            $group = (string) ($format['group'] ?? 'Single story');
+            if (!isset($groups[$group])) {
+                $groups[$group] = array();
+            }
+            $groups[$group][$id] = $format;
+        }
+        ?>
+        <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+            <h2>News graphics we can produce</h2>
+            <p>Select every format you want in rotation. Unchecked formats are never generated. Sample posts you may have seen elsewhere are <strong>examples of look-and-feel only</strong> — they are not the options below, and we will not reuse those headlines, brands, or layouts as presets.</p>
+            <?php foreach ($groups as $group => $formats) : ?>
+                <h3 style="margin:16px 0 8px;"><?php echo esc_html($group); ?></h3>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;">
+                    <?php foreach ($formats as $id => $format) : ?>
+                        <label for="tr-news-format-<?php echo esc_attr($id); ?>" style="display:block;margin:0;padding:12px 14px;border:1px solid #dcdcde;border-radius:4px;background:#fff;">
+                            <input id="tr-news-format-<?php echo esc_attr($id); ?>" type="checkbox" name="<?php echo esc_attr($option); ?>[social_news_formats][]" value="<?php echo esc_attr($id); ?>" <?php checked(in_array($id, $selected, true)); ?>>
+                            <strong><?php echo esc_html((string) $format['label']); ?></strong>
+                            <span class="description" style="display:block;margin:6px 0 0;"><?php echo esc_html((string) $format['description']); ?></span>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            <?php endforeach; ?>
+            <h3 style="margin:24px 0 8px;">Your ideas</h3>
+            <p class="description">Upload a written brief and an optional reference image. We treat it as another selectable format. Do not upload someone else’s finished post as a template to copy — describe the layout you want in your own words. Ideas that ask for nudity, sexualized bodies, children, gore, or other policy violations are rejected before they can be saved. Captions with profanity or sexual bait are held for review instead of posting.</p>
+            <?php if ($ideas) : ?>
+                <table class="widefat striped" style="margin:12px 0;">
+                    <thead><tr><th>Use</th><th>Idea</th><th>Reference</th><th>Remove</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($ideas as $idea) : ?>
+                        <tr>
+                            <td><label><input type="checkbox" name="social_idea_enabled[]" value="<?php echo esc_attr($idea['id']); ?>" <?php checked(!empty($idea['enabled'])); ?>> On</label></td>
+                            <td>
+                                <strong><?php echo esc_html($idea['title']); ?></strong>
+                                <p class="description" style="margin:4px 0 0;"><?php echo esc_html($idea['description']); ?></p>
+                                <input type="hidden" name="social_idea_keep[]" value="<?php echo esc_attr($idea['id']); ?>">
+                            </td>
+                            <td><?php
+                                if (!empty($idea['image_id'])) {
+                                    echo wp_get_attachment_image((int) $idea['image_id'], 'thumbnail');
+                                } else {
+                                    echo '—';
+                                }
+                            ?></td>
+                            <td><label><input type="checkbox" name="remove_social_idea[]" value="<?php echo esc_attr($idea['id']); ?>"> Remove</label></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+            <p><label for="tr-social-idea-title">New idea title</label><br>
+                <input id="tr-social-idea-title" name="social_idea_title" type="text" class="regular-text" maxlength="80" placeholder="Night recap cover, product cluster, …"></p>
+            <p><label for="tr-social-idea-description">Describe the graphic</label><br>
+                <textarea id="tr-social-idea-description" name="social_idea_description" class="large-text" rows="4" maxlength="800" placeholder="Layout, lighting, type placement, and what should sit in the photo. Do not paste another publisher’s headline."></textarea></p>
+            <p><label for="tr-social-idea-image">Optional reference image</label><br>
+                <input id="tr-social-idea-image" name="social_idea_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></p>
         </div>
         <?php
     }

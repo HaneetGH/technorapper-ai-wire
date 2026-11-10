@@ -17,7 +17,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Social;
 
-    const VERSION = '0.2.50';
+    const VERSION = '0.2.52';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -27,6 +27,7 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_CONTEXT_OPTION = 'tr_ai_wire_site_context';
     const SOCIAL_BATCH_OPTION = 'tr_ai_wire_social_batch';
     const SOCIAL_MIX_OPTION = 'tr_ai_wire_social_mix';
+    const SOCIAL_IDEAS_OPTION = 'tr_ai_wire_social_ideas';
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
     const SOCIAL_CRON_HOOK = 'tr_ai_wire_process_social_queue';
     const SOCIAL_CONTEXT_CRON_HOOK = 'tr_ai_wire_learn_site_context';
