@@ -48,7 +48,7 @@ No. Instagram Graph publishing has no Meta per-post fee. Meta enforces a rolling
 
 = Is YouTube API posting billed per upload? =
 
-No. YouTube Data API v3 has no Google per-video fee. Title, description, tags, category, privacy, and made-for-kids are set in the upload call. Google meters quota (default 100 uploads/day). When quota is full, the item stays queued.
+No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with Google; a YouTube API key cannot upload. Title, description, tags, category, privacy, and made-for-kids are set in the upload call. The Short goes live as public immediately (not a draft). Google meters quota (default 100 uploads/day). When quota is full, the item stays queued.
 
 = Are my API keys in this repository? =
 

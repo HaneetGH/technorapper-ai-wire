@@ -1,6 +1,6 @@
 # AI Wire
 
-Open-source WordPress plugin (**GPLv2 or later**) that turns **your** RSS/Atom feeds into source-attributed, AI-reviewed posts, then can optionally post a branded graphic to **your** X and Instagram accounts.
+Open-source WordPress plugin (**GPLv2 or later**) that turns **your** RSS/Atom feeds into source-attributed, AI-reviewed posts, then can optionally post a branded graphic, a spoken Instagram Reel, and a YouTube Short to **your** accounts.
 
 It is not tied to one newsroom. Site name, desks, and the social poster brand mark come from the WordPress site that installed the plugin. You bring the feeds, OpenAI key, and social apps. See [Contributing](CONTRIBUTING.md) and [What it costs to run](docs/PLATFORM-COSTS.md).
 
@@ -8,7 +8,7 @@ Each item passes a writer and a separate editorial review. Passing items are **p
 
 > AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
 
-For a role-by-role execution diagram, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For post-publication X/Instagram distribution, see [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md). For OpenAI vs X credits vs Instagram quota, see [What it costs to run](docs/PLATFORM-COSTS.md). Ready-to-paste public copy is in [Announcement](docs/ANNOUNCEMENT.md).
+For a role-by-role execution diagram, see [AI Agent Workflow and Feature Audit](docs/AI-AGENT-WORKFLOW-AUDIT.md). For post-publication X, Instagram, Reels, and YouTube Shorts, see [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md). For OpenAI vs X credits vs Instagram quota vs YouTube quota vs Fal, see [What it costs to run](docs/PLATFORM-COSTS.md). Ready-to-paste public copy is in [Announcement](docs/ANNOUNCEMENT.md).
 
 ## End-to-end pipeline
 
@@ -53,7 +53,7 @@ flowchart TD
 | Assignment | Stable A/B assignment from the source key | Retries keep the same experiment and variant |
 | Generation | Writer produces title, lede, body, category and tags | Source content is treated as untrusted input |
 | Review | Separate model evaluates factual consistency, novelty, usefulness and policy flags | Fail closed: only explicit passing output proceeds |
-| Policy scan | Local profanity/slur list plus OpenAI Moderation on the article and on every social caption, Reel script, and on-image line | Fail closed: violating copy is quarantined or held for review, never posted |
+| Policy scan | Local profanity/slur list plus OpenAI Moderation on the article and on every social caption, Reel script, YouTube title/description/tags, and on-image line | Fail closed: violating copy is quarantined or held for review, never posted |
 | Draft or publish | Sanitized content is published automatically, or saved as a draft if Auto-publish is unchecked | Reject stays quarantined |
 | Measurement | GA4 event plus first-party 3-second visible-read counter | Signed REST payload, per-session browser dedupe, no IP storage |
 | Analysis | WordPress dashboard and GA4 Explore | Do not infer revenue or SEO lift from draft counts or a small sample |
@@ -80,7 +80,7 @@ flowchart TD
 
 ## Production-readiness status
 
-Upload the plugin zip in wp-admin and activate it. A fresh install stays **paused**: no API key, no feeds, schedule Manual only, daily cap `0`, and Social distribution **off**. Raise the daily cap and add a key only when you are ready to process. Social credentials and the social switch are later work; they do not run on activate.
+Upload the plugin zip in wp-admin and activate it. A fresh install stays **paused**: no API key, no feeds, schedule Manual only, daily cap `0`, and Social distribution **off**. Raise the daily cap and add a key only when you are ready to process. X, Instagram, and YouTube stay disconnected and posting stays off until you onboard each network.
 
 The plugin release is **not considered production-validated until the staging acceptance checklist has passed on the target WordPress host**. Version 0.2.0 adds background enqueueing for manual runs, scheduled bounded retries, permanent-vs-transient API error handling, an idempotent draft recovery path, atomic stale-lock deletion/heartbeat handling, and an atomic database-backed public-view rate limiter. The schema migration creates the rate-limit table without dropping existing queue/view data.
 
@@ -128,8 +128,8 @@ The API-key section has its own save action so the secret is not included in the
 
 Social publishing lives on **Social settings**, not the main AI Wire page. It is **off by default**. Onboard it in this order:
 
-1. Open **Social settings**. Save **your** X Keys and tokens (API Key, API Key Secret, Access Token, Access Token Secret) and/or **your** Instagram Page token plus Professional account ID. This repository never ships anyone else’s tokens.
-2. Turn **Post to X** and/or **Post to Instagram** on. Tokens can stay saved while a network is off. Each network has its own switch.
+1. Open **Social settings**. Save **your** X Keys and tokens, **your** Instagram Page token plus Professional account ID, and/or **your** Google OAuth client then **Sign in with Google** for YouTube. A YouTube API key cannot upload. This repository never ships anyone else’s tokens.
+2. Turn **Post to X**, **Post to Instagram**, and/or **Post to YouTube Shorts** on. Tokens can stay saved while a network is off. Each network has its own switch. YouTube-only installs do not force X or Instagram on.
 3. Only then does a background job read **this WordPress site** (name, tagline, desks, recent stories) so later social copy stays in that site's context. The dashboard shows “We are understanding you” while that job runs, the last understood time, and whether a refresh is due (after 14 days, or if the site identity changed).
 
 If no social account is connected, the context job does not run and no OpenAI tokens are spent on social copy or images. PHPUnit covers that gate, plus mocked X publish, Instagram quota deferral, and the rule that a social graphic is never the article featured image. A live staging canary is still required before production enablement. Only AI Wire articles that publish after a network is turned on are queued. Turning a network off pauses that destination; it does not delete queue history or remove posts already published. Delivery status is on **Social queue**.
@@ -141,6 +141,8 @@ See [What it costs to run](docs/PLATFORM-COSTS.md) for the full table.
 - **OpenAI** bills writer, reviewer, and social images. Default social-image budget is $5/month at about $0.006 per image. That estimate is separate from Writer/Reviewer spend.
 - **X automated posts** use the X API and spend **X developer credits**. A Social queue error of `credits depleted` means the X console balance (or spending limit) is empty — not the plugin image budget. Manual tweets on x.com do not use these credits; the plugin cannot post that way.
 - **Instagram** Graph publishing has **no Meta per-post fee**. Meta enforces a rolling 24-hour quota. When the account is full, the item stays queued and is checked again later.
+- **YouTube** Data API uploads have **no Google per-video fee**. Google meters quota (default 100 uploads/day). Connect with Sign in with Google, not an API key. When quota is full, the item stays queued.
+- **Fal.ai** bills spoken-Reel motion against the separate **$10/month** video budget. Mini TTS is reserved from the social image budget.
 
 ### Platforms
 
@@ -172,7 +174,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 - Configure a provider-side project budget/rate limit as a second independent control.
 - Cost estimates depend on the model rates configured in the source. Verify current provider pricing and update the rate table before changing model IDs or pricing.
 - The optional web-search review adds search-tool and token charges.
-- RSS-derived featured-image URLs remain the article-image source. Social posts use a separate generated branded image. OpenAI image estimates are in [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). X credits and Instagram quota are in [What it costs to run](docs/PLATFORM-COSTS.md).
+- RSS-derived featured-image URLs remain the article-image source. Social posts use a separate generated branded image (and, for Reels/Shorts, a spoken MP4). OpenAI image estimates are in [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). X credits, Instagram quota, YouTube quota, and Fal are in [What it costs to run](docs/PLATFORM-COSTS.md).
 - If the API call or review fails, the item is held in the queue; inspect errors before retrying. Budget-held items are retried by later runs when budget becomes available.
 
 ## A/B experiments and analytics
@@ -194,6 +196,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 - [ ] Deploy to staging first and take a database + files backup.
 - [ ] Confirm the site is on a supported PHP version (7.4+) and WordPress 6.2+.
 - [ ] Confirm PHP GD is enabled for branded social images.
+- [ ] Confirm `ffmpeg` (and usually `ffprobe`) is on the host if spoken Reels or YouTube Shorts will run.
 - [ ] Confirm HTTPS, valid TLS, working outbound HTTPS requests and DNS resolution to the API/feed hosts.
 - [ ] Save the API key in the AI Wire dashboard (or use a server-level constant as a fallback); verify it is not present in the repository or public diagnostics.
 - [ ] Configure a provider-side budget and alerts in addition to plugin limits.
@@ -236,7 +239,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 ## Known limitations and operational caveats
 
 - The reviewer is an AI quality gate, not a fact-checking guarantee. Web corroboration can help but cannot certify accuracy.
-- Article featured images still use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`); items with no such URL are skipped by the article pipeline. The separate social-distribution path creates a generated branded image after publish when a network is on and credentials are configured. See [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md) and [What it costs to run](docs/PLATFORM-COSTS.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
+- Article featured images still use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`); items with no such URL are skipped by the article pipeline. The separate social-distribution path creates a generated branded image after publish when a network is on and credentials are configured, and a spoken MP4 when Reels per day is above 0. See [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md), [What it costs to run](docs/PLATFORM-COSTS.md), and [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
 - WP-Cron is traffic-triggered unless backed by a host system cron.
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.
@@ -290,8 +293,9 @@ flowchart LR
 | `class-publisher.php` | WordPress posts, homepage, featured images |
 | `class-social.php` | Post-publish X/Instagram/YouTube queue, social copy, branded graphic |
 | `class-social-reel.php` | Spoken Instagram Reel: Writer script, Fal Veo motion, Mini TTS, ffmpeg mux |
-| `class-social-youtube.php` | YouTube Shorts upload: title, description, tags via Data API v3 |
-| `class-youtube-oauth.php` | Google OAuth for YouTube uploads |
+| `class-social-youtube.php` | YouTube Shorts upload: public listing (title, description, tags) via Data API v3 |
+| `class-youtube-oauth.php` | Google Sign-in (OAuth) for YouTube uploads; API keys cannot upload |
+| `class-instagram-oauth.php` | Optional Meta Unified Login for Instagram |
 | `class-scores.php` | Score graph |
 
 ## Development checks
