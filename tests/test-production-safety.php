@@ -172,7 +172,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'Example Feed',
             'guid-' . wp_generate_uuid4(),
             'https://example.com/story',
-            'Apple announces the M5 chip',
+            'Source title',
             'Apple announced the M5 chip on March 4, 2026, with shipping in April at $999. The chip raises memory bandwidth and adds an on-device model for photos. Developers can use the new API in the beta released the same day. Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
         ));
     }
