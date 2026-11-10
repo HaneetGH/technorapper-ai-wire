@@ -118,7 +118,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_new]" value="1" <?php checked($s['draft_require_new'], 1); ?>> Require original writing vs the source</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_policy_flags]" value="1" <?php checked($s['draft_block_policy_flags'], 1); ?>> Block if policy flags are present</label></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_block_fact_flags]" value="1" <?php checked($s['draft_block_fact_flags'], 1); ?>> Block if fact flags are present</label></p>
-                        <p class="description">Reject and a score below the minimum never publish — including Retry. Fact flags mean a concrete claim is missing from or contradicts the source. Style notes and labeled analysis are not fact flags. A local profanity/slur list and OpenAI Moderation also run on every article and social caption before it goes out; those holds cannot be turned off. Auto-publish is at the top of this form.</p>
+                        <p class="description">Reject and a score below the minimum never publish — including Retry. Fact flags mean a concrete claim is missing from or contradicts the source. Style notes and labeled analysis are not fact flags. A local profanity/slur list and OpenAI Moderation also run on every article and social caption before it goes out; those holds cannot be turned off. A story-value check also cannot be turned off: thin blurbs, deal lists, coupons, best-of lists, and recaps stay in the queue, and the reviewer must say the story is big enough that readers would look for it. Auto-publish is at the top of this form.</p>
                     </td></tr>
                     <tr><th scope="row">After rewrite: SEO tests</th><td>
                         <p><label for="tr-seo-min-score"><strong>Minimum SEO score</strong></label> <input id="tr-seo-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[seo_min_score]" value="<?php echo esc_attr($s['seo_min_score']); ?>"> <span class="description">Visibility, keyphrase, readability and social markup. 0–100.</span></p>
@@ -133,7 +133,7 @@ trait TechnoRapper_AI_Wire_Admin {
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_run_now">
                 <?php wp_nonce_field('tr_ai_wire_run_now'); ?>
-                <p class="description">This runs immediately: fetch new feed items, rewrite, independently review, and publish (or save drafts if Auto-publish is off). Each stage is saved before the next starts. It can take up to a minute. Save settings first if you just changed feeds.</p>
+                <p class="description">This stays on this page. A background worker fetches new feed items, rewrites, independently reviews, and publishes (or saves drafts if Auto-publish is off). A progress bar at the top tracks it. Save settings first if you just changed feeds.</p>
                 <?php submit_button('Fetch feeds and process queue now', 'secondary'); ?>
             </form>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
@@ -145,7 +145,7 @@ trait TechnoRapper_AI_Wire_Admin {
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
                 <input type="hidden" name="action" value="tr_ai_wire_repair_home">
                 <?php wp_nonce_field('tr_ai_wire_repair_home'); ?>
-                <p class="description">Re-assign desks and featured images on already published AI Wire posts so they can appear on the home board, not only at their own URL.</p>
+                <p class="description">Re-assign desks and featured images on already published AI Wire posts so they can appear on the home board, not only at their own URL. This stays on the page and shows a progress bar.</p>
                 <?php submit_button('Repair existing posts for homepage', 'secondary'); ?>
             </form>
         </div>
@@ -445,14 +445,8 @@ trait TechnoRapper_AI_Wire_Admin {
             wp_die(esc_html__('You are not allowed to run this task.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_run_now');
-        if (function_exists('set_time_limit')) {
-            set_time_limit(120);
-        }
-        if (function_exists('ignore_user_abort')) {
-            ignore_user_abort(true);
-        }
-        $this->process_feeds(array('foreground' => true, 'reason' => 'manual'));
-        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&ran=1'));
+        $this->enqueue_background_job('fetch');
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue'));
         exit;
     }
 
@@ -679,7 +673,7 @@ trait TechnoRapper_AI_Wire_Admin {
             </form>
         </div>
         <?php $last_run = get_option(self::LAST_RUN_OPTION, array()); if (is_array($last_run) && !empty($last_run['at'])) : ?>
-        <div class="notice <?php echo empty($last_run['skipped']) ? 'notice-info' : 'notice-warning'; ?>"><p>
+        <div class="notice <?php echo empty($last_run['skipped']) ? 'notice-info' : 'notice-warning'; ?>"><p id="tr-ai-wire-last-run">
             <strong>Last run</strong> (<?php echo esc_html(gmdate('Y-m-d H:i', (int) $last_run['at'])); ?> UTC):
             <?php if (!empty($last_run['skipped'])) : ?>
                 <?php echo esc_html((string) $last_run['skipped']); ?>
@@ -702,7 +696,7 @@ trait TechnoRapper_AI_Wire_Admin {
         <form method="get" style="margin:12px 0;"><input type="hidden" name="page" value="tr-ai-wire-queue"><label for="tr-ai-wire-status">Filter status </label><select id="tr-ai-wire-status" name="status"><option value="">All statuses</option><?php foreach ($allowed_statuses as $option_status) : ?><option value="<?php echo esc_attr($option_status); ?>" <?php selected($status_filter, $option_status); ?>><?php echo esc_html($option_status); ?></option><?php endforeach; ?></select> <button class="button">Apply</button></form>
         <table class="widefat striped"><thead><tr><th>Added (UTC)</th><th>Feed</th><th>Source item</th><th>Status</th><th>Post / details</th></tr></thead><tbody>
         <?php if (empty($rows)) : ?><tr><td colspan="5">No items processed yet.</td></tr><?php else : foreach ($rows as $row) : ?>
-            <tr><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>"><?php echo $row['status'] === 'published' ? 'Edit post' : 'Edit draft'; ?></a><?php if ($row['status'] === 'published') : ?> · <a href="<?php echo esc_url(get_permalink((int) $row['wp_post_id'])); ?>" target="_blank" rel="noopener">View</a><?php endif; ?><?php endif; ?><?php if (in_array($row['status'], array('error', 'retry_wait', 'quarantined'), true)) : ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_retry_item&item_id=' . (int) $row['id']), 'tr_ai_wire_retry_item_' . (int) $row['id'])); ?>">Retry</a> <?php endif; ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_delete_item&item_id=' . (int) $row['id']), 'tr_ai_wire_delete_item_' . (int) $row['id'])); ?>" onclick="return confirm('Delete this queue item? The WordPress post, if any, stays.');">Delete</a> <?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?><?php if ($row['rewrite_json']) : $rewrite = json_decode($row['rewrite_json'], true); $seo = is_array($rewrite) && is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : null; if (is_array($seo)) : ?><br><?php echo esc_html((string) ($seo['visibility_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['seo_analysis_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['readability_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['keyphrase_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['social_label'] ?? '')); ?><?php endif; endif; ?></td></tr>
+            <tr data-item-id="<?php echo esc_attr((string) (int) $row['id']); ?>"><td><?php echo esc_html($row['created_at']); ?></td><td><?php echo esc_html($row['feed_name']); ?></td><td><a href="<?php echo esc_url($row['source_url']); ?>" target="_blank" rel="noopener"><?php echo esc_html($row['source_title']); ?></a></td><td><?php echo esc_html($row['status']); ?></td><td><?php if ($row['wp_post_id']) : ?><a href="<?php echo esc_url(get_edit_post_link((int) $row['wp_post_id'])); ?>"><?php echo $row['status'] === 'published' ? 'Edit post' : 'Edit draft'; ?></a><?php if ($row['status'] === 'published') : ?> · <a href="<?php echo esc_url(get_permalink((int) $row['wp_post_id'])); ?>" target="_blank" rel="noopener">View</a><?php endif; ?><?php endif; ?><?php if (in_array($row['status'], array('error', 'retry_wait', 'quarantined'), true)) : ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_retry_item&item_id=' . (int) $row['id']), 'tr_ai_wire_retry_item_' . (int) $row['id'])); ?>">Retry</a> <?php endif; ?><a href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_delete_item&item_id=' . (int) $row['id']), 'tr_ai_wire_delete_item_' . (int) $row['id'])); ?>" onclick="return confirm('Delete this queue item? The WordPress post, if any, stays.');">Delete</a> <?php if ($row['error_text']) : ?><br><?php echo esc_html($row['error_text']); ?><?php endif; ?><?php if ($row['review_json']) : $review = json_decode($row['review_json'], true); if (is_array($review)) : ?><br>Review score: <?php echo esc_html((string) ($review['score'] ?? 'n/a')); ?> · <?php echo esc_html((string) ($review['verdict'] ?? '')); ?><?php endif; endif; ?><?php if ($row['rewrite_json']) : $rewrite = json_decode($row['rewrite_json'], true); $seo = is_array($rewrite) && is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : null; if (is_array($seo)) : ?><br><?php echo esc_html((string) ($seo['visibility_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['seo_analysis_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['readability_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['keyphrase_label'] ?? '')); ?><br><?php echo esc_html((string) ($seo['social_label'] ?? '')); ?><?php endif; endif; ?></td></tr>
         <?php endforeach; endif; ?>
         </tbody></table>
         <?php $pages = (int) ceil($total_rows / $per_page); if ($pages > 1) : ?>

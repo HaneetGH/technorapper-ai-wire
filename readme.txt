@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.55
+Stable tag: 0.2.56
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -56,6 +56,10 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.56 =
+* Manual fetch, queue retry, social process, social retry, and homepage repair run on a background worker. The admin page stays put and a progress bar tracks the job. Delete, clean, and stop update the page in place.
+* A feed item is not published just because the rewrite succeeded. Thin blurbs, deal lists, coupons, best-of lists, and recaps stay in the queue. The reviewer must also mark the story solid enough that readers would look for it.
+
 = 0.2.55 =
 * When OpenAI flags a prompt, retry once with a shorter excerpt, then call Gemini 2.5 Flash if a Gemini API key is saved. Writer instructions no longer name disallowed categories, which was causing HTTP 400 invalid_prompt on ordinary tech copy.
 
@@ -90,6 +94,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.56 =
+Fetch, retry, and the other long admin actions keep the page open and show a progress bar while a background worker runs them.
 
 = 0.2.55 =
 If OpenAI blocks a prompt, AI Wire retries a shorter excerpt and can fall back to Gemini when you save a Gemini API key.

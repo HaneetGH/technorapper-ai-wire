@@ -117,6 +117,13 @@ trait TechnoRapper_AI_Wire_Pipeline {
         if (in_array($status, array('draft', 'published', 'error'), true)) {
             return;
         }
+        $value_hold = $this->story_value_local_reason($item);
+        if ($value_hold !== '') {
+            if ($status !== 'quarantined') {
+                $this->quarantine_item($id, $value_hold, $item);
+            }
+            return;
+        }
         $s = $this->settings_for_item($item, $s);
         if ($status === 'quarantined') {
             $this->pipeline_republish_if_clear($id, $item, $s);
@@ -192,6 +199,15 @@ trait TechnoRapper_AI_Wire_Pipeline {
             if (is_wp_error($review)) {
                 $this->handle_stage_error($id, $review);
                 return;
+            }
+            if (!is_array($review['story_value'] ?? null)) {
+                $review['story_value'] = array(
+                    'publish' => false,
+                    'substance' => 'thin',
+                    'reader_demand' => 'low',
+                    'adds_value' => false,
+                    'reason' => 'The reviewer did not say this story is worth publishing.',
+                );
             }
         }
         $blockers = $this->review_draft_blockers($review, $s);

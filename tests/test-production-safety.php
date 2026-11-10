@@ -13,6 +13,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
         delete_option(TechnoRapper_AI_Wire::GEMINI_API_KEY_OPTION);
         delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::JOB_HOOK);
         delete_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         unset($_SERVER['REMOTE_ADDR']);
         add_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10, 2);
@@ -169,8 +172,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'Example Feed',
             'guid-' . wp_generate_uuid4(),
             'https://example.com/story',
-            'Source title',
-            'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+            'Apple announces the M5 chip',
+            'Apple announced the M5 chip on March 4, 2026, with shipping in April at $999. The chip raises memory bandwidth and adds an on-device model for photos. Developers can use the new API in the beta released the same day. Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
         ));
     }
 
@@ -370,6 +373,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 'is_useful' => true,
                 'is_grounded' => true,
                 'similarity_risk' => 'low',
+            ),
+            'story_value' => array(
+                'publish' => true,
+                'substance' => 'major',
+                'reader_demand' => 'high',
+                'adds_value' => true,
+                'reason' => 'Named chip launch readers will search.',
             ),
         );
         $callback = function ($preempt, $args, $url) use (&$calls, $writer, $review) {
@@ -1855,6 +1865,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                                     'is_grounded' => true,
                                     'similarity_risk' => 'low',
                                 ),
+                                'story_value' => array(
+                                    'publish' => true,
+                                    'substance' => 'major',
+                                    'reader_demand' => 'high',
+                                    'adds_value' => true,
+                                    'reason' => 'Named chip launch readers will search.',
+                                ),
                             )),
                         )),
                     )),
@@ -2046,6 +2063,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 'score' => 90,
                 'policy_flags' => array(),
                 'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+                'story_value' => array(
+                    'publish' => true,
+                    'substance' => 'major',
+                    'reader_demand' => 'high',
+                    'adds_value' => true,
+                    'reason' => 'Named chip launch readers will search.',
+                ),
             );
             return array(
                 'headers' => array(),
@@ -2089,6 +2113,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 'score' => 90,
                 'policy_flags' => array(),
                 'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+                'story_value' => array(
+                    'publish' => true,
+                    'substance' => 'major',
+                    'reader_demand' => 'high',
+                    'adds_value' => true,
+                    'reason' => 'Named chip launch readers will search.',
+                ),
             );
             return array(
                 'headers' => array(),
@@ -2174,6 +2205,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 'score' => 90,
                 'policy_flags' => array(),
                 'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+                'story_value' => array(
+                    'publish' => true,
+                    'substance' => 'major',
+                    'reader_demand' => 'high',
+                    'adds_value' => true,
+                    'reason' => 'Named chip launch readers will search.',
+                ),
             );
             return array(
                 'headers' => array(),
@@ -6375,5 +6413,126 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         update_post_meta($post_id, '_tr_ai_wire_queue_id', 77);
         $this->plugin->queue_social_for_post('publish', 'draft', null);
         $this->assertSame('publish', get_post_status($post_id));
+    }
+
+    public function test_thin_feed_item_is_held_before_a_model_call() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $id = $this->invoke_private('insert_item', array(
+            hash('sha256', wp_generate_uuid4()),
+            'test-experiment',
+            'A',
+            'https://example.com/feed.xml',
+            'Example Feed',
+            'guid-' . wp_generate_uuid4(),
+            'https://example.com/thin',
+            'Quick look',
+            'A short note about a gadget.',
+        ));
+        $calls = 0;
+        add_filter('pre_http_request', function () use (&$calls) {
+            $calls++;
+            return new WP_Error('tr_ai_wire_test', 'The model should not run for a thin source.');
+        });
+        $this->invoke_private('process_item', array($id, $this->draft_settings(), true));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame(0, $calls);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertStringContainsString('too thin', $row['error_text']);
+        $this->assertEmpty($row['wp_post_id']);
+    }
+
+    public function test_deal_list_is_held_even_when_the_review_score_would_pass() {
+        $id = $this->invoke_private('insert_item', array(
+            hash('sha256', wp_generate_uuid4()),
+            'test-experiment',
+            'A',
+            'https://example.com/feed.xml',
+            'Example Feed',
+            'guid-' . wp_generate_uuid4(),
+            'https://example.com/deals',
+            'Best 10 laptop deals under $500 this week',
+            'Apple announced the M5 chip on March 4, 2026, with shipping in April at $999. The chip raises memory bandwidth and adds an on-device model for photos. Developers can use the new API in the beta released the same day.',
+        ));
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 96,
+                'story_value' => array(
+                    'publish' => true,
+                    'substance' => 'major',
+                    'reader_demand' => 'high',
+                    'adds_value' => true,
+                ),
+            )),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults()));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertStringContainsString('best-of list', $row['error_text']);
+        $this->assertEmpty($row['wp_post_id']);
+    }
+
+    public function test_reviewer_story_value_blocks_a_high_score() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $passing = array(
+            'verdict' => 'pass',
+            'score' => 93,
+            'fact_flags' => array(),
+            'policy_flags' => array(),
+            'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low', 'is_useful' => true, 'is_new' => true),
+            'story_value' => array(
+                'publish' => true,
+                'substance' => 'major',
+                'reader_demand' => 'high',
+                'adds_value' => true,
+                'reason' => 'Named chip launch readers will search.',
+            ),
+        );
+        $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($passing, $settings)));
+        $thin = $passing;
+        $thin['story_value'] = array(
+            'publish' => false,
+            'substance' => 'thin',
+            'reader_demand' => 'low',
+            'adds_value' => false,
+            'reason' => 'No named change.',
+        );
+        $reasons = $this->invoke_private('review_draft_blockers', array($thin, $settings));
+        $this->assertNotEmpty($reasons);
+        $this->assertStringContainsString('too thin', implode(' ', $reasons));
+        $older = $passing;
+        unset($older['story_value']);
+        $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($older, $settings)));
+    }
+
+    public function test_short_named_launch_is_not_treated_as_thin() {
+        $reason = $this->invoke_private('story_value_local_reason', array(array(
+            'source_title' => 'Apple announces M5',
+            'source_body' => 'Apple announced the M5 on March 4 for $999.',
+        )));
+        $this->assertSame('', $reason);
+    }
+
+    public function test_background_job_is_claimed_once_and_does_not_call_openai() {
+        $calls = 0;
+        add_filter('pre_http_request', function () use (&$calls) {
+            $calls++;
+            return new WP_Error('tr_ai_wire_test', 'OpenAI should not be called while a job is only queued.');
+        });
+        $job = $this->invoke_private('enqueue_background_job', array('retry', array('item_id' => 5)));
+        $this->assertSame('queued', $job['status']);
+        $this->assertSame(0, $calls);
+        $claimed = $this->invoke_private('claim_background_job', array($job['id']));
+        $this->assertSame('running', $claimed['status']);
+        $this->assertNull($this->invoke_private('claim_background_job', array($job['id'])));
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
     }
 }

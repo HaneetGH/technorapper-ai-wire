@@ -18,8 +18,9 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Social;
     use TechnoRapper_AI_Wire_Social_Reel;
     use TechnoRapper_AI_Wire_Social_YouTube;
+    use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.2.55';
+    const VERSION = '0.2.56';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -51,6 +52,9 @@ final class TechnoRapper_AI_Wire {
     const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
     const SEARCH_CALL_USD = 0.01;
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
+    const JOB_OPTION = 'tr_ai_wire_background_job';
+    const JOB_LOCK_OPTION = 'tr_ai_wire_background_job_lock';
+    const JOB_HOOK = 'tr_ai_wire_background_job';
     const PROCESSING_LOCK_TTL = 2700;
     const SCHEMA_VERSION = '9';
     const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
@@ -110,6 +114,11 @@ final class TechnoRapper_AI_Wire {
         add_action('admin_post_tr_ai_wire_delete_item', array($this, 'delete_item'));
         add_action('admin_post_tr_ai_wire_clean_queue', array($this, 'clean_queue_request'));
         add_action('admin_post_tr_ai_wire_repair_home', array($this, 'repair_home_request'));
+        add_action('wp_ajax_tr_ai_wire_start_job', array($this, 'ajax_start_job'));
+        add_action('wp_ajax_tr_ai_wire_run_job', array($this, 'ajax_run_job'));
+        add_action('wp_ajax_tr_ai_wire_job_status', array($this, 'ajax_job_status'));
+        add_action(self::JOB_HOOK, array($this, 'run_background_job'));
+        add_action('admin_footer', array($this, 'render_job_ui'));
         add_action('pre_get_posts', array($this, 'exclude_from_homepage'));
         add_filter('get_post_metadata', array($this, 'filter_thumbnail_id_meta'), 10, 4);
         add_filter('has_post_thumbnail', array($this, 'filter_has_post_thumbnail'), 10, 3);

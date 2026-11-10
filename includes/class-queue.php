@@ -10,8 +10,8 @@ trait TechnoRapper_AI_Wire_Queue {
         }
         $id = absint($_GET['item_id'] ?? 0);
         check_admin_referer('tr_ai_wire_retry_item_' . $id);
-        $this->retry_queue_item($id);
-        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&retried=1'));
+        $this->enqueue_background_job('retry', array('item_id' => $id));
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue'));
         exit;
     }
 
@@ -25,6 +25,7 @@ trait TechnoRapper_AI_Wire_Queue {
         if (!$item || !in_array($item['status'], array('error', 'retry_wait', 'quarantined'), true)) {
             return;
         }
+        $this->note_background_progress(25, 'Retrying item');
         $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
         $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
         $s = $this->settings_for_item($item, $this->settings());
@@ -46,6 +47,7 @@ trait TechnoRapper_AI_Wire_Queue {
             'review_json' => '',
         );
         $this->update_item($id, $fields);
+        $this->note_background_progress(40, 'Running the next stage');
         $this->process_item($id, $s, true);
     }
 

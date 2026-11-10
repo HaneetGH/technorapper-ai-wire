@@ -132,6 +132,7 @@ trait TechnoRapper_AI_Wire_Schema {
         wp_clear_scheduled_hook(self::CRON_HOOK);
         wp_clear_scheduled_hook(self::SOCIAL_CRON_HOOK);
         wp_clear_scheduled_hook(self::SOCIAL_CONTEXT_CRON_HOOK);
+        wp_clear_scheduled_hook(self::JOB_HOOK);
     }
 
     public function maybe_upgrade_schema() {

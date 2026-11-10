@@ -15,7 +15,7 @@ trait TechnoRapper_AI_Wire_AI {
 
     private function google_ranking_instructions() {
         return 'Google ranking rules — apply every on-page item while writing. Do not grade, score, or reject your own article: '
-            . '1) Write for this site\'s audience, using the site name and the Site categories list. Do not write a generic world-news dump that ignores the publisher. '
+            . '1) Write for this site\'s audience, using the site name and the Site categories list. Do not write a generic world-news dump that ignores the publisher. If the source is a deal list, coupon, best-of list, weekly recap, sponsored item, or too thin to explain a named change a reader would search, return an empty title and an empty body_html. Do not pad that source into an article. '
             . '2) Add a reader angle the headline does not: why the sourced facts matter, who is affected, and what to watch next. Write that as labeled analysis, not as new facts. Do not add numbers, quotes, dates, names, prices, or events that are not in the source. Compare only products or companies the source already names. When the source is global, explain local or regional impact only if the source supports it. Never invent local facts. Missing local context is fine when the source has none — still write the article. '
             . '3) Do not reuse the source headline or its search query. Pick a different job-to-be-done a reader would type. Thin synonym-spins will not rank. '
             . '4) One detailed article, not a brief. Title is the only H1. Required H2s in this order after a Key takeaways box: What changed, Why it matters, Who is affected, What to watch next, Frequently asked questions. Paragraphs are 2–3 sentences, active voice, with transition words. Aim 800–1400 words. '
@@ -43,9 +43,10 @@ trait TechnoRapper_AI_Wire_AI {
             . '0-49 reject-level (fabrication, synonym-spin, empty, policy). '
             . 'Do not deduct below 85 for missing internal links when none were supplied, for missing local context when the source has none, or for labeled analysis (why it matters, who is affected, what to watch next) that adds no new number, quote, date, name, price, or event. Never invent a low score to appear strict. If a human editor would publish it, score 85 or higher with verdict pass. '
             . 'fact_flags must be an empty array when every concrete claim appears in the source. Do not flag single-source reporting, lack of independent verification, hedging, readability, or labeled analysis. A non-empty fact_flags array blocks publication, so list only a claim that contradicts the source or is not in the source. Put style and structure notes in issues. '
-            . 'Return JSON with score (0-100), verdict (pass/revise/reject), issues (array), fact_flags (array), policy_flags (array), pragmatism {is_new, is_useful, is_grounded, similarity_risk (low/medium/high), notes}, suggested_fixes (array), safe_to_publish (boolean). is_new means the writing is original versus the source, not that the news event is unpublished. Use verdict pass when the score is 85 or higher and fact_flags is empty. Use verdict revise only for a 70-84 article a human must edit. Use reject for fabrication, policy problems, synonym-spin, missing unique angle, or empty/unusable copy. Set safe_to_publish true when the article is grounded, fact_flags is empty, and there are no policy flags.';
+            . 'Return JSON with score (0-100), verdict (pass/revise/reject), issues (array), fact_flags (array), policy_flags (array), pragmatism {is_new, is_useful, is_grounded, similarity_risk (low/medium/high), notes}, story_value {publish (boolean), substance (thin/solid/major), reader_demand (low/medium/high), adds_value (boolean), reason}, suggested_fixes (array), safe_to_publish (boolean). is_new means the writing is original versus the source, not that the news event is unpublished. Use verdict pass when the score is 85 or higher and fact_flags is empty. Use verdict revise only for a 70-84 article a human must edit. Use reject for fabrication, policy problems, synonym-spin, missing unique angle, or empty/unusable copy. Set safe_to_publish true when the article is grounded, fact_flags is empty, and there are no policy flags. '
+            . 'story_value is a separate publish gate from the score. A clean 85 does not publish a thin story, a list, or a topic readers would not search. Set publish true only when the source describes a concrete development readers would look up: a named product, company, or policy, plus what changed, and there is enough source to explain it. substance is thin when the source cannot explain what changed. reader_demand is low for a deal list, coupon, best-of list, weekly recap, sponsored item, or a minor aside with no named change. adds_value is false when the post would only repeat a press blurb or a list. Set publish false in those cases.';
         if (!empty($s['enable_web_search'])) {
-            $prompt .= ' Use the available web search for one corroborating search action and include evidence URLs in issues or notes. The source text is reference material.';
+            $prompt .= ' Use the available web search for one corroborating search action and include evidence URLs in issues or notes. Use that search when judging reader_demand, and set it low when readers would not look up the named change. The source text is reference material.';
         }
         return $prompt;
     }
@@ -89,7 +90,7 @@ trait TechnoRapper_AI_Wire_AI {
         } else {
             $input .= "\n\nAllowed internal URLs on this site: none supplied. Do not lower the score for missing internal links.";
         }
-        $input .= "\n\nYou are not the author. Do not rewrite the article. Publish gate: 85. If every concrete claim is in the source, return fact_flags as []. Labeled analysis is not a fact flag. If a human editor would publish this, score 85 or higher with verdict pass.";
+        $input .= "\n\nYou are not the author. Do not rewrite the article. Publish gate: 85. If every concrete claim is in the source, return fact_flags as []. Labeled analysis is not a fact flag. If a human editor would publish this, score 85 or higher with verdict pass. Also return story_value. A high score does not publish a thin story, a deal or best-of list, or a topic readers would not search.";
         return $input;
     }
 
@@ -179,7 +180,81 @@ trait TechnoRapper_AI_Wire_AI {
         if (!empty($s['draft_block_fact_flags']) && !$this->flag_list_is_empty($review['fact_flags'] ?? null)) {
             $reasons[] = 'fact flags';
         }
+        $value = $this->story_value_model_reason($review['story_value'] ?? null);
+        if ($value !== '') {
+            $reasons[] = $value;
+        }
         return $reasons;
+    }
+
+    /**
+     * Drop feed items that are too thin, or that are lists and deals rather
+     * than a development a reader would search. This does not call a model.
+     */
+    private function story_value_local_reason($item) {
+        if (!is_array($item)) {
+            return '';
+        }
+        $title = strtolower(trim(wp_strip_all_tags((string) ($item['source_title'] ?? ''))));
+        $body = strtolower(trim(wp_strip_all_tags((string) ($item['source_body'] ?? ''))));
+        $filler = array(
+            '/\b(?:best|top)\s+\d+\b/' => 'it is a best-of list',
+            '/\b\d+\s+(?:best|ways|things|tips|gadgets|apps|deals|laptops|phones|headphones)\b/' => 'it is a list, not a story',
+            '/\b(?:coupon|promo code|discount code|%\s*off|percent off)\b/' => 'it is a coupon or discount',
+            '/\b(?:sponsored(?:\s+post|\s+content)?|advertorial|paid partnership)\b/' => 'it is sponsored',
+            '/\b(?:daily deals|deal of the day|this week\'?s deals)\b/' => 'it is a deals roundup',
+            '/\b(?:weekly roundup|week in review|what to watch this week)\b/' => 'it is a recap, not a story',
+        );
+        foreach ($filler as $pattern => $why) {
+            if ($title !== '' && preg_match($pattern, $title)) {
+                return 'Held: not worth publishing. ' . ucfirst($why) . ', and readers are unlikely to look for it.';
+            }
+        }
+        $words = $body === '' ? array() : preg_split('/\s+/', $body, -1, PREG_SPLIT_NO_EMPTY);
+        if (!is_array($words)) {
+            $words = array();
+        }
+        $concrete = preg_match('/\d|[$£€]|announc|launch|recall|acqui|releas|unveil|earnings|lawsuit|breach|price|\bships?\b|\bban(?:s|ned)?\b|\bversion\b|cve-|\bsues?\b|\bsuing\b|\bbuys?\b|\bbought\b|\bcuts?\b|\bdelays?\b|\bconfirms?\b|\bleaks?\b/i', $title . ' ' . $body);
+        if (count($words) < 35 && !$concrete) {
+            return 'Held: not worth publishing. The source is too thin to show a development readers would search for.';
+        }
+        return '';
+    }
+
+    /**
+     * The reviewer reports this separately from the 0-100 score. A missing
+     * object does not block older reviews; a present object must clear.
+     */
+    private function story_value_model_reason($value) {
+        if (!is_array($value) || !$value) {
+            return '';
+        }
+        $substance = strtolower(trim((string) ($value['substance'] ?? '')));
+        $demand = strtolower(trim((string) ($value['reader_demand'] ?? '')));
+        $reason = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags((string) ($value['reason'] ?? ''))));
+        $detail = $reason !== '' ? ' ' . $reason : '';
+        $publish = $value['publish'] ?? null;
+        $adds = array_key_exists('adds_value', $value) ? $value['adds_value'] : null;
+        if ($this->is_explicitly_false($publish) || $substance === 'thin' || $demand === 'low' || $this->is_explicitly_false($adds)) {
+            if ($substance === 'thin') {
+                return 'Held: not worth publishing. The story is too thin.' . $detail;
+            }
+            if ($demand === 'low') {
+                return 'Held: not worth publishing. Readers are unlikely to look for this.' . $detail;
+            }
+            if ($this->is_explicitly_false($adds)) {
+                return 'Held: not worth publishing. It does not add enough value.' . $detail;
+            }
+            return 'Held: not worth publishing.' . $detail;
+        }
+        $publish_ok = $publish === true || $publish === 1 || $publish === '1' || $publish === 'true';
+        if (!in_array($substance, array('solid', 'major'), true) || !in_array($demand, array('medium', 'high'), true) || !$publish_ok) {
+            return 'Held: not worth publishing. Story value did not clear.' . $detail;
+        }
+        if ($adds === null || $this->is_explicitly_false($adds)) {
+            return 'Held: not worth publishing. It does not add enough value.' . $detail;
+        }
+        return '';
     }
 
     private function is_explicitly_false($value) {
