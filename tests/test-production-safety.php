@@ -597,7 +597,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('single', $settings['social_post_format']);
         $this->assertSame(5, $settings['social_slide_count']);
         $this->assertSame(2, $settings['social_carousel_daily_limit']);
+        $this->assertSame(0, $settings['social_collage_daily_limit']);
         $this->assertSame(3, $settings['social_single_daily_limit']);
+        $this->assertSame(0, (int) $settings['social_mix_saved']);
         $this->assertSame(array_keys(TechnoRapper_AI_Wire::social_news_formats()), $settings['social_news_formats']);
         $this->assertArrayNotHasKey('social_pack_wait_minutes', $settings);
     }
@@ -2556,12 +2558,42 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $this->assertSame(2, $mix['social_carousel_daily_limit']);
         $this->assertSame(4, $mix['social_single_daily_limit']);
+        $counts = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
+            'social_collage_daily_limit' => 1,
+            'social_single_daily_limit' => 4,
+        ));
+        $this->assertSame(1, (int) $counts['social_mix_saved']);
+        $this->assertSame(3, $counts['social_carousel_daily_limit']);
+        $this->assertSame(1, $counts['social_collage_daily_limit']);
+        $this->assertSame(4, $counts['social_single_daily_limit']);
+        $this->assertSame('carousel', $counts['social_post_format']);
+        $singles_only = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 6,
+        ));
+        $this->assertSame('single', $singles_only['social_post_format']);
+        $this->assertSame(1, $this->invoke_private('social_slide_count', array($singles_only)));
         $clamped = $this->plugin->sanitize_settings(array(
             'social_carousel_daily_limit' => 99,
+            'social_collage_daily_limit' => 99,
             'social_single_daily_limit' => 99,
         ));
         $this->assertSame(10, $clamped['social_carousel_daily_limit']);
+        $this->assertSame(10, $clamped['social_collage_daily_limit']);
         $this->assertSame(10, $clamped['social_single_daily_limit']);
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 3), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(array('carousel' => 3, 'collage' => 1, 'single' => 4), $this->invoke_private('social_daily_mix_limits', array($counts)));
+        $this->assertSame('collage', $this->invoke_private('social_next_pack_kind', array(array(
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 2,
+            'social_single_daily_limit' => 1,
+            'social_post_format' => 'single',
+        ))));
     }
 
     public function test_social_news_formats_are_types_not_example_headlines() {
@@ -2989,7 +3021,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertSame(10, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
         $this->assertSame('pack', (string) get_post_meta((int) $wpdb->get_var("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC LIMIT 1"), '_tr_ai_wire_social_mode', true));
-        $this->assertSame(array('carousel' => 1, 'single' => 0), $this->invoke_private('social_mix_today'));
+        $this->assertSame(array('carousel' => 1, 'collage' => 0, 'single' => 0), $this->invoke_private('social_mix_today'));
 
         $independent = $this->factory()->post->create(array(
             'post_status' => 'publish',
@@ -3000,7 +3032,29 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
         $this->assertSame('single', (string) get_post_meta($independent, '_tr_ai_wire_social_mode', true));
         $this->assertSame(12, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
-        $this->assertSame(array('carousel' => 1, 'single' => 1), $this->invoke_private('social_mix_today'));
+        $this->assertSame(array('carousel' => 1, 'collage' => 0, 'single' => 1), $this->invoke_private('social_mix_today'));
+    }
+
+    public function test_mix_counts_can_run_only_single_stories() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_post_format' => 'carousel',
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+            'social_slide_count' => 5,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Just one story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 81);
+        $this->fire_social_publish($post_id);
+        $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        global $wpdb;
+        $this->assertSame(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = " . (int) $post_id));
     }
 
     public function test_x_keys_and_tokens_sign_oauth1_requests() {
@@ -3427,6 +3481,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('API Key Secret', $html);
         $this->assertStringContainsString('Access Token Secret', $html);
         $this->assertStringContainsString('Bearer is not needed', $html);
+        $this->assertStringContainsString('How many of each post', $html);
+        $this->assertStringContainsString('Carousel posts per day', $html);
+        $this->assertStringContainsString('Collage posts per day', $html);
+        $this->assertStringContainsString('Single-story posts per day', $html);
+        $this->assertStringNotContainsString('Instagram post format', $html);
         $this->assertStringContainsString('News graphics we can produce', $html);
         $this->assertStringContainsString('Editorial news poster', $html);
         $this->assertStringContainsString('Photo news brief', $html);

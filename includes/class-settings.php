@@ -38,7 +38,9 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_post_format' => 'single',
             'social_slide_count' => 5,
             'social_carousel_daily_limit' => 2,
+            'social_collage_daily_limit' => 0,
             'social_single_daily_limit' => 3,
+            'social_mix_saved' => 0,
             'social_news_formats' => array_keys(self::social_news_formats()),
             'seo_min_score' => 50,
             'seo_max_readability_errors' => 3,
@@ -75,7 +77,9 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_post_format',
             'social_slide_count',
             'social_carousel_daily_limit',
+            'social_collage_daily_limit',
             'social_single_daily_limit',
+            'social_mix_saved',
             'social_news_formats',
         );
     }
@@ -252,7 +256,18 @@ trait TechnoRapper_AI_Wire_Settings {
         $pack = absint($input['social_slide_count'] ?? $defaults['social_slide_count']);
         $out['social_slide_count'] = in_array($pack, array(4, 5, 6), true) ? $pack : 5;
         $out['social_carousel_daily_limit'] = min(10, max(0, absint($input['social_carousel_daily_limit'] ?? $defaults['social_carousel_daily_limit'])));
+        $out['social_collage_daily_limit'] = min(10, max(0, absint($input['social_collage_daily_limit'] ?? $defaults['social_collage_daily_limit'])));
         $out['social_single_daily_limit'] = min(10, max(0, absint($input['social_single_daily_limit'] ?? $defaults['social_single_daily_limit'])));
+        $out['social_mix_saved'] = empty($input['social_mix_saved']) ? 0 : 1;
+        if ($out['social_mix_saved']) {
+            if ($out['social_carousel_daily_limit'] > 0) {
+                $out['social_post_format'] = 'carousel';
+            } elseif ($out['social_collage_daily_limit'] > 0) {
+                $out['social_post_format'] = 'collage';
+            } else {
+                $out['social_post_format'] = 'single';
+            }
+        }
         $out['social_news_formats'] = self::sanitize_social_news_format_ids($input['social_news_formats'] ?? array());
         return self::apply_social_platform_toggles($out);
     }

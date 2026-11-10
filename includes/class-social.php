@@ -1254,7 +1254,7 @@ trait TechnoRapper_AI_Wire_Social {
             $first = $prepared[0];
             return $this->publish_instagram_post($first['copy']['instagram'], $first['copy']['instagram_alt'], $first['image_url'], $credentials);
         }
-        $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'carousel');
+        $format = $this->social_item_pack_format($prepared[0], $settings);
         $caption = $this->instagram_pack_caption($prepared);
         $alt = (string) ($prepared[0]['copy']['instagram_alt'] ?? (self::site_brand_name() . ' stories'));
         if ($format === 'carousel') {
@@ -1972,9 +1972,81 @@ trait TechnoRapper_AI_Wire_Social {
         return in_array($format, array('single', 'carousel', 'collage'), true) ? $format : 'single';
     }
 
+    private function social_daily_mix_limits($settings) {
+        $settings = is_array($settings) ? $settings : array();
+        $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
+        $carousel = min(10, max(0, (int) ($settings['social_carousel_daily_limit'] ?? 0)));
+        $collage = min(10, max(0, (int) ($settings['social_collage_daily_limit'] ?? 0)));
+        $single = min(10, max(0, (int) ($settings['social_single_daily_limit'] ?? 0)));
+        if (empty($settings['social_mix_saved'])) {
+            if ($format === 'single') {
+                $carousel = 0;
+                $collage = 0;
+                if ($single < 1) {
+                    $single = 3;
+                }
+            } elseif ($format === 'carousel') {
+                if ($carousel < 1) {
+                    $carousel = 2;
+                }
+                $collage = 0;
+            } elseif ($format === 'collage') {
+                if ($collage < 1) {
+                    $collage = 1;
+                }
+                $carousel = 0;
+            }
+        }
+        return array(
+            'carousel' => $carousel,
+            'collage' => $collage,
+            'single' => $single,
+        );
+    }
+
+    private function social_mix_remaining($settings) {
+        $limits = $this->social_daily_mix_limits($settings);
+        $mix = $this->social_mix_today();
+        return array(
+            'carousel' => max(0, $limits['carousel'] - $mix['carousel']),
+            'collage' => max(0, $limits['collage'] - $mix['collage']),
+            'single' => max(0, $limits['single'] - $mix['single']),
+        );
+    }
+
+    private function social_next_pack_kind($settings) {
+        $left = $this->social_mix_remaining($settings);
+        if ($left['carousel'] > 0) {
+            return 'carousel';
+        }
+        if ($left['collage'] > 0) {
+            return 'collage';
+        }
+        return '';
+    }
+
+    private function social_item_pack_format($item, $settings) {
+        $post = is_array($item) ? ($item['post'] ?? null) : null;
+        $mode = '';
+        if ($post instanceof WP_Post) {
+            $mode = (string) get_post_meta($post->ID, '_tr_ai_wire_social_mode', true);
+        }
+        if ($mode === 'collage') {
+            return 'collage';
+        }
+        if ($mode === 'carousel' || $mode === 'pack') {
+            return 'carousel';
+        }
+        if ($mode === 'single') {
+            return 'single';
+        }
+        $kind = $this->social_next_pack_kind($settings);
+        return $kind !== '' ? $kind : $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
+    }
+
     private function social_slide_count($settings) {
-        $format = $this->normalize_social_post_format(is_array($settings) ? ($settings['social_post_format'] ?? 'single') : 'single');
-        if ($format === 'single') {
+        $limits = $this->social_daily_mix_limits($settings);
+        if ($limits['carousel'] < 1 && $limits['collage'] < 1) {
             return 1;
         }
         $count = (int) (is_array($settings) ? ($settings['social_slide_count'] ?? 5) : 5);
@@ -2010,16 +2082,8 @@ trait TechnoRapper_AI_Wire_Social {
         if ($post_id < 1) {
             return;
         }
-        $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
-        if ($format === 'single') {
-            $this->enqueue_social_article($post_id, 'single');
-            $this->kick_social_queue(30);
-            return;
-        }
-        $mix = $this->social_mix_today();
-        $carousel_left = max(0, (int) ($settings['social_carousel_daily_limit'] ?? 2) - $mix['carousel']);
-        $single_left = max(0, (int) ($settings['social_single_daily_limit'] ?? 3) - $mix['single']);
-        if ($carousel_left > 0) {
+        $left = $this->social_mix_remaining($settings);
+        if ($left['carousel'] > 0 || $left['collage'] > 0) {
             $ids = $this->social_batch_ids();
             if (!in_array($post_id, $ids, true)) {
                 $ids[] = $post_id;
@@ -2030,7 +2094,7 @@ trait TechnoRapper_AI_Wire_Social {
             }
             return;
         }
-        if ($single_left > 0) {
+        if ($left['single'] > 0) {
             $this->enqueue_social_article($post_id, 'single');
             $this->social_mix_add('single');
             $this->kick_social_queue(30);
@@ -2128,7 +2192,14 @@ trait TechnoRapper_AI_Wire_Social {
         if ($post_id < 1 || !$platforms) {
             return;
         }
-        update_post_meta($post_id, '_tr_ai_wire_social_mode', $mode === 'pack' ? 'pack' : 'single');
+        $mode = sanitize_key((string) $mode);
+        if ($mode === 'carousel') {
+            $mode = 'pack';
+        }
+        if (!in_array($mode, array('pack', 'collage', 'single'), true)) {
+            $mode = 'single';
+        }
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', $mode);
         global $wpdb;
         $table = $this->social_table();
         $now = current_time('mysql', true);
@@ -2150,14 +2221,13 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $settings = $this->settings();
         $wanted = $this->social_slide_count($settings);
-        $mix = $this->social_mix_today();
-        $carousel_left = max(0, (int) ($settings['social_carousel_daily_limit'] ?? 2) - $mix['carousel']);
-        $single_left = max(0, (int) ($settings['social_single_daily_limit'] ?? 3) - $mix['single']);
+        $left = $this->social_mix_remaining($settings);
         if (!$force && count($ids) < $wanted) {
             return false;
         }
-        $as_pack = $carousel_left > 0;
-        if (!$as_pack && !($allow_singles && $single_left > 0)) {
+        $pack_kind = $this->social_next_pack_kind($settings);
+        $as_pack = $pack_kind !== '';
+        if (!$as_pack && !($allow_singles && $left['single'] > 0)) {
             if (!$force) {
                 return false;
             }
@@ -2166,23 +2236,23 @@ trait TechnoRapper_AI_Wire_Social {
             }
         }
         $this->social_batch_save(array());
-        $mode = $as_pack ? 'pack' : 'single';
+        $mode = $as_pack ? $pack_kind : 'single';
         $queued = 0;
         foreach ($ids as $post_id) {
-            if ($mode === 'single' && $queued >= $single_left) {
+            if ($mode === 'single' && $queued >= $left['single']) {
                 break;
             }
             $post = get_post((int) $post_id);
             if (!$post || $post->post_status !== 'publish') {
                 continue;
             }
-            $this->enqueue_social_article((int) $post_id, $mode);
+            $this->enqueue_social_article((int) $post_id, $mode === 'carousel' ? 'pack' : $mode);
             $queued++;
         }
         if ($queued < 1) {
             return false;
         }
-        $this->social_mix_add($mode === 'pack' ? 'carousel' : 'single', $mode === 'pack' ? 1 : $queued);
+        $this->social_mix_add($as_pack ? $pack_kind : 'single', $as_pack ? 1 : $queued);
         $this->kick_social_queue(30);
         return true;
     }
@@ -2195,13 +2265,16 @@ trait TechnoRapper_AI_Wire_Social {
         $stored = get_option($this->social_mix_option_name(), array());
         return array(
             'carousel' => max(0, (int) (is_array($stored) ? ($stored['carousel'] ?? 0) : 0)),
+            'collage' => max(0, (int) (is_array($stored) ? ($stored['collage'] ?? 0) : 0)),
             'single' => max(0, (int) (is_array($stored) ? ($stored['single'] ?? 0) : 0)),
         );
     }
 
     private function social_mix_add($kind, $by = 1) {
         $mix = $this->social_mix_today();
-        $kind = $kind === 'carousel' ? 'carousel' : 'single';
+        if ($kind !== 'carousel' && $kind !== 'collage') {
+            $kind = 'single';
+        }
         $mix[$kind] += max(1, (int) $by);
         update_option($this->social_mix_option_name(), $mix, false);
     }
@@ -2211,10 +2284,10 @@ trait TechnoRapper_AI_Wire_Social {
         if ($mode === 'single') {
             return false;
         }
-        if ($mode === 'pack') {
+        if ($mode === 'pack' || $mode === 'carousel' || $mode === 'collage') {
             return true;
         }
-        return $this->normalize_social_post_format($settings['social_post_format'] ?? 'single') !== 'single';
+        return $this->social_next_pack_kind($settings) !== '';
     }
 
     private function store_social_jpeg($post, $bytes, $headline, $copy, $variant, $suffix = '') {
@@ -3948,24 +4021,14 @@ trait TechnoRapper_AI_Wire_Social {
             <?php
             $wanted = $this->social_slide_count($settings);
             $mix = $this->social_mix_today();
-            $carousel_daily = (int) ($settings['social_carousel_daily_limit'] ?? 2);
-            $single_daily = (int) ($settings['social_single_daily_limit'] ?? 3);
-            $format_labels = array(
-                'single' => 'one social post per article',
-                'carousel' => 'a carousel of ' . (string) $wanted . ' website articles in one Instagram post (X attaches up to 4 images in one tweet)',
-                'collage' => 'a collage of ' . (string) $wanted . ' website articles in one Instagram image',
-            );
-            $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
+            $limits = $this->social_daily_mix_limits($settings);
             ?>
-            <p>The social job currently posts <strong><?php echo esc_html($format_labels[$format] ?? 'one social post per article'); ?></strong><?php
-            if ($format !== 'single') {
-                echo '. Today: ' . esc_html((string) $mix['carousel']) . ' / ' . esc_html((string) $carousel_daily) . ' carousel posts and ' . esc_html((string) $mix['single']) . ' / ' . esc_html((string) $single_daily) . ' independent posts';
-                $holding = count($this->social_batch_ids());
-                if ($holding > 0 && $holding < $wanted) {
-                    echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' for the next carousel';
-                }
+            <p>Today’s mix: <strong><?php echo esc_html((string) $mix['carousel']); ?> / <?php echo esc_html((string) $limits['carousel']); ?> carousels</strong>, <strong><?php echo esc_html((string) $mix['collage']); ?> / <?php echo esc_html((string) $limits['collage']); ?> collages</strong>, <strong><?php echo esc_html((string) $mix['single']); ?> / <?php echo esc_html((string) $limits['single']); ?> single stories</strong><?php
+            $holding = count($this->social_batch_ids());
+            if ($holding > 0 && $wanted > 1 && $holding < $wanted) {
+                echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' for the next pack of ' . esc_html((string) $wanted);
             }
-            ?>. Change this under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Process now ships whatever is waiting even if a carousel is not full.</p>
+            ?>. Change the counts under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Process now ships whatever is waiting even if a carousel is not full.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);
