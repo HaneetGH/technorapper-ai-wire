@@ -3676,7 +3676,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertFalse(is_wp_error($raw), is_wp_error($raw) ? $raw->get_error_message() : '');
         $this->assertSame('gpt-6.1-terra', $captured['model']);
         $this->assertStringContainsString('same Writer pass', $captured['user']);
-        $this->assertStringContainsString('no swear words', $captured['user']);
+        $this->assertStringContainsString('suitable for a general audience', $captured['user']);
         $this->assertStringContainsString('reel_script', $captured['user']);
         $this->assertStringContainsString('youtube_title', $captured['user']);
         $this->assertStringContainsString('youtube_description', $captured['user']);
