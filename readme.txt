@@ -19,17 +19,18 @@ It takes RSS or Atom feeds you configure, writes an attributed draft, runs a sep
 Social distribution stays off until you turn each network on. This plugin does not ship API keys. You provide:
 
 * An OpenAI API key
+* An optional Gemini API key, used only when OpenAI flags a prompt
 * Optional X developer Keys and tokens (API Key, API Key Secret, Access Token, Access Token Secret)
 * Optional Instagram Professional account via your own Meta app
 * Optional Google Cloud OAuth client, then Sign in with Google (or paste a refresh token) for YouTube Data API v3 uploads. A YouTube API key cannot upload.
 
-**Third-party services.** Article text may be sent to OpenAI for writing, review, and social images. If you enable a network, media and captions are sent to the X API, Instagram Graph API, and/or YouTube Data API. Those services have their own terms and billing. Automated X posts spend X developer credits. Instagram Graph publishing has no Meta per-post fee; Meta enforces a rolling quota. YouTube uploads have no Google per-video fee; Google enforces a daily API quota.
+**Third-party services.** Article text may be sent to OpenAI for writing, review, and social images. If OpenAI flags a prompt, the plugin retries a shorter excerpt and, when you have saved a Gemini key, sends that excerpt to Gemini 2.5 Flash. If you enable a network, media and captions are sent to the X API, Instagram Graph API, and/or YouTube Data API. Those services have their own terms and billing. Automated X posts spend X developer credits. Instagram Graph publishing has no Meta per-post fee; Meta enforces a rolling quota. YouTube uploads have no Google per-video fee; Google enforces a daily API quota. Gemini tokens count toward this plugin's monthly budget.
 
 == Installation ==
 
 1. Upload the plugin ZIP in Plugins → Add New → Upload Plugin, or copy the `technorapper-ai-wire` folder to `wp-content/plugins/`.
 2. Activate the plugin.
-3. Open **AI Wire**. Save your OpenAI API key, add feeds, and set daily/monthly limits.
+3. Open **AI Wire**. Save your OpenAI API key, optionally a Gemini API key, add feeds, and set daily/monthly limits.
 4. Optional: open **Social settings** and connect your X, Instagram, and/or YouTube accounts. Leave posting off until you are ready.
 
 == Frequently Asked Questions ==
@@ -49,6 +50,10 @@ No. Instagram Graph publishing has no Meta per-post fee. Meta enforces a rolling
 = Is YouTube API posting billed per upload? =
 
 No. YouTube Data API v3 has no Google per-video fee. Title, description, tags, category, privacy, and made-for-kids are set in the upload call. Google meters quota (default 100 uploads/day). When quota is full, the item stays queued.
+
+= What does “Invalid prompt: your prompt was flagged” mean? =
+
+OpenAI rejected the text before the model wrote anything. It is not a billing or outage error, and sending the same full article again will not clear it. AI Wire retries once with a short excerpt. Save a Gemini API key on the AI Wire screen if you want Gemini 2.5 Flash to write that item when OpenAI still blocks it. Image generation stays on OpenAI.
 
 = Are my API keys in this repository? =
 

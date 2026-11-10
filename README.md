@@ -2,7 +2,7 @@
 
 Open-source WordPress plugin (**GPLv2 or later**) that turns **your** RSS/Atom feeds into source-attributed, AI-reviewed posts, then can optionally post a branded graphic to **your** X and Instagram accounts.
 
-It is not tied to one newsroom. Site name, desks, and the social poster brand mark come from the WordPress site that installed the plugin. You bring the feeds, OpenAI key, and social apps. See [Contributing](CONTRIBUTING.md) and [What it costs to run](docs/PLATFORM-COSTS.md).
+It is not tied to one newsroom. Site name, desks, and the social poster brand mark come from the WordPress site that installed the plugin. You bring the feeds, an OpenAI key, an optional Gemini key, and social apps. See [Contributing](CONTRIBUTING.md) and [What it costs to run](docs/PLATFORM-COSTS.md).
 
 Each item passes a writer and a separate editorial review. Passing items are **published automatically**. Uncheck **Auto-publish** if you want WordPress drafts instead.
 
@@ -51,7 +51,7 @@ flowchart TD
 | Trigger | Configurable WP-Cron interval or an administrator-triggered run | A database-backed lock serializes runs |
 | Ingestion | Fetch configured RSS/Atom feeds and inspect up to 10 recent items per feed | HTTP(S) URL validation, source-key deduplication, source-size cap |
 | Assignment | Stable A/B assignment from the source key | Retries keep the same experiment and variant |
-| Generation | Writer produces title, lede, body, category and tags | Source content is treated as untrusted input |
+| Generation | Writer produces title, lede, body, category and tags | Source content is reference material. If OpenAI returns HTTP 400 `invalid_prompt`, the same model retries once with a short source excerpt. If that is still blocked and a Gemini key is saved, Gemini 2.5 Flash writes the same JSON. With no Gemini key the item stays in error |
 | Review | Separate model evaluates factual consistency, novelty, usefulness and policy flags | Fail closed: only explicit passing output proceeds |
 | Policy scan | Local profanity/slur list plus OpenAI Moderation on the article and on every social caption, Reel script, and on-image line | Fail closed: violating copy is quarantined or held for review, never posted |
 | Draft or publish | Sanitized content is published automatically, or saved as a draft if Auto-publish is unchecked | Reject stays quarantined |
@@ -65,7 +65,7 @@ The **AI Wire** menu in wp-admin is the single place to configure credentials, f
 ```mermaid
 flowchart TD
     A["WordPress admin"] --> B["AI Wire settings"]
-    B --> C["OpenAI API key<br/>write-only credential"]
+    B --> C["OpenAI API key<br/>and optional Gemini key<br/>write-only credentials"]
     B --> D["Feeds + cron schedule"]
     B --> E["Daily draft + per-run caps"]
     B --> F["Monthly USD + token limits"]
@@ -91,7 +91,7 @@ Automated WordPress integration tests now exercise selected critical paths. They
 1. Upload the plugin ZIP through **Plugins → Add New → Upload Plugin**, or copy the plugin directory to `wp-content/plugins/technorapper-ai-wire/`.
 2. Activate the plugin. The plugin creates/updates its queue and view tables and schedules its initial processing run.
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
-4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
+4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence. The optional **Gemini API key** on the same form is used only after OpenAI flags a prompt. Leave it blank to stay on OpenAI. `GEMINI_API_KEY` or `TR_AI_WIRE_GEMINI_API_KEY` in `wp-config.php` is the server-level fallback, and a dashboard key takes precedence.
 5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to fetch new items immediately, then rewrite/review them in that same request. Scheduled runs still use WP-Cron.
 6. Inspect **AI Wire → Queue & usage**. Passing items go live when **Auto-publish** is checked (the default). Uncheck it to keep drafts. Use **Stop current run**, **Clear unfinished**, **Clean board**, or a row **Delete** to halt work or empty the queue. WordPress posts stay.
 
@@ -101,7 +101,8 @@ All day-to-day settings are available in one place under **AI Wire**:
 
 | Setting | What it controls |
 |---|---|
-| OpenAI API key | Credential used for writer and reviewer requests; saved separately from ordinary settings |
+| OpenAI API key | Credential used for writer, reviewer, and social-copy requests; saved separately from ordinary settings |
+| Gemini API key | Optional. After OpenAI flags a prompt (`invalid_prompt`), AI Wire retries a shorter excerpt on the same model, then calls Gemini 2.5 Flash when this key is saved. Blank keeps the existing key. Remove it with the checkbox on the same form |
 | Automatic processing schedule | Hourly, every 3, 6 or 12 hours, daily, or manual-only |
 | Feed tenants | Each RSS/Atom feed is onboarded as its own tenant in wp-admin. The plugin does not ship any feeds; add the URLs you want |
 | Maximum posts per day | Daily draft and auto-published post cap; `0` pauses creation |
@@ -110,7 +111,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Monthly token limit | This plugin's combined monthly input/output token ceiling. Separate from the OpenAI credit balance and project budget. Default is 200,000,000. `0` stops AI calls |
 | Maximum output tokens | Per AI pass output ceiling |
 | Maximum source characters | Source text truncation limit before AI processing |
-| Writer and reviewer models | Model selection for the two editorial passes |
+| Writer and reviewer models | Model selection for the two editorial passes. GPT-6 Luna and GPT-6.1 Terra. A flagged prompt does not switch between those two models; it shortens the excerpt, then uses Gemini when a key is saved |
 | Independent web search | Optional reviewer corroboration and associated search charges |
 | Editorial A/B experiment | Enables/disables stable A/B writer assignment and sets the experiment ID |
 | Social distribution | Opt-in switch, maximum daily article count (up to 10), and monthly social-image budget |
@@ -174,6 +175,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 - The optional web-search review adds search-tool and token charges.
 - RSS-derived featured-image URLs remain the article-image source. Social posts use a separate generated branded image. OpenAI image estimates are in [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). X credits and Instagram quota are in [What it costs to run](docs/PLATFORM-COSTS.md).
 - If the API call or review fails, the item is held in the queue; inspect errors before retrying. Budget-held items are retried by later runs when budget becomes available.
+- An OpenAI `invalid_prompt` / “flagged as potentially violating our usage policy” error is not a billing or outage failure, and sending the same full text again will not clear it. The worker already retries once with a short excerpt. Add a Gemini API key so the next blocked item can be written by Gemini 2.5 Flash. Gemini input and output tokens count toward the same monthly token limit and USD budget. The rate table uses Gemini 2.5 Flash paid-tier prices; recheck Google’s price card before relying on that estimate. Image generation stays on OpenAI.
 
 ## A/B experiments and analytics
 
@@ -226,7 +228,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 ## Security and privacy notes
 
 - Admin settings and manual execution are restricted to administrators; manual execution uses a WordPress nonce.
-- The dashboard API credential is stored in a dedicated non-autoloaded WordPress option and is never displayed after saving. Server-level constants remain supported as a fallback.
+- The dashboard OpenAI and Gemini credentials are stored in dedicated non-autoloaded WordPress options and are never displayed after saving. Server-level constants remain supported as a fallback.
 - Feed/source text is untrusted model input. Generated HTML is passed through `wp_kses_post()`; titles and excerpts are sanitized.
 - The public view endpoint only accepts published experiment articles with a valid daily HMAC token. The token is not sent to GA4/GTM.
 - The view table stores aggregate post/day counters, not IP addresses, cookies, names or user IDs. Browser session storage is used only for per-session deduplication.
@@ -240,6 +242,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 - WP-Cron is traffic-triggered unless backed by a host system cron.
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.
+- OpenAI can reject an ordinary tech article with HTTP 400 `invalid_prompt`. That check looks at the prompt you send, including the source text. A shorter excerpt is tried once. Gemini runs only when its key is saved. A source that both providers block stays in error.
 - First-party engaged-read counters are approximate and can be blocked by browser privacy settings, ad blockers, JavaScript errors or session-storage restrictions.
 - There is no native GA4, Search Console or AdSense data import, revenue attribution, editorial approval workflow, alerting service or remote job dashboard in this release.
 
@@ -280,7 +283,7 @@ flowchart LR
 |---|---|
 | `class-plugin.php` | Main class, constants, constructor |
 | `class-schema.php` | Tables, activation, one-time upgrades |
-| `class-settings.php` | Defaults, sanitizing, API key |
+| `class-settings.php` | Defaults, sanitizing, OpenAI and Gemini API keys |
 | `class-tenants.php` | Per-feed tenant onboard and mapping |
 | `class-admin.php` | Settings, queue, scores, and experiment screens |
 | `class-queue.php` | Queue rows, locks, stop/delete/clean |
