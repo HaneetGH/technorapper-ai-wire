@@ -52,7 +52,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.2.51 =
-* Optional Instagram Reels: one spoken story per article. The current Writer model writes the 15–18s script; Fal Veo Lite animates the social photo (~$0.24 / 8s, $10/month default); Mini TTS and ffmpeg mux voiceover plus captions. Not a Ken Burns slideshow. Raise model/length later. X still gets the still graphic.
+* Optional Instagram Reels: one spoken story per article. The current Writer model writes the 15–18s script; Fal motion (suggested Veo 3.1 Lite, ~$0.24 / 8s, $10/month default) animates the social photo. Operators can pick Veo Fast, Veo 3.1, Kling Standard, or Kling Pro; each model has a price info icon and a Price estimate page. Mini TTS and ffmpeg mux voiceover plus captions. Not a Ken Burns slideshow. X still gets the still graphic.
 
 = 0.2.50 =
 * Keep the previous Run now, review-score, homepage pin, and social outcomes on the decoupled pipeline: writer quality and the 85 review scale stay the same, scheduled ticks still do one stage, and auto-publish still pins and syndicates after a verified publish.
@@ -75,7 +75,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.2.51 =
-Adds an optional spoken Instagram Reel format. Writer GPT writes the script; Fal Veo Lite supplies 8s of motion inside a $10/month video budget; Mini TTS and ffmpeg mux the rest. Not a slideshow of stills.
+Adds an optional spoken Instagram Reel format. Writer GPT writes the script; Fal motion (suggested Veo 3.1 Lite) supplies 8s of clip inside a $10/month video budget, with other Veo and Kling models selectable; Mini TTS and ffmpeg mux the rest. Not a slideshow of stills.
 
 = 0.2.50 =
 Same publish, homepage, and social results as before, with committed pipeline stages so an API or adapter failure cannot roll back a finished step.
