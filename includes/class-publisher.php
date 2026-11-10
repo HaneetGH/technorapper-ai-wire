@@ -9,8 +9,8 @@ trait TechnoRapper_AI_Wire_Publisher {
             wp_die(esc_html__('You are not allowed to repair homepage posts.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_repair_home');
-        $this->repair_home_posts();
-        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=repaired'));
+        $this->enqueue_background_job('repair');
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue'));
         exit;
     }
 
@@ -53,6 +53,9 @@ trait TechnoRapper_AI_Wire_Publisher {
             }
             $this->prepare_homepage_visibility((int) $post->ID, is_array($item) ? $item : array(), $rewrite, $this->settings_for_item(is_array($item) ? $item : array(), $s));
             $count++;
+            if ($count === 1 || $count % 10 === 0) {
+                $this->note_background_progress(25 + (int) (70 * $count / max(1, count($posts))), 'Repairing homepage post ' . $count);
+            }
         }
         return $count;
     }

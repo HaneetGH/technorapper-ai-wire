@@ -4,7 +4,7 @@ Open-source WordPress plugin (**GPLv2 or later**) that turns **your** RSS/Atom f
 
 It is not tied to one newsroom. Site name, desks, and the social poster brand mark come from the WordPress site that installed the plugin. You bring the feeds, OpenAI key, and social apps. See [Contributing](CONTRIBUTING.md) and [What it costs to run](docs/PLATFORM-COSTS.md).
 
-Each item passes a writer and a separate editorial review. Passing items are **published automatically**. Uncheck **Auto-publish** if you want WordPress drafts instead.
+Each item passes a writer and a separate editorial review. Thin blurbs, deal lists, coupons, best-of lists, and recaps are held. The reviewer also has to mark the story solid enough that readers would look for it. Items that clear those checks are **published automatically**. Uncheck **Auto-publish** if you want WordPress drafts instead.
 
 > AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
 
@@ -92,8 +92,8 @@ Automated WordPress integration tests now exercise selected critical paths. They
 2. Activate the plugin. The plugin creates/updates its queue and view tables and schedules its initial processing run.
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
 4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
-5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to fetch new items immediately, then rewrite/review them in that same request. Scheduled runs still use WP-Cron.
-6. Inspect **AI Wire → Queue & usage**. Passing items go live when **Auto-publish** is checked (the default). Uncheck it to keep drafts. Use **Stop current run**, **Clear unfinished**, **Clean board**, or a row **Delete** to halt work or empty the queue. WordPress posts stay.
+5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to queue a background worker. The page stays open and a progress bar tracks fetch, rewrite, and review. Scheduled runs still use WP-Cron.
+6. Inspect **AI Wire → Queue & usage**. Passing items go live when **Auto-publish** is checked (the default). Uncheck it to keep drafts. **Retry**, **Stop current run**, **Clear unfinished**, **Clean board**, and a row **Delete** stay on the page: long work shows the progress bar, and delete or clean updates the table in place. WordPress posts stay.
 
 ### Dashboard configuration reference
 

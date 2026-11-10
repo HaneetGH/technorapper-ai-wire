@@ -117,7 +117,9 @@ trait TechnoRapper_AI_Wire_Feeds {
         $run_limit = (int) $s['max_items_per_run'];
         $started_at = microtime(true);
         $time_budget_seconds = $foreground ? 90 : 25;
+        $this->note_background_progress(12, 'Fetching feeds');
         $this->ingest_new_feed_items($s, $summary);
+        $this->note_background_progress(20, 'Feeds checked');
         $touched = array();
         while ((microtime(true) - $started_at) < $time_budget_seconds) {
             if (!$this->refresh_processing_lock($lock_token)) {
@@ -142,6 +144,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             $touched[(int) $waiting_id] = true;
             $processed_this_run++;
             $summary['processed'] = $processed_this_run;
+            $this->note_background_progress(20 + (int) (70 * $processed_this_run / max(1, $run_limit)), 'Processing item ' . $processed_this_run);
             $row = $this->get_item((int) $waiting_id);
             if (($row['status'] ?? '') === 'draft') {
                 $summary['drafts']++;

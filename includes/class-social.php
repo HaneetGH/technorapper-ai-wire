@@ -1039,15 +1039,20 @@ trait TechnoRapper_AI_Wire_Social {
             wp_die(esc_html__('You are not allowed to run social publishing.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_run_social_queue');
+        $this->enqueue_background_job('social');
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social'));
+        exit;
+    }
+
+    private function drain_social_queue($max = 15) {
         if (function_exists('set_time_limit')) {
             set_time_limit(180);
         }
-        if (function_exists('ignore_user_abort')) {
-            ignore_user_abort(true);
-        }
         $this->flush_social_batch(true, true);
         $processed = 0;
-        for ($i = 0; $i < 15; $i++) {
+        $max = max(1, (int) $max);
+        for ($i = 0; $i < $max; $i++) {
+            $this->note_background_progress(10 + (int) (80 * (($i + 1) / $max)), 'Publishing social item ' . ($i + 1));
             $before = $this->social_queued_count();
             if ($before < 1) {
                 break;
@@ -1063,8 +1068,7 @@ trait TechnoRapper_AI_Wire_Social {
             }
         }
         $this->kick_social_queue(5);
-        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&social_ran=' . (int) $processed));
-        exit;
+        return $processed;
     }
 
     private function publish_social_item($row, $credentials, $settings) {
@@ -4058,9 +4062,10 @@ trait TechnoRapper_AI_Wire_Social {
         if (empty($_POST['confirmed_not_published'])) {
             wp_die(esc_html__('Confirm that this item is not already live on the platform before retrying.', 'technorapper-ai-wire'));
         }
-        if (!$this->requeue_social_item($id, !empty($_POST['regenerate_image']))) {
-            wp_die(esc_html__('Could not delete the live post and queue a replacement. The original post was left up so you do not get a duplicate. Check the Social distribution error, then try again.', 'technorapper-ai-wire'));
-        }
+        $this->enqueue_background_job('social_retry', array(
+            'item_id' => $id,
+            'regenerate' => !empty($_POST['regenerate_image']),
+        ));
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social'));
         exit;
     }
@@ -4342,7 +4347,7 @@ trait TechnoRapper_AI_Wire_Social {
                 <input type="hidden" name="action" value="tr_ai_wire_run_social_queue">
                 <?php wp_nonce_field('tr_ai_wire_run_social_queue'); ?>
                 <?php submit_button('Process queued social posts now', 'secondary', 'submit', false); ?>
-                <p class="description" style="display:inline;margin-left:8px;">Posts waiting rows now. Saved graphics are reused. Use this after refreshing an X token, after raising the daily limit, or to ship a leftover batch.</p>
+                <p class="description" style="display:inline;margin-left:8px;">Runs in the background and keeps this page open. A progress bar tracks it. Saved graphics are reused. Use this after refreshing an X token, after raising the daily limit, or to ship a leftover batch.</p>
             </form>
             <?php
             foreach (array('x' => 'X', 'instagram' => 'Instagram', 'youtube' => 'YouTube') as $platform => $label) {
