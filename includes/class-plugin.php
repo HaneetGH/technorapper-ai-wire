@@ -24,6 +24,7 @@ final class TechnoRapper_AI_Wire {
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
     const OPTION = 'tr_ai_wire_settings';
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
+    const FAL_API_KEY_OPTION = 'tr_ai_wire_fal_api_key';
     const SOCIAL_CREDENTIALS_OPTION = 'tr_ai_wire_social_credentials';
     const SOCIAL_CONTEXT_OPTION = 'tr_ai_wire_site_context';
     const SOCIAL_BATCH_OPTION = 'tr_ai_wire_social_batch';
@@ -38,6 +39,7 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_TTS_MODEL = 'gpt-4o-mini-tts';
     const SOCIAL_TTS_VOICE = 'cedar';
     const SOCIAL_TTS_ESTIMATED_USD = 0.004;
+    const SOCIAL_REEL_VIDEO_DEFAULT = 'veo-lite';
     const INSTAGRAM_GRAPH_VERSION = 'v22.0';
     const SOCIAL_CONTEXT_TTL = 1209600;
     const TABLE_SUFFIX = 'tr_ai_wire_items';

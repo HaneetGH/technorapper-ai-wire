@@ -151,6 +151,18 @@ trait TechnoRapper_AI_Wire_Social {
         if (isset($input['instagram_user_id'])) {
             $next['instagram_user_id'] = preg_replace('/[^0-9]/', '', (string) $input['instagram_user_id']);
         }
+        if (!empty($_POST['remove_fal_api_key'])) {
+            delete_option(self::FAL_API_KEY_OPTION);
+        } elseif (isset($input['fal_api_key']) && trim((string) $input['fal_api_key']) !== '') {
+            $fal_key = trim(sanitize_text_field((string) $input['fal_api_key']));
+            if (strlen($fal_key) <= 512 && !preg_match('/\s/', $fal_key)) {
+                if (get_option(self::FAL_API_KEY_OPTION, null) === null) {
+                    add_option(self::FAL_API_KEY_OPTION, $fal_key, '', false);
+                } else {
+                    update_option(self::FAL_API_KEY_OPTION, $fal_key, false);
+                }
+            }
+        }
         if (empty($next['instagram_user_access_token'])) {
             $next['instagram_user_id'] = '';
         }
@@ -589,7 +601,7 @@ trait TechnoRapper_AI_Wire_Social {
             $this->queue_site_context_job(false);
         }
         if ($this->social_wants_reel($settings) && function_exists('set_time_limit')) {
-            set_time_limit(180);
+            set_time_limit(300);
         }
         $credentials = $this->social_credentials();
         $limit = min(20, max(1, (int) ($settings['social_daily_limit'] ?? 10)));
@@ -648,6 +660,15 @@ trait TechnoRapper_AI_Wire_Social {
                 if ($result->get_error_code() === 'tr_ai_wire_social_image_busy') {
                     $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
                     wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
+                    break;
+                }
+                if ($result->get_error_code() === 'tr_ai_wire_reel_video_wait') {
+                    $wpdb->update($table, array(
+                        'status' => 'queued',
+                        'error_text' => $result->get_error_message(),
+                        'updated_at' => current_time('mysql', true),
+                    ), array('id' => (int) $row['id']));
+                    wp_schedule_single_event(time() + 45, self::SOCIAL_CRON_HOOK);
                     break;
                 }
                 if ($result->get_error_code() === 'tr_ai_wire_ig_quota_full') {
@@ -1861,6 +1882,8 @@ trait TechnoRapper_AI_Wire_Social {
         delete_post_meta($post_id, '_tr_ai_wire_social_image_id');
         delete_post_meta($post_id, '_tr_ai_wire_social_slide_ids');
         delete_post_meta($post_id, '_tr_ai_wire_social_broll_id');
+        delete_post_meta($post_id, '_tr_ai_wire_social_motion_id');
+        delete_post_meta($post_id, '_tr_ai_wire_fal_request');
         delete_post_meta($post_id, '_tr_ai_wire_social_reel_id');
         $revision = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true);
         update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision + 1);
@@ -3186,7 +3209,7 @@ trait TechnoRapper_AI_Wire_Social {
             echo 'The article cap is full, but ' . esc_html(implode(' and ', $parts)) . ' can still run. Retry a failed row or Process now — you do not need to raise the daily limit.';
             ?></p></div>
             <?php endif; ?>
-            <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated.</p>
+            <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated. Reel video budget: $<?php echo esc_html(number_format_i18n((float) get_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'), 0), 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_video_budget_usd'] ?? 0), 2)); ?> estimated.</p>
             <?php
             $wanted = $this->social_slide_count($settings);
             $mix = $this->social_mix_today();

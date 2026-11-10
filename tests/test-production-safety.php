@@ -25,8 +25,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
         delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
         delete_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'));
+        delete_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'));
+        delete_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION);
         delete_option('tr_ai_wire_social_worker_lock');
         remove_all_filters('tr_ai_wire_ffmpeg_path');
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK);
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
         parent::tear_down();
@@ -2548,6 +2551,20 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $this->assertSame('reel', $reel['social_post_format']);
         $this->assertSame(1, $this->invoke_private('social_slide_count', array($reel)));
+        $this->assertSame(10.0, (float) $reel['social_video_budget_usd']);
+        $this->assertSame('veo-lite', $reel['social_reel_video_model']);
+        $this->assertSame(8, (int) $reel['social_reel_clip_seconds']);
+        $upgraded = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'reel',
+            'social_video_budget_usd' => 40,
+            'social_reel_video_model' => 'veo-fast',
+            'social_reel_clip_seconds' => 6,
+        ));
+        $this->assertSame(40.0, (float) $upgraded['social_video_budget_usd']);
+        $this->assertSame('veo-fast', $upgraded['social_reel_video_model']);
+        $this->assertSame(6, (int) $upgraded['social_reel_clip_seconds']);
+        $this->assertSame(0.24, $this->invoke_private('social_reel_video_estimate_usd', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertLessThan(10.0, $this->invoke_private('social_reel_video_estimate_usd', array(TechnoRapper_AI_Wire::defaults())) * 30);
         $rejected = $this->plugin->sanitize_settings(array(
             'social_post_format' => 'album',
             'social_slide_count' => 9,
@@ -3309,6 +3326,130 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('tr_ai_wire_reel_ffmpeg', $result->get_error_code());
         $this->assertStringContainsString('slideshow', strtolower($result->get_error_message()));
         remove_all_filters('tr_ai_wire_ffmpeg_path');
+    }
+
+    public function test_reel_without_fal_key_does_not_fall_back_to_slideshow() {
+        if ($this->invoke_private('social_ffmpeg_path') === '') {
+            $this->markTestSkipped('ffmpeg is required to reach the Fal key gate.');
+        }
+        delete_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'No Fal key',
+        ));
+        $broll = sys_get_temp_dir() . '/tr-broll-' . wp_generate_uuid4() . '.jpg';
+        file_put_contents($broll, $this->tiny_jpeg_bytes());
+        $result = $this->invoke_private('ensure_social_reel', array(
+            get_post($post_id),
+            array_merge(TechnoRapper_AI_Wire::defaults(), array('social_post_format' => 'reel')),
+            array('reel_script' => 'Your next phone chip has a server cousin and that is the whole story.'),
+            $broll,
+        ));
+        @unlink($broll);
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_fal_key', $result->get_error_code());
+        $this->assertStringContainsString('slideshow', strtolower($result->get_error_message()));
+    }
+
+    public function test_reel_without_video_budget_does_not_fall_back_to_slideshow() {
+        if ($this->invoke_private('social_ffmpeg_path') === '') {
+            $this->markTestSkipped('ffmpeg is required to reach the video budget gate.');
+        }
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'No video budget',
+        ));
+        $broll = sys_get_temp_dir() . '/tr-broll-' . wp_generate_uuid4() . '.jpg';
+        file_put_contents($broll, $this->tiny_jpeg_bytes());
+        $result = $this->invoke_private('ensure_social_reel', array(
+            get_post($post_id),
+            array_merge(TechnoRapper_AI_Wire::defaults(), array(
+                'social_post_format' => 'reel',
+                'social_video_budget_usd' => 0,
+            )),
+            array('reel_script' => 'Your next phone chip has a server cousin and that is the whole story.'),
+            $broll,
+        ));
+        @unlink($broll);
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_video_budget', $result->get_error_code());
+    }
+
+    public function test_reel_motion_submit_is_silent_vertical_lite() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, '/requests/') === false) {
+                $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
+                $captured['auth'] = (string) (($args['headers']['Authorization'] ?? ''));
+                return $this->mock_http_ok(array(
+                    'request_id' => 'fal-req-1',
+                    'status' => 'IN_QUEUE',
+                ));
+            }
+            if (strpos($url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                return $this->mock_http_ok(array('video' => array('url' => 'https://fal.media/files/motion.mp4')));
+            }
+            if (strpos($url, 'fal.media') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => str_repeat('m', 2048),
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Lite motion',
+        ));
+        $broll = sys_get_temp_dir() . '/tr-broll-' . wp_generate_uuid4() . '.jpg';
+        file_put_contents($broll, $this->tiny_jpeg_bytes() !== '' ? $this->tiny_jpeg_bytes() : 'jpeg');
+        $result = $this->invoke_private('generate_social_reel_motion', array(
+            get_post($post_id),
+            TechnoRapper_AI_Wire::defaults(),
+            array(
+                'hook' => 'Your next phone chip has a server cousin',
+                'visual_brief' => 'Night server hall with a phone in the foreground',
+            ),
+            $broll,
+        ));
+        @unlink($broll);
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame('9:16', $captured['submit']['aspect_ratio'] ?? '');
+        $this->assertSame('8s', $captured['submit']['duration'] ?? '');
+        $this->assertSame('720p', $captured['submit']['resolution'] ?? '');
+        $this->assertFalse($captured['submit']['generate_audio'] ?? true);
+        $this->assertSame('Key fal-test-key', $captured['auth']);
+        $this->assertStringContainsString('no text', (string) ($captured['submit']['prompt'] ?? ''));
+        $this->assertSame(0.24, (float) get_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'), 0));
+        $this->assertGreaterThan(0, $this->invoke_private('social_motion_id', array($post_id)));
+    }
+
+    public function test_reel_video_wait_stays_queued() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'IN_PROGRESS'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $result = $this->invoke_private('social_fal_await', array('fal-ai/veo3.1/lite/image-to-video', 'fal-req-wait'));
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_video_wait', $result->get_error_code());
     }
 
     public function test_reel_mux_is_hard_cuts_with_voiceover() {

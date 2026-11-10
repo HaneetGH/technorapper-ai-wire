@@ -9,7 +9,8 @@ if (!defined('ABSPATH')) {
  * A carousel packs several article cards. A collage grids those cards.
  * A Ken Burns pass over those JPEGs is still a slideshow. This renderer
  * does none of that: one article, a voiceover as the timeline, captions
- * that follow the spoken words, one B-roll photograph, hard cuts only.
+ * that follow the spoken words, Fal Veo motion from one B-roll still,
+ * then a last-frame hold and a brand sting.
  */
 trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_wants_reel($settings = null) {
@@ -65,6 +66,54 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return 0;
         }
         return $video_id;
+    }
+
+    private function social_motion_id($post_id) {
+        $post_id = (int) $post_id;
+        $video_id = (int) get_post_meta($post_id, '_tr_ai_wire_social_motion_id', true);
+        if ($video_id < 1) {
+            return 0;
+        }
+        $path = get_attached_file($video_id);
+        return ($path && file_exists($path)) ? $video_id : 0;
+    }
+
+    private function social_reel_video_models() {
+        return array(
+            'veo-lite' => array(
+                'endpoint' => 'fal-ai/veo3.1/lite/image-to-video',
+                'usd_per_second' => 0.03,
+            ),
+            'veo-fast' => array(
+                'endpoint' => 'fal-ai/veo3.1/fast/image-to-video',
+                'usd_per_second' => 0.10,
+            ),
+            'veo' => array(
+                'endpoint' => 'fal-ai/veo3.1/image-to-video',
+                'usd_per_second' => 0.20,
+            ),
+        );
+    }
+
+    private function social_reel_video_model($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        $model = sanitize_key((string) ($settings['social_reel_video_model'] ?? self::SOCIAL_REEL_VIDEO_DEFAULT));
+        $models = $this->social_reel_video_models();
+        return isset($models[$model]) ? $model : self::SOCIAL_REEL_VIDEO_DEFAULT;
+    }
+
+    private function social_reel_clip_seconds($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        $seconds = absint($settings['social_reel_clip_seconds'] ?? 8);
+        return in_array($seconds, array(4, 6, 8), true) ? $seconds : 8;
+    }
+
+    private function social_reel_video_estimate_usd($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        $models = $this->social_reel_video_models();
+        $model = $this->social_reel_video_model($settings);
+        $rate = (float) ($models[$model]['usd_per_second'] ?? 0.03);
+        return round($this->social_reel_clip_seconds($settings) * $rate, 4);
     }
 
     private function fallback_reel_script($copy, $post) {
@@ -321,9 +370,26 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!is_string($broll_path) || $broll_path === '' || !file_exists($broll_path)) {
             return new WP_Error('tr_ai_wire_reel_broll', 'A text-free 9:16 B-roll frame is required before rendering the Reel.');
         }
+        if ($this->fal_api_key() === '') {
+            return new WP_Error(
+                'tr_ai_wire_reel_fal_key',
+                'Instagram Reels need a Fal.ai API key to generate motion. Save it on Social settings. The plugin will not fall back to a slideshow of posters.'
+            );
+        }
+        $video_budget = (float) ($settings['social_video_budget_usd'] ?? 0);
+        if ($video_budget <= 0) {
+            return new WP_Error(
+                'tr_ai_wire_reel_video_budget',
+                'Reel video generation is paused because the monthly video budget is 0. Raise it (default $10) or switch Instagram back to a still format.'
+            );
+        }
         $script = (string) ($copy['reel_script'] ?? '');
         if ($script === '') {
             $script = $this->fallback_reel_script($copy, $post);
+        }
+        $motion = $this->generate_social_reel_motion($post, $settings, $copy, $broll_path);
+        if (is_wp_error($motion)) {
+            return $motion;
         }
         $audio = $this->generate_social_tts($script, $settings);
         if (is_wp_error($audio)) {
@@ -345,25 +411,40 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $duration = $this->social_audio_duration($voice_path, $script);
         $timeline = $this->build_social_reel_timeline($copy, $duration);
-        $frames = array();
+        $overlays = array();
+        $end_path = '';
         foreach ($timeline as $index => $clip) {
-            $jpeg = $this->render_social_reel_frame($clip['kind'], $copy, $photo, $clip['caption']);
-            if (is_wp_error($jpeg)) {
-                $this->social_reel_cleanup($tmp);
-                return $jpeg;
+            if (($clip['kind'] ?? '') === 'end') {
+                $jpeg = $this->render_social_reel_frame('end', $copy, $photo, $clip['caption']);
+                if (is_wp_error($jpeg)) {
+                    $this->social_reel_cleanup($tmp);
+                    return $jpeg;
+                }
+                $end_path = $tmp . '/end.jpg';
+                if (file_put_contents($end_path, $jpeg) === false) {
+                    $this->social_reel_cleanup($tmp);
+                    return new WP_Error('tr_ai_wire_reel_temp', 'Could not write the Reel end card.');
+                }
+                continue;
             }
-            $frame_path = $tmp . '/frame-' . (string) $index . '.jpg';
-            if (file_put_contents($frame_path, $jpeg) === false) {
-                $this->social_reel_cleanup($tmp);
-                return new WP_Error('tr_ai_wire_reel_temp', 'Could not write a Reel frame.');
+            $overlay = $this->render_social_reel_caption_overlay($copy, $clip['caption']);
+            if (is_wp_error($overlay) || !is_string($overlay) || $overlay === '') {
+                continue;
             }
-            $frames[] = array(
-                'path' => $frame_path,
+            $overlay_path = $tmp . '/caption-' . (string) $index . '.png';
+            if (file_put_contents($overlay_path, $overlay) === false) {
+                continue;
+            }
+            $overlays[] = array(
+                'path' => $overlay_path,
                 'duration' => (float) $clip['duration'],
-                'kind' => (string) $clip['kind'],
             );
         }
-        $muxed = $this->compose_social_reel_video($frames, $voice_path, $out_path);
+        if ($end_path === '') {
+            $this->social_reel_cleanup($tmp);
+            return new WP_Error('tr_ai_wire_reel_frames', 'A Reel must end on a brand sting.');
+        }
+        $muxed = $this->compose_social_reel_motion($motion['path'], $overlays, $end_path, $voice_path, $out_path, $duration);
         if (is_wp_error($muxed)) {
             $this->social_reel_cleanup($tmp);
             return $muxed;
@@ -384,6 +465,317 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return new WP_Error('tr_ai_wire_ig_video_url', 'The Instagram Reel must have a public HTTP(S) Media Library URL.');
         }
         return array('id' => (int) $stored, 'url' => $url, 'path' => $path);
+    }
+
+    private function generate_social_reel_motion($post, $settings, $copy, $broll_path) {
+        $existing = $this->social_motion_id($post->ID);
+        if ($existing > 0 && (string) get_post_meta($post->ID, '_tr_ai_wire_social_regenerate_image', true) !== '1') {
+            $path = get_attached_file($existing);
+            if ($path && file_exists($path)) {
+                return array('id' => $existing, 'path' => $path);
+            }
+        }
+        $pending = json_decode((string) get_post_meta($post->ID, '_tr_ai_wire_fal_request', true), true);
+        if (is_array($pending) && !empty($pending['request_id']) && !empty($pending['endpoint'])) {
+            $polled = $this->social_fal_await($pending['endpoint'], (string) $pending['request_id']);
+            if (is_wp_error($polled)) {
+                if ($polled->get_error_code() !== 'tr_ai_wire_reel_video_wait') {
+                    delete_post_meta($post->ID, '_tr_ai_wire_fal_request');
+                }
+                return $polled;
+            }
+            return $this->store_social_motion($post, $polled, $copy);
+        }
+        $estimate = $this->social_reel_video_estimate_usd($settings);
+        $month_key = 'tr_ai_wire_social_video_usage_' . gmdate('Ym');
+        $usage = (float) get_option($month_key, 0);
+        $budget = (float) ($settings['social_video_budget_usd'] ?? 0);
+        if ($budget <= 0 || ($usage + $estimate) > $budget) {
+            return new WP_Error('tr_ai_wire_reel_video_budget', 'Reel video generation is paused because its monthly video budget is exhausted.');
+        }
+        $model = $this->social_reel_video_model($settings);
+        $models = $this->social_reel_video_models();
+        $endpoint = (string) $models[$model]['endpoint'];
+        $seconds = $this->social_reel_clip_seconds($settings);
+        $image_url = $this->social_reel_motion_image_url($post, $broll_path);
+        if (is_wp_error($image_url)) {
+            return $image_url;
+        }
+        $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
+        $prompt = $brief !== '' ? $brief : 'Photoreal cinematic news B-roll of the story, slow camera move.';
+        $prompt .= ' Slow cinematic push-in, natural light, no text, no logos, no watermarks, no subtitles, no captions.';
+        $submitted = $this->social_fal_submit($endpoint, array(
+            'prompt' => $this->clip_social_text($prompt, 1200),
+            'image_url' => $image_url,
+            'aspect_ratio' => '9:16',
+            'duration' => (string) $seconds . 's',
+            'resolution' => '720p',
+            'generate_audio' => false,
+            'auto_fix' => true,
+        ));
+        if (is_wp_error($submitted)) {
+            return $submitted;
+        }
+        update_option($month_key, round($usage + $estimate, 6), false);
+        update_post_meta($post->ID, '_tr_ai_wire_fal_request', wp_json_encode(array(
+            'request_id' => (string) $submitted['request_id'],
+            'endpoint' => $endpoint,
+            'estimated_usd' => $estimate,
+        )));
+        $polled = $this->social_fal_await($endpoint, (string) $submitted['request_id']);
+        if (is_wp_error($polled)) {
+            if ($polled->get_error_code() !== 'tr_ai_wire_reel_video_wait') {
+                delete_post_meta($post->ID, '_tr_ai_wire_fal_request');
+            }
+            return $polled;
+        }
+        return $this->store_social_motion($post, $polled, $copy);
+    }
+
+    private function social_reel_motion_image_url($post, $broll_path) {
+        $broll_id = $this->social_broll_id($post->ID);
+        $url = $broll_id > 0 ? wp_get_attachment_url($broll_id) : '';
+        if (is_string($url) && $url !== '' && wp_http_validate_url($url) && strpos($url, 'https://') === 0) {
+            return $url;
+        }
+        $bytes = file_get_contents($broll_path);
+        if (!is_string($bytes) || $bytes === '') {
+            return new WP_Error('tr_ai_wire_reel_broll', 'The Reel B-roll file could not be read for motion generation.');
+        }
+        return 'data:image/jpeg;base64,' . base64_encode($bytes);
+    }
+
+    private function social_fal_submit($endpoint, $payload) {
+        $key = $this->fal_api_key();
+        if ($key === '') {
+            return new WP_Error('tr_ai_wire_reel_fal_key', 'Instagram Reels need a Fal.ai API key to generate motion.');
+        }
+        $response = wp_remote_post('https://queue.fal.run/' . ltrim((string) $endpoint, '/'), array(
+            'timeout' => 45,
+            'headers' => array(
+                'Authorization' => 'Key ' . $key,
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ),
+            'body' => wp_json_encode($payload),
+        ));
+        if (is_wp_error($response)) {
+            return new WP_Error('tr_ai_wire_reel_video', $response->get_error_message());
+        }
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $data = json_decode((string) wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || !is_array($data) || empty($data['request_id'])) {
+            $message = sanitize_text_field($data['detail'] ?? ($data['error'] ?? ('Fal queue returned HTTP ' . $status . '.')));
+            if (is_array($data['detail'] ?? null)) {
+                $message = sanitize_text_field(wp_json_encode($data['detail']));
+            }
+            return new WP_Error('tr_ai_wire_reel_video', $message !== '' ? $message : 'Fal did not accept the video job.');
+        }
+        return $data;
+    }
+
+    private function social_fal_await($endpoint, $request_id) {
+        $key = $this->fal_api_key();
+        if ($key === '') {
+            return new WP_Error('tr_ai_wire_reel_fal_key', 'Instagram Reels need a Fal.ai API key to generate motion.');
+        }
+        $request_id = rawurlencode((string) $request_id);
+        $base = 'https://queue.fal.run/' . ltrim((string) $endpoint, '/') . '/requests/' . $request_id;
+        $headers = array(
+            'Authorization' => 'Key ' . $key,
+            'Accept' => 'application/json',
+        );
+        $deadline = time() + max(0, (int) apply_filters('tr_ai_wire_fal_poll_seconds', 75));
+        do {
+            $status_response = wp_remote_get($base . '/status', array('timeout' => 30, 'headers' => $headers));
+            if (is_wp_error($status_response)) {
+                return new WP_Error('tr_ai_wire_reel_video', $status_response->get_error_message());
+            }
+            $payload = json_decode((string) wp_remote_retrieve_body($status_response), true);
+            $state = strtoupper((string) ($payload['status'] ?? ''));
+            if ($state === 'COMPLETED') {
+                $result_response = wp_remote_get($base, array('timeout' => 45, 'headers' => $headers));
+                if (is_wp_error($result_response)) {
+                    return new WP_Error('tr_ai_wire_reel_video', $result_response->get_error_message());
+                }
+                $result = json_decode((string) wp_remote_retrieve_body($result_response), true);
+                $video_url = (string) ($result['video']['url'] ?? '');
+                if ($video_url === '' || !wp_http_validate_url($video_url)) {
+                    return new WP_Error('tr_ai_wire_reel_video', 'Fal completed without a video URL.');
+                }
+                $download = wp_remote_get($video_url, array('timeout' => 60));
+                if (is_wp_error($download)) {
+                    return new WP_Error('tr_ai_wire_reel_video', $download->get_error_message());
+                }
+                $bytes = wp_remote_retrieve_body($download);
+                if (!is_string($bytes) || strlen($bytes) < 1024) {
+                    return new WP_Error('tr_ai_wire_reel_video', 'Fal returned an empty video file.');
+                }
+                return $bytes;
+            }
+            if (in_array($state, array('FAILED', 'CANCELLED', 'ERROR'), true)) {
+                $message = sanitize_text_field($payload['error'] ?? ('Fal video job ' . strtolower($state) . '.'));
+                return new WP_Error('tr_ai_wire_reel_video', $message);
+            }
+            if (time() >= $deadline) {
+                return new WP_Error('tr_ai_wire_reel_video_wait', 'Fal is still generating the Reel motion. The job will retry shortly.');
+            }
+            sleep(4);
+        } while (true);
+    }
+
+    private function store_social_motion($post, $bytes, $copy) {
+        $name = 'technorapper-social-motion-' . (int) $post->ID . '.mp4';
+        $upload = wp_upload_bits($name, null, $bytes);
+        if (!empty($upload['error'])) {
+            return new WP_Error('tr_ai_wire_social_video_upload', sanitize_text_field($upload['error']));
+        }
+        $attachment_id = wp_insert_attachment(array(
+            'post_mime_type' => 'video/mp4',
+            'post_title' => sanitize_text_field((string) ($copy['hook'] ?? $post->post_title) . ' — reel motion'),
+            'post_status' => 'inherit',
+            'post_parent' => 0,
+        ), $upload['file'], 0, true);
+        if (is_wp_error($attachment_id)) {
+            return $attachment_id;
+        }
+        update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+        update_post_meta($post->ID, '_tr_ai_wire_social_motion_id', (int) $attachment_id);
+        delete_post_meta($post->ID, '_tr_ai_wire_fal_request');
+        $path = get_attached_file((int) $attachment_id);
+        if (!$path || !file_exists($path)) {
+            return new WP_Error('tr_ai_wire_reel_video', 'The generated motion clip could not be stored.');
+        }
+        return array('id' => (int) $attachment_id, 'path' => $path);
+    }
+
+    private function render_social_reel_caption_overlay($copy, $caption) {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagepng')) {
+            return new WP_Error('tr_ai_wire_social_gd', 'PHP GD is required to render Reel captions.');
+        }
+        $width = 1080;
+        $height = 1920;
+        $copy = is_array($copy) ? $copy : array();
+        $caption = trim(wp_strip_all_tags((string) $caption));
+        $font = $this->social_font_path();
+        $canvas = imagecreatetruecolor($width, $height);
+        imagealphablending($canvas, false);
+        imagesavealpha($canvas, true);
+        $transparent = imagecolorallocatealpha($canvas, 0, 0, 0, 127);
+        imagefilledrectangle($canvas, 0, 0, $width, $height, $transparent);
+        imagealphablending($canvas, true);
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        $cyan = imagecolorallocate($canvas, 43, 213, 255);
+        $stroke = imagecolorallocate($canvas, 0, 0, 0);
+        $this->draw_social_brand_mark($canvas, $font, $white, $cyan, 48, 96);
+        if ($caption !== '') {
+            $size = $font ? 44 : 5;
+            $lines = $this->wrap_social_lines($caption, 960, $size, $font, 28, 2);
+            $y = $height - 160 - ((max(0, count($lines) - 1)) * (int) round($size * 1.16));
+            foreach ($lines as $line) {
+                $this->draw_social_centered_text($canvas, $line, $size, $y, $white, $font, $width, $stroke, 3);
+                $y += (int) round($size * 1.16);
+            }
+        }
+        ob_start();
+        imagepng($canvas);
+        $result = ob_get_clean();
+        imagedestroy($canvas);
+        return $result ? $result : new WP_Error('tr_ai_wire_social_image_render', 'Could not render a Reel caption overlay.');
+    }
+
+    private function compose_social_reel_motion($motion_path, $overlays, $end_path, $audio_path, $out_path, $audio_duration) {
+        $ffmpeg = $this->social_ffmpeg_path();
+        if ($ffmpeg === '') {
+            return new WP_Error(
+                'tr_ai_wire_reel_ffmpeg',
+                'Instagram Reels need ffmpeg on this WordPress host. The plugin will not fall back to a slideshow of stills.'
+            );
+        }
+        if (!is_string($motion_path) || $motion_path === '' || !file_exists($motion_path)) {
+            return new WP_Error('tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
+        }
+        if (!is_string($end_path) || $end_path === '' || !file_exists($end_path)) {
+            return new WP_Error('tr_ai_wire_reel_frames', 'A Reel must end on a brand sting.');
+        }
+        if (!is_string($audio_path) || $audio_path === '' || !file_exists($audio_path)) {
+            return new WP_Error('tr_ai_wire_reel_tts', 'A spoken voiceover is required. Silent poster clips are a slideshow.');
+        }
+        $motion_duration = $this->social_video_duration($motion_path);
+        $audio_duration = max(8.0, (float) $audio_duration);
+        $hold = max(0.0, round($audio_duration - $motion_duration, 2));
+        $end = 2.0;
+        $args = array('-y', '-i', $motion_path, '-i', $audio_path, '-loop', '1', '-t', number_format($end, 2, '.', ''), '-i', $end_path);
+        $overlay_inputs = array();
+        foreach (array_values((array) $overlays) as $overlay) {
+            if (empty($overlay['path']) || !file_exists($overlay['path'])) {
+                continue;
+            }
+            $args[] = '-i';
+            $args[] = (string) $overlay['path'];
+            $overlay_inputs[] = $overlay;
+        }
+        $filters = array();
+        $base = '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p';
+        if ($hold > 0.05) {
+            $base .= ',tpad=stop_mode=clone:stop_duration=' . number_format($hold, 2, '.', '');
+        }
+        $filters[] = $base . '[base]';
+        $last = 'base';
+        $clock = 0.0;
+        foreach ($overlay_inputs as $index => $overlay) {
+            $input = $index + 3;
+            $start = $clock;
+            $clock += max(0.4, (float) ($overlay['duration'] ?? 2));
+            $label = 's' . (string) $index;
+            $filters[] = '[' . $last . '][' . (string) $input . ':v]overlay=0:0:enable=\'between(t,' . number_format($start, 2, '.', '') . ',' . number_format($clock, 2, '.', '') . ')\'[' . $label . ']';
+            $last = $label;
+        }
+        $filters[] = '[2:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p[end]';
+        $filters[] = '[' . $last . '][end]concat=n=2:v=1:a=0[v]';
+        $args[] = '-filter_complex';
+        $args[] = implode(';', $filters);
+        $args = array_merge($args, array(
+            '-map', '[v]',
+            '-map', '1:a',
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-profile:v', 'high',
+            '-level', '4.0',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-shortest',
+            '-movflags', '+faststart',
+            $out_path,
+        ));
+        $result = $this->social_run_binary($ffmpeg, $args, 150);
+        if (is_wp_error($result)) {
+            return $result;
+        }
+        if (!file_exists($out_path) || filesize($out_path) < 1024) {
+            return new WP_Error('tr_ai_wire_reel_mux', 'ffmpeg did not produce a usable Reel video.');
+        }
+        return $out_path;
+    }
+
+    private function social_video_duration($path) {
+        $probe = $this->social_ffprobe_path();
+        if ($probe !== '') {
+            $result = $this->social_run_binary($probe, array(
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                $path,
+            ));
+            if (!is_wp_error($result)) {
+                $seconds = (float) trim((string) $result);
+                if ($seconds >= 1 && $seconds <= 60) {
+                    return $seconds;
+                }
+            }
+        }
+        return (float) $this->social_reel_clip_seconds();
     }
 
     private function generate_social_tts($script, $settings) {
@@ -534,10 +926,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return (int) $attachment_id;
     }
 
-    private function social_run_binary($binary, $args) {
+    private function social_run_binary($binary, $args, $timeout = 90) {
         if (!function_exists('proc_open')) {
             return new WP_Error('tr_ai_wire_reel_ffmpeg', 'proc_open is disabled, so this host cannot render Reels.');
         }
+        $timeout = max(15, min(240, (int) $timeout));
         $cmd = array_merge(array((string) $binary), array_values((array) $args));
         $descriptors = array(
             0 => array('pipe', 'r'),
@@ -553,7 +946,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         stream_set_blocking($pipes[2], false);
         $stdout = '';
         $stderr = '';
-        $deadline = time() + 90;
+        $deadline = time() + $timeout;
         do {
             $status = proc_get_status($process);
             $stdout .= (string) stream_get_contents($pipes[1]);
