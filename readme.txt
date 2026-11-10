@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.51
+Stable tag: 0.2.52
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -51,6 +51,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.52 =
+* Social copy is written like a newsroom growth desk: specific stakes, saveable bullets, no fake urgency. Image prompts refuse nudity, sexualized bodies, children, gore, and other policy violations before the image API is called. Unsafe captions are held for review.
+
 = 0.2.51 =
 * Social settings lists every news graphic format the plugin can produce, lets you select several at once, and accepts a written idea plus optional reference image. Those are format types, not example headlines from other accounts.
 
@@ -73,6 +76,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.52 =
+Social posts now pass a growth-desk and safety check. Violating image briefs are dropped at prompt level; unsafe captions stay in the social queue for review.
 
 = 0.2.51 =
 Choose which news graphic formats to rotate, and upload your own idea. Example posts you have seen elsewhere are not the selectable options.

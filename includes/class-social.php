@@ -239,6 +239,9 @@ trait TechnoRapper_AI_Wire_Social {
         if ($title === '' || $description === '') {
             return null;
         }
+        if ($this->social_image_brief_is_unsafe($title . ' ' . $description)) {
+            return null;
+        }
         $id = sanitize_key((string) ($item['id'] ?? ''));
         if (!preg_match('/^idea_[a-z0-9]+$/', $id)) {
             $id = 'idea_' . substr(md5($title . '|' . $description), 0, 12);
@@ -295,6 +298,9 @@ trait TechnoRapper_AI_Wire_Social {
         $description = $this->clip_social_block(wp_unslash($_POST['social_idea_description'] ?? ''), 800);
         $has_file = !empty($_FILES['social_idea_image']['name']) && !empty($_FILES['social_idea_image']['tmp_name']);
         if ($title === '' || $description === '') {
+            return null;
+        }
+        if ($this->social_image_brief_is_unsafe($title . ' ' . $description)) {
             return null;
         }
         $image_id = 0;
@@ -992,6 +998,11 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_social_post', 'The source article is no longer published.');
         }
         $copy = $this->social_copy($post, $settings);
+        $blocked = $this->social_copy_policy_error($copy);
+        if (is_wp_error($blocked)) {
+            delete_post_meta($post->ID, '_tr_ai_wire_social_copy');
+            return $blocked;
+        }
         $force_new_image = (string) get_post_meta($post->ID, '_tr_ai_wire_social_regenerate_image', true) === '1';
         $image_id = $force_new_image ? 0 : $this->social_existing_image_id($post->ID, $row);
         if ($image_id < 1) {
@@ -1424,21 +1435,34 @@ trait TechnoRapper_AI_Wire_Social {
         $snapshot = $this->social_article_snapshot($post);
         $profile = $this->site_context_profile();
         $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this site';
-        $system = 'You are the social desk for ' . $brand . '. Repackage an already-published article for X and Instagram. Do not write a new article. Use only supplied article fields plus the site context. Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. Return JSON only.';
-        $user = 'Build one social package that matches this publisher\'s priorities. Principles to hit when the article supports them: hook that stops the scroll; curiosity; a feeling (stakes for a reader\'s phone/job/money, not melodrama); relatability; pattern interrupt; before/after contrast; a tiny story; useful value; a clear CTA to read the article; branding; shareability; saveability; cultural relevance when the source has it. '
-            . 'on_image_headline: Instagram poster headline, 4–9 words, punchy, can include a number only if it is in the article. Written to sit in huge condensed type on a photo, so keep it short enough for 2–3 lines. on_image_subhead: one supporting line, max 10 words. '
-            . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits the article. Use RUMORS only if the article itself is a rumor or leak. '
-            . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks** so they can be highlighted on the graphic. Never invent facts. '
-            . 'visual_brief: describe only the photograph (tight device close-up, crowded office from behind, factory, night city, server hall, product still life). Prefer dusk, night, or hard rim light. Do not include the headline wording. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
-            . 'x_text: hook plus one curiosity or value line; do not include the URL. instagram_caption: hook, 2–4 short lines of value/story, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags for this site, no spam. instagram_alt: factual description of the graphic. ';
+        $system = $this->social_copy_system_prompt($brand);
+        $user = $this->social_copy_user_prompt($brand, $profile, $snapshot);
+        $copy_settings = $s;
+        $copy_settings['max_output_tokens'] = min(1200, max(400, (int) ($s['max_output_tokens'] ?? 1200)));
+        return $this->ai_json($s['writer_model'] ?? 'gpt-6-luna', $system, $user, $copy_settings, false);
+    }
+
+    private function social_copy_system_prompt($brand) {
+        return 'You are the social editor and growth lead for ' . $brand . ', with a newsroom desk and ten years of Instagram and X distribution. '
+            . 'Repackage an already-published article. Do not write a new article. Use only supplied article fields plus the site context. '
+            . 'Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. '
+            . 'You only ship posts a busy person would stop for. Safe for a news brand: no nudity, no sexual framing, no gore, no hate, no slurs, no profanity. Return JSON only.';
+    }
+
+    private function social_copy_user_prompt($brand, $profile, $snapshot) {
+        $user = 'Write the package a growth editor would actually post. What gets views on tech/news social: a specific name, number, or change in the first line; a reader stake (phone, job, money, privacy, or status — not “the industry”); curiosity the caption pays off; saveable bullets or one grounded tension. Short. No throat-clearing. '
+            . 'Never use: you won’t believe, wait for it, must see, gone wrong, shocking, this will blow your mind, company announces (with no consequence), or sexual/nude/violent bait. '
+            . 'on_image_headline: 4–9 words, punchy, a number only if it is in the article, short enough for 2–3 lines of huge type. on_image_subhead: one supporting line, max 10 words. '
+            . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
+            . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
+            . 'visual_brief: describe only a fully clothed news photograph (device close-up, office from behind, factory, night city, server hall, product still life). Prefer dusk, night, or hard rim light. All people fully clothed in ordinary work or street clothes, faces not identifiable. No nudity, no sexualized bodies, no lingerie, no children, no gore, no celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
+            . 'x_text: hook plus one curiosity or value line; do not include the URL. instagram_caption: hook, 2–4 short lines of value, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }
         $user .= "Article JSON:\n" . wp_json_encode($snapshot)
             . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array).";
-        $copy_settings = $s;
-        $copy_settings['max_output_tokens'] = min(1200, max(400, (int) ($s['max_output_tokens'] ?? 1200)));
-        return $this->ai_json($s['writer_model'] ?? 'gpt-6-luna', $system, $user, $copy_settings, false);
+        return $user;
     }
 
     private function sanitize_social_copy($raw, $post) {
@@ -1456,6 +1480,9 @@ trait TechnoRapper_AI_Wire_Social {
         $default_cta = !empty($profile['cta_style']) ? $profile['cta_style'] : ('Read the full story on ' . self::site_brand_name());
         $cta = $this->clip_social_text($raw['cta'] ?? $default_cta, 60);
         $visual = $this->clip_social_text($raw['visual_brief'] ?? ('Photoreal cinematic scene of: ' . $title), 360);
+        if ($this->social_image_brief_is_unsafe($visual)) {
+            $visual = '';
+        }
         $alt = $this->clip_social_text($raw['instagram_alt'] ?? $headline, 1000);
         $hashtags = array();
         foreach ((array) ($raw['hashtags'] ?? array()) as $tag) {
@@ -1560,6 +1587,80 @@ trait TechnoRapper_AI_Wire_Social {
         return $this->limit_social_chars($value, 110);
     }
 
+    private function social_copy_policy_error($copy) {
+        $copy = is_array($copy) ? $copy : array();
+        $parts = array(
+            $copy['hook'] ?? '',
+            $copy['on_image_headline'] ?? '',
+            $copy['on_image_subhead'] ?? '',
+            $copy['on_image_kicker'] ?? '',
+            $copy['cta'] ?? '',
+            $copy['x'] ?? '',
+            $copy['instagram'] ?? '',
+            $copy['instagram_alt'] ?? '',
+        );
+        foreach ((array) ($copy['on_image_bullets'] ?? array()) as $bullet) {
+            $parts[] = is_array($bullet) ? (string) ($bullet['text'] ?? '') : (string) $bullet;
+        }
+        $reason = $this->social_caption_policy_reason(implode("\n", $parts));
+        if ($reason !== '') {
+            return new WP_Error(
+                'tr_ai_wire_social_policy',
+                'Held: the social copy is not safe to publish (' . $reason . '). Edit the caption or regenerate copy.'
+            );
+        }
+        return null;
+    }
+
+    private function social_caption_policy_reason($text) {
+        $text = strtolower(wp_strip_all_tags((string) $text));
+        if ($text === '') {
+            return '';
+        }
+        if (preg_match('/\b(porn|porno|xxx|onlyfans|nsfw|hentai|rape|raping)\b/i', $text)) {
+            return 'sexual content';
+        }
+        if (preg_match('/\b(fuck|fucking|motherfucker|cunt)\b/i', $text)) {
+            return 'profanity';
+        }
+        if (preg_match('/\b(kill yourself|kys)\b/i', $text)) {
+            return 'self-harm';
+        }
+        return '';
+    }
+
+    private function social_image_brief_is_unsafe($text) {
+        $text = strtolower(wp_strip_all_tags((string) $text));
+        if ($text === '') {
+            return false;
+        }
+        if (preg_match('/\b(nude|nudity|naked|nsfw|porn|porno|sexual|sexy|seductive|erotic|lingerie|bikini|topless|cleavage|underwear|undressed|stripper)\b/i', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(gore|gory|bloody corpse|decapitat|dismember|behead)\b/i', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(child|children|kid|kids|toddler|infant|baby|minor|underage|teen(?:ager)?s?|schoolgirl|schoolboy)\b/i', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(suicide|self-harm|self harm)\b/i', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(attractive|hot|beautiful)\s+(woman|girl|man|boy|model)\b/i', $text)) {
+            return true;
+        }
+        return false;
+    }
+
+    private function social_image_safety_clause() {
+        return 'Safety (non-negotiable): news photography only, safe for Instagram and X. '
+            . 'All people fully clothed in ordinary work or street clothes; faces not identifiable. '
+            . 'No nudity, no sexual content, no lingerie, no suggestive poses, no exposed skin beyond face and hands. '
+            . 'No children and no one who appears under 18. '
+            . 'No gore, blood, weapons as the subject, self-harm, or graphic injury. '
+            . 'No hate symbols, no real identifiable people, no celebrity or politician likenesses, no drugs. PG-rated.';
+    }
+
     private function clip_social_text($value, $max) {
         $value = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags((string) $value)));
         return $this->limit_social_chars($value, $max);
@@ -1621,6 +1722,10 @@ trait TechnoRapper_AI_Wire_Social {
         $key = $this->api_key();
         if (!$key) {
             return new WP_Error('tr_ai_wire_social_image_key', 'Add the OpenAI API key before generating social images.');
+        }
+        $blocked = $this->social_copy_policy_error($copy);
+        if (is_wp_error($blocked)) {
+            return $blocked;
         }
         $copy = is_array($copy) ? $copy : array();
         $copy['_news_format'] = $this->social_news_format_for_post($post, $settings, 'story');
@@ -1707,15 +1812,19 @@ trait TechnoRapper_AI_Wire_Social {
         $prompt = $this->social_image_prompt_for_format($format, $variant, $post, $revision, $profile, $brief);
         $idea = $this->social_custom_idea($format);
         if ($idea) {
-            $prompt .= ' Publisher-supplied format idea (layout inspiration only; do not copy trademarks, celebrity likenesses, or any specific headline from a reference): '
-                . $this->clip_social_text($idea['title'] . '. ' . $idea['description'], 420) . '.';
-            if (!empty($idea['image_id'])) {
-                $prompt .= ' Match the density and overlay rhythm of a publisher-supplied reference stored in their library. Invent a new scene.';
+            $idea_text = $this->clip_social_text($idea['title'] . '. ' . $idea['description'], 420);
+            if ($idea_text !== '' && !$this->social_image_brief_is_unsafe($idea_text)) {
+                $prompt .= ' Publisher-supplied format idea (layout inspiration only; do not copy trademarks, celebrity likenesses, or any specific headline from a reference): '
+                    . $idea_text . '.';
+                if (!empty($idea['image_id'])) {
+                    $prompt .= ' Match the density and overlay rhythm of a publisher-supplied reference stored in their library. Invent a new scene.';
+                }
             }
         }
         if ($revision > 0) {
             $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story. Still no text in the photograph.';
         }
+        $prompt .= ' ' . $this->social_image_safety_clause();
         return $prompt;
     }
 
@@ -1724,7 +1833,7 @@ trait TechnoRapper_AI_Wire_Social {
         $camera = $this->social_image_camera($post, $revision);
         $scene = $brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one clear technology-news photograph with a single subject. ';
         $no_text = 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. ';
-        $no_people_brands = 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. No real brand logos. ';
+        $no_people_brands = 'Do not imitate a specific existing photo. Anonymous fully clothed people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. No real brand logos. ';
         if ($format === 'device_mockup') {
             return 'Untitled photoreal product photograph, vertical 4:5, full-bleed studio or desk still life. '
                 . 'One generic phone, wearable, laptop, or similar device that fits the story. No readable UI, no logos, no model names. '
@@ -2174,9 +2283,9 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_image_camera($post, $revision = 0) {
         $cameras = array(
             'tight overhead still life of one device on a dark desk, hard side light',
-            'over-the-shoulder of a person at a glowing monitor, face not identifiable',
+            'over-the-shoulder of a fully clothed person at a glowing monitor, face not identifiable',
             'extreme close-up of a phone or laptop edge, bokeh lights behind',
-            'wide office floor from behind, one figure walking, dusk windows',
+            'wide office floor from behind, one fully clothed figure walking, dusk windows',
             'macro of a keyboard, cable, or chip with a single rim light',
         );
         $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
@@ -2190,12 +2299,18 @@ trait TechnoRapper_AI_Wire_Social {
         if ($style === '' || preg_match('/illustrat|cartoon|navy|magazine art|vector|flat design|infographic|collage|3d render/i', $style)) {
             return $default;
         }
+        if ($this->social_image_brief_is_unsafe($style)) {
+            return $default;
+        }
         return $style;
     }
 
     private function social_image_scene_brief($brief) {
         $brief = trim((string) $brief);
         if ($brief === '' || preg_match('/illustrat|cartoon|symbolic|navy|vector|infographic|magazine card/i', $brief)) {
+            return '';
+        }
+        if ($this->social_image_brief_is_unsafe($brief)) {
             return '';
         }
         return $brief;
@@ -3603,7 +3718,7 @@ trait TechnoRapper_AI_Wire_Social {
             'queued' => 'Waiting. If a graphic already exists, the worker posts that file and does not generate another.',
             'processing' => 'In progress: generating the graphic or talking to the platform.',
             'published' => 'Posted on this platform. If the graphic is wrong, regenerate and post again — the plugin deletes the live post first, then publishes a new graphic.',
-            'needs_review' => 'The platform response was unclear. Confirm this is not already live, then post the saved graphic or generate a new one.',
+            'needs_review' => 'Held for review. If this is a platform error, confirm it is not already live, then post the saved graphic or generate a new one. If this is a safety hold, edit the copy before retrying.',
         );
         $status = sanitize_key((string) $status);
         return isset($map[$status]) ? $map[$status] : '';
@@ -3616,6 +3731,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if (stripos($error, 'nonexisting field') !== false && stripos($error, 'content_publishing_limit') !== false) {
             return 'Instagram could not read the daily publishing quota for this token. The branded graphic was still generated. Confirm it is not already live, then retry — the next attempt will skip that quota check and try to publish.';
+        }
+        if (strpos($error, 'Held:') === 0) {
+            return $error;
         }
         if ($this->instagram_is_missing_object_error($error)) {
             $ig_id = '';

@@ -243,7 +243,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 </div>
             <?php endforeach; ?>
             <h3 style="margin:24px 0 8px;">Your ideas</h3>
-            <p class="description">Upload a written brief and an optional reference image. We treat it as another selectable format. Do not upload someone else’s finished post as a template to copy — describe the layout you want in your own words.</p>
+            <p class="description">Upload a written brief and an optional reference image. We treat it as another selectable format. Do not upload someone else’s finished post as a template to copy — describe the layout you want in your own words. Ideas that ask for nudity, sexualized bodies, children, gore, or other policy violations are rejected before they can be saved. Captions with profanity or sexual bait are held for review instead of posting.</p>
             <?php if ($ideas) : ?>
                 <table class="widefat striped" style="margin:12px 0;">
                     <thead><tr><th>Use</th><th>Idea</th><th>Reference</th><th>Remove</th></tr></thead>

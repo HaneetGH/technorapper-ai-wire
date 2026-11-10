@@ -4149,6 +4149,56 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('Symbolic chip glow', $prompt);
         $this->assertStringNotContainsString('regeneration attempt', $prompt);
         $this->assertStringNotContainsString('Subject:', $prompt);
+        $this->assertStringContainsString('No nudity', $prompt);
+        $this->assertStringContainsString('fully clothed', $prompt);
+        $this->assertStringContainsString('No children', $prompt);
+    }
+
+    public function test_unsafe_visual_brief_is_dropped_before_the_image_api() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Safety brief',
+        ));
+        $prompt = $this->invoke_private('social_image_prompt', array(get_post($post_id), array(
+            'visual_brief' => 'A nude model holding a phone on a bed',
+        )));
+        $this->assertStringNotContainsString('nude model', strtolower($prompt));
+        $this->assertStringNotContainsString('on a bed', $prompt);
+        $this->assertStringContainsString('No nudity', $prompt);
+        $this->assertTrue($this->invoke_private('social_image_brief_is_unsafe', array('sexy woman with a laptop')));
+        $this->assertFalse($this->invoke_private('social_image_brief_is_unsafe', array('Photoreal office workers carrying boxes at dusk')));
+    }
+
+    public function test_social_copy_policy_holds_explicit_captions_not_news_policy_words() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Policy copy',
+            'post_excerpt' => 'A platform update.',
+        ));
+        $unsafe = $this->invoke_private('sanitize_social_copy', array(array(
+            'hook' => 'This is porn bait for clicks',
+            'on_image_headline' => 'Porn bait',
+            'instagram_caption' => 'This is porn bait for clicks',
+        ), get_post($post_id)));
+        $blocked = $this->invoke_private('social_copy_policy_error', array($unsafe));
+        $this->assertWPError($blocked);
+        $this->assertSame('tr_ai_wire_social_policy', $blocked->get_error_code());
+        $news = $this->invoke_private('sanitize_social_copy', array(array(
+            'hook' => 'Instagram updates nudity rules',
+            'on_image_headline' => 'New nudity rules',
+            'instagram_caption' => 'Instagram updates nudity rules for apps',
+        ), get_post($post_id)));
+        $this->assertNull($this->invoke_private('social_copy_policy_error', array($news)));
+        $desk = $this->invoke_private('social_copy_system_prompt', array('TechnoRapper'));
+        $this->assertStringContainsString('growth lead', $desk);
+        $this->assertStringContainsString('no nudity', strtolower($desk));
+        $user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news')));
+        $this->assertStringContainsString('reader stake', $user);
+        $this->assertStringContainsString('fully clothed', $user);
+        $this->assertNull($this->invoke_private('sanitize_social_idea_item', array(array(
+            'title' => 'Nude recap cover',
+            'description' => 'A naked model as the hero of the graphic.',
+        ))));
     }
 
     public function test_social_image_prompt_adds_variation_after_regenerate() {
@@ -4164,6 +4214,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('regeneration attempt 2', $prompt);
         $this->assertStringContainsString('different camera angle', $prompt);
         $this->assertStringContainsString('Photoreal office workers', $prompt);
+        $this->assertStringContainsString('No nudity', $prompt);
     }
 
     public function test_social_retry_without_regenerate_reuses_cached_image() {
