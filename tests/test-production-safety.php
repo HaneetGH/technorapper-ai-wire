@@ -4325,6 +4325,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->markTestSkipped('GD and uploads are required for the social regenerate path.');
         }
         $this->onboard_social(array('instagram', 'x'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_news_formats' => array('editorial_poster'),
+        )), false);
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
             'post_title' => 'New graphic please',
@@ -4530,6 +4533,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->markTestSkipped('GD and uploads are required for the social repost path.');
         }
         $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_news_formats' => array('editorial_poster'),
+        )), false);
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
             'post_title' => 'Repost with new graphic',
