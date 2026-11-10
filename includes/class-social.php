@@ -4,7 +4,7 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Opt-in distribution of published AI Wire articles to X and Instagram.
+ * Opt-in distribution of published AI Wire articles to X, Instagram, and YouTube Shorts.
  * Each destination is tracked independently so a retry on one platform never
  * repeats a successful post on the other.
  */
@@ -27,6 +27,13 @@ trait TechnoRapper_AI_Wire_Social {
             'x_access_token_secret' => '',
             'instagram_user_access_token' => '',
             'instagram_user_id' => '',
+            'youtube_client_id' => '',
+            'youtube_client_secret' => '',
+            'youtube_refresh_token' => '',
+            'youtube_access_token' => '',
+            'youtube_access_expires' => '',
+            'youtube_channel_id' => '',
+            'youtube_channel_title' => '',
         );
     }
 
@@ -108,11 +115,24 @@ trait TechnoRapper_AI_Wire_Social {
         if (self::instagram_credentials_ready($credentials) && !empty($settings['social_instagram_enabled'])) {
             $platforms[] = 'instagram';
         }
+        if (self::youtube_credentials_ready($credentials) && !empty($settings['social_youtube_enabled'])) {
+            $platforms[] = 'youtube';
+        }
         return $platforms;
     }
 
     public static function social_credentials_connected($credentials = null, $settings = null) {
         return (bool) self::connected_social_platforms($credentials, $settings);
+    }
+
+    public static function social_platform_label($platform) {
+        $labels = array(
+            'x' => 'X',
+            'instagram' => 'Instagram',
+            'youtube' => 'YouTube',
+        );
+        $platform = sanitize_key((string) $platform);
+        return $labels[$platform] ?? $platform;
     }
 
     public function social_distribution_ready() {
@@ -134,6 +154,8 @@ trait TechnoRapper_AI_Wire_Social {
             'x_access_token',
             'x_access_token_secret',
             'instagram_user_access_token',
+            'youtube_client_id',
+            'youtube_client_secret',
         );
         foreach ($secret_fields as $field) {
             if (!empty($_POST['remove_' . $field])) {
@@ -166,6 +188,13 @@ trait TechnoRapper_AI_Wire_Social {
         if (empty($next['instagram_user_access_token'])) {
             $next['instagram_user_id'] = '';
         }
+        if (!empty($_POST['remove_youtube_oauth'])) {
+            $next['youtube_refresh_token'] = '';
+            $next['youtube_access_token'] = '';
+            $next['youtube_access_expires'] = '';
+            $next['youtube_channel_id'] = '';
+            $next['youtube_channel_title'] = '';
+        }
         if (get_option(self::SOCIAL_CREDENTIALS_OPTION, null) === null) {
             add_option(self::SOCIAL_CREDENTIALS_OPTION, $next, '', false);
         } else {
@@ -195,6 +224,13 @@ trait TechnoRapper_AI_Wire_Social {
             ) {
                 $backfill = $this->enqueue_missing_platform_posts('instagram');
                 $backfill_platform = 'instagram';
+            } elseif (
+                !empty($new_settings['social_youtube_enabled'])
+                && !self::youtube_credentials_ready($current)
+                && self::youtube_credentials_ready($next)
+            ) {
+                $backfill = $this->enqueue_missing_platform_posts('youtube');
+                $backfill_platform = 'youtube';
             }
             $this->kick_social_queue(5);
             $this->queue_site_context_job(!$was_connected);
@@ -834,8 +870,15 @@ trait TechnoRapper_AI_Wire_Social {
             if (count($pack) > 1) {
                 if ($row['platform'] === 'x') {
                     $this->finish_instagram_pack($pack, $this->publish_x_pack($pack, $credentials, $settings));
-                } else {
+                } elseif ($row['platform'] === 'instagram') {
                     $this->finish_instagram_pack($pack, $this->publish_instagram_pack($pack, $credentials, $settings));
+                } else {
+                    $result = $this->publish_social_item($row, $credentials, $settings);
+                    if (is_wp_error($result)) {
+                        $this->finish_social_item($row['id'], 'needs_review', '', '', $result->get_error_message());
+                    } else {
+                        $this->finish_social_item($row['id'], 'published', $result['id'], $result['url'], '');
+                    }
                 }
                 break;
             }
@@ -846,16 +889,23 @@ trait TechnoRapper_AI_Wire_Social {
                     wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
                     break;
                 }
-                if ($result->get_error_code() === 'tr_ai_wire_reel_video_wait') {
-                    $wpdb->update($table, array(
+                if ($result->get_error_code() === 'tr_ai_wire_reel_video_wait' || $result->get_error_code() === 'tr_ai_wire_yt_video_wait') {
+                    $wait_fields = array(
                         'status' => 'queued',
                         'error_text' => $result->get_error_message(),
                         'updated_at' => current_time('mysql', true),
-                    ), array('id' => (int) $row['id']));
+                    );
+                    if ($result->get_error_code() === 'tr_ai_wire_yt_video_wait') {
+                        $pending_id = $result->get_error_data();
+                        if (is_string($pending_id) && $pending_id !== '') {
+                            $wait_fields['remote_id'] = sanitize_text_field($pending_id);
+                        }
+                    }
+                    $wpdb->update($table, $wait_fields, array('id' => (int) $row['id']));
                     wp_schedule_single_event(time() + 45, self::SOCIAL_CRON_HOOK);
                     break;
                 }
-                if ($result->get_error_code() === 'tr_ai_wire_ig_quota_full') {
+                if ($result->get_error_code() === 'tr_ai_wire_ig_quota_full' || $result->get_error_code() === 'tr_ai_wire_yt_quota') {
                     $wpdb->update($table, array('status' => 'queued', 'error_text' => $result->get_error_message(), 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
                     wp_schedule_single_event(strtotime('+1 hour'), self::SOCIAL_CRON_HOOK);
                     break;
@@ -1019,6 +1069,16 @@ trait TechnoRapper_AI_Wire_Social {
                 (string) ($prepared['video_url'] ?? '')
             );
         }
+        if ($row['platform'] === 'youtube') {
+            return $this->publish_youtube_short(
+                $prepared['copy'],
+                (string) ($prepared['video_path'] ?? ''),
+                $credentials,
+                $settings,
+                $prepared['post'],
+                (string) ($row['remote_id'] ?? '')
+            );
+        }
         return new WP_Error('tr_ai_wire_social_platform', 'Unknown social platform.');
     }
 
@@ -1041,7 +1101,8 @@ trait TechnoRapper_AI_Wire_Social {
             delete_post_meta($post->ID, '_tr_ai_wire_social_copy');
             return $guard;
         }
-        $wants_reel = $this->social_wants_reel($settings, (int) $post->ID) && (($row['platform'] ?? '') === 'instagram');
+        $platform = (string) ($row['platform'] ?? '');
+        $wants_reel = $platform === 'youtube' || ($this->social_wants_reel($settings, (int) $post->ID) && $platform === 'instagram');
         $force_new_image = (string) get_post_meta($post->ID, '_tr_ai_wire_social_regenerate_image', true) === '1';
         if ($wants_reel && $this->social_broll_id($post->ID) < 1) {
             $force_new_image = true;
@@ -1578,7 +1639,7 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function social_copy_system_prompt($brand) {
-        return 'You are the social editor and growth lead for ' . $brand . ', with a newsroom desk and ten years of Instagram and X distribution. '
+        return 'You are the social editor and growth lead for ' . $brand . ', with a newsroom desk and ten years of Instagram, X, and YouTube Shorts distribution. '
             . 'Repackage an already-published article. Do not write a new article. Use only supplied article fields plus the site context. '
             . 'Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake countdown deals or fake scarcity. '
             . 'Clickbait is allowed and preferred when it is true: the job is stop the scroll and get the tap. '
@@ -1596,12 +1657,15 @@ trait TechnoRapper_AI_Wire_Social {
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook, 2–4 short lines that pay off the curiosity, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
             . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway without opening the article. Three beats: hook in the first sentence; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
             . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
-            . 'Every field must be safe to post on X and Instagram: no swear words, slurs, nudity, gore, or attacks on people. ';
+            . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. This is the YouTube ranking line, not the Instagram caption. '
+            . 'youtube_description: two short lines that finish the lesson; do not include the URL (we append it). No hashtag dump. '
+            . 'youtube_tags: 3–8 short YouTube tags (words, not #hashtags) grounded in the article. '
+            . 'Every field must be safe to post on X, Instagram, and YouTube: no swear words, slurs, nudity, gore, or attacks on people. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }
         $user .= "Article JSON:\n" . wp_json_encode($snapshot)
-            . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array), reel_script, reel_captions (array).";
+            . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array), reel_script, reel_captions (array), youtube_title, youtube_description, youtube_tags (array).";
         return $user;
     }
 
@@ -1669,6 +1733,9 @@ trait TechnoRapper_AI_Wire_Social {
         );
         $copy['reel_script'] = $this->sanitize_reel_script($raw['reel_script'] ?? '', $copy, $post);
         $copy['reel_captions'] = $this->sanitize_reel_captions($raw['reel_captions'] ?? array(), $copy['reel_script']);
+        $copy['youtube_title'] = $this->sanitize_youtube_title($raw['youtube_title'] ?? '', $copy, $post);
+        $copy['youtube_description'] = $this->sanitize_youtube_description($raw['youtube_description'] ?? '', $copy, $post);
+        $copy['youtube_tags'] = $this->sanitize_youtube_tags($raw['youtube_tags'] ?? array(), $copy);
         return $copy;
     }
 
@@ -1742,12 +1809,17 @@ trait TechnoRapper_AI_Wire_Social {
             $copy['instagram'] ?? '',
             $copy['instagram_alt'] ?? '',
             $copy['reel_script'] ?? '',
+            $copy['youtube_title'] ?? '',
+            $copy['youtube_description'] ?? '',
         );
         foreach ((array) ($copy['on_image_bullets'] ?? array()) as $bullet) {
             $parts[] = is_array($bullet) ? (string) ($bullet['text'] ?? '') : (string) $bullet;
         }
         foreach ((array) ($copy['reel_captions'] ?? array()) as $caption) {
             $parts[] = is_array($caption) ? (string) ($caption['caption'] ?? implode(' ', $caption)) : (string) $caption;
+        }
+        foreach ((array) ($copy['youtube_tags'] ?? array()) as $tag) {
+            $parts[] = (string) $tag;
         }
         $reason = $this->social_caption_policy_reason(implode("\n", $parts));
         if ($reason !== '') {
@@ -2233,7 +2305,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         check_admin_referer('tr_ai_wire_queue_missing_platform');
         $platform = sanitize_key((string) ($_POST['platform'] ?? ''));
-        if (!in_array($platform, array('x', 'instagram'), true) || !in_array($platform, self::connected_social_platforms(), true)) {
+        if (!in_array($platform, array('x', 'instagram', 'youtube'), true) || !in_array($platform, self::connected_social_platforms(), true)) {
             wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social'));
             exit;
         }
@@ -2270,6 +2342,12 @@ trait TechnoRapper_AI_Wire_Social {
             if ($exists > 0) {
                 continue;
             }
+            if ($platform === 'youtube') {
+                $mode = sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+                if ($mode !== 'reel') {
+                    continue;
+                }
+            }
             $image_id = $this->social_existing_image_id($post_id);
             $sibling = $wpdb->get_row($wpdb->prepare(
                 "SELECT image_attachment_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND image_attachment_id > 0 ORDER BY id DESC LIMIT 1",
@@ -2303,13 +2381,14 @@ trait TechnoRapper_AI_Wire_Social {
         }
         global $wpdb;
         $table = $this->social_table();
-        return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(DISTINCT s.post_id) FROM {$wpdb->prefix}tr_ai_wire_social s
+        $sql = "SELECT COUNT(DISTINCT s.post_id) FROM {$wpdb->prefix}tr_ai_wire_social s
              WHERE NOT EXISTS (
                 SELECT 1 FROM {$wpdb->prefix}tr_ai_wire_social p WHERE p.post_id = s.post_id AND p.platform = %s
-             )",
-            $platform
-        ));
+             )";
+        if ($platform === 'youtube') {
+            $sql .= $wpdb->prepare(" AND EXISTS (SELECT 1 FROM {$wpdb->postmeta} m WHERE m.post_id = s.post_id AND m.meta_key = %s AND m.meta_value = %s)", '_tr_ai_wire_social_mode', 'reel');
+        }
+        return (int) $wpdb->get_var($wpdb->prepare($sql, $platform));
     }
 
     private function enqueue_social_article($post_id, $mode = 'single') {
@@ -2330,6 +2409,9 @@ trait TechnoRapper_AI_Wire_Social {
         $table = $this->social_table();
         $now = current_time('mysql', true);
         foreach ($platforms as $platform) {
+            if ($platform === 'youtube' && $mode !== 'reel') {
+                continue;
+            }
             $wpdb->query($wpdb->prepare(
                 "INSERT IGNORE INTO {$wpdb->prefix}tr_ai_wire_social (post_id, platform, status, created_at, updated_at) VALUES (%d, %s, 'queued', %s, %s)",
                 $post_id,
@@ -2407,6 +2489,9 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function social_row_is_pack($row, $settings) {
+        if ((string) ($row['platform'] ?? '') === 'youtube') {
+            return false;
+        }
         $mode = (string) get_post_meta((int) ($row['post_id'] ?? 0), '_tr_ai_wire_social_mode', true);
         if ($mode === 'single' || $mode === 'reel') {
             return false;
@@ -2663,6 +2748,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if ($platform === 'x') {
             return $this->delete_x_post($remote_id, $credentials);
+        }
+        if ($platform === 'youtube') {
+            return $this->delete_youtube_video($remote_id, $credentials);
         }
         return true;
     }
@@ -3959,7 +4047,7 @@ trait TechnoRapper_AI_Wire_Social {
     private function render_social_retry_form($row, $image_id, $status) {
         $id = (int) ($row['id'] ?? 0);
         $platform = (string) ($row['platform'] ?? '');
-        $platform_label = $platform === 'instagram' ? 'Instagram' : 'X';
+        $platform_label = self::social_platform_label($platform);
         $published = $status === 'published';
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
         echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
@@ -4059,6 +4147,9 @@ trait TechnoRapper_AI_Wire_Social {
         if ($platform === 'instagram' && !empty($copy['instagram'])) {
             return (string) $copy['instagram'];
         }
+        if ($platform === 'youtube' && !empty($copy['youtube_title'])) {
+            return trim((string) $copy['youtube_title'] . "\n\n" . (string) ($copy['youtube_description'] ?? ''));
+        }
         if ($platform === 'x' && !empty($copy['x'])) {
             return (string) $copy['x'];
         }
@@ -4094,6 +4185,9 @@ trait TechnoRapper_AI_Wire_Social {
             if ($reel_id > 0 && (string) ($row['platform'] ?? '') === 'instagram') {
                 $label = 'Spoken Instagram Reel';
             }
+            if ($reel_id > 0 && (string) ($row['platform'] ?? '') === 'youtube') {
+                $label = 'Spoken YouTube Short';
+            }
             echo '<span class="tr-ai-wire-social-preview-label">' . ($this->social_image_is_current($image_id) ? esc_html($label) : 'Saved graphic — retry posts this file unless you generate a new one') . '</span></a>';
         } else {
             echo '<div class="tr-ai-wire-social-preview-empty">Graphic not generated yet. The worker creates it before posting.</div>';
@@ -4108,8 +4202,14 @@ trait TechnoRapper_AI_Wire_Social {
         if (!empty($copy['hook']) && (empty($copy['on_image_headline']) || $copy['hook'] !== $copy['on_image_headline'])) {
             echo '<p class="description">' . esc_html($copy['hook']) . '</p>';
         }
-        if (!empty($copy['reel_script']) && (string) ($row['platform'] ?? '') === 'instagram' && $this->social_wants_reel(null, (int) ($row['post_id'] ?? 0))) {
+        if (!empty($copy['reel_script']) && in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true) && $this->social_wants_reel(null, (int) ($row['post_id'] ?? 0))) {
             echo '<p class="description"><strong>Reel voiceover:</strong> ' . esc_html(wp_trim_words((string) $copy['reel_script'], 40, '…')) . '</p>';
+        }
+        if ((string) ($row['platform'] ?? '') === 'youtube' && !empty($copy['youtube_title'])) {
+            echo '<p class="description"><strong>YouTube title:</strong> ' . esc_html((string) $copy['youtube_title']) . '</p>';
+            if (!empty($copy['youtube_tags'])) {
+                echo '<p class="description"><strong>YouTube tags:</strong> ' . esc_html(implode(', ', (array) $copy['youtube_tags'])) . '</p>';
+            }
         }
         if ($caption !== '') {
             echo '<p class="tr-ai-wire-social-caption">' . esc_html(wp_trim_words($caption, 36, '…')) . '</p>';
@@ -4165,7 +4265,7 @@ trait TechnoRapper_AI_Wire_Social {
             <?php if (isset($_GET['social_backfill'])) : ?><div class="notice notice-success is-dismissible"><p><?php
             $backfill = (int) $_GET['social_backfill'];
             $backfill_platform = sanitize_key((string) ($_GET['social_backfill_platform'] ?? 'x'));
-            $label = $backfill_platform === 'instagram' ? 'Instagram' : 'X';
+            $label = self::social_platform_label($backfill_platform);
             echo $backfill > 0
                 ? 'Queued ' . esc_html((string) $backfill) . ' existing article' . ($backfill === 1 ? '' : 's') . ' for ' . esc_html($label) . ' using saved graphics. No new images will be generated.'
                 : 'No extra ' . esc_html($label) . ' rows were needed — every queued article already has that platform.';
@@ -4176,10 +4276,11 @@ trait TechnoRapper_AI_Wire_Social {
             $daily_limit = (int) ($settings['social_daily_limit'] ?? 10);
             $failed_x = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'x' AND status = 'needs_review'");
             $failed_ig = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' AND status = 'needs_review'");
+            $failed_yt = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'youtube' AND status = 'needs_review'");
             $finishable_now = $this->social_finishable_queued_count();
             ?>
-            <p>X posting is <?php echo !empty($settings['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · Instagram posting is <?php echo !empty($settings['social_instagram_enabled']) && TechnoRapper_AI_Wire::instagram_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Change that on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Today: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?> articles distributed. That cap counts unique website articles, not each platform. A successful Instagram post does not spend an extra slot for X on the same article.</p>
-            <?php if ($published_today >= $daily_limit && ($failed_x > 0 || $failed_ig > 0 || $finishable_now > 0)) : ?>
+            <p>X posting is <?php echo !empty($settings['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · Instagram posting is <?php echo !empty($settings['social_instagram_enabled']) && TechnoRapper_AI_Wire::instagram_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · YouTube posting is <?php echo !empty($settings['social_youtube_enabled']) && TechnoRapper_AI_Wire::youtube_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Change that on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Today: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?> articles distributed. That cap counts unique website articles, not each platform. A successful Instagram or YouTube post does not spend an extra slot for X on the same article.</p>
+            <?php if ($published_today >= $daily_limit && ($failed_x > 0 || $failed_ig > 0 || $failed_yt > 0 || $finishable_now > 0)) : ?>
             <div class="notice notice-warning"><p><?php
             $parts = array();
             if ($failed_x > 0) {
@@ -4187,6 +4288,9 @@ trait TechnoRapper_AI_Wire_Social {
             }
             if ($failed_ig > 0) {
                 $parts[] = (string) $failed_ig . ' failed Instagram post' . ($failed_ig === 1 ? '' : 's');
+            }
+            if ($failed_yt > 0) {
+                $parts[] = (string) $failed_yt . ' failed YouTube post' . ($failed_yt === 1 ? '' : 's');
             }
             if ($finishable_now > 0) {
                 $parts[] = (string) $finishable_now . ' queued platform post' . ($finishable_now === 1 ? '' : 's') . ' still finishing today';
@@ -4220,7 +4324,7 @@ trait TechnoRapper_AI_Wire_Social {
                 <p class="description" style="display:inline;margin-left:8px;">Posts waiting rows now. Saved graphics are reused. Use this after refreshing an X token, after raising the daily limit, or to ship a leftover batch.</p>
             </form>
             <?php
-            foreach (array('x' => 'X', 'instagram' => 'Instagram') as $platform => $label) {
+            foreach (array('x' => 'X', 'instagram' => 'Instagram', 'youtube' => 'YouTube') as $platform => $label) {
                 if (!in_array($platform, self::connected_social_platforms(), true)) {
                     continue;
                 }
@@ -4233,8 +4337,8 @@ trait TechnoRapper_AI_Wire_Social {
                 <input type="hidden" name="action" value="tr_ai_wire_queue_missing_platform">
                 <input type="hidden" name="platform" value="<?php echo esc_attr($platform); ?>">
                 <?php wp_nonce_field('tr_ai_wire_queue_missing_platform'); ?>
-                <?php submit_button('Queue saved graphics for ' . $label, 'secondary', 'submit', false); ?>
-                <p class="description" style="display:inline;margin-left:8px;"><?php echo esc_html((string) $missing); ?> article<?php echo $missing === 1 ? '' : 's'; ?> already went to another network. This queues <?php echo esc_html($label); ?> using the saved graphic and does not generate a new image.</p>
+                <?php submit_button($platform === 'youtube' ? 'Queue spoken Shorts for YouTube' : ('Queue saved graphics for ' . $label), 'secondary', 'submit', false); ?>
+                <p class="description" style="display:inline;margin-left:8px;"><?php echo esc_html((string) $missing); ?> article<?php echo $missing === 1 ? '' : 's'; ?> already went to another network. <?php echo $platform === 'youtube' ? 'This queues YouTube using the spoken Reel file, not a still image.' : ('This queues ' . esc_html($label) . ' using the saved graphic and does not generate a new image.'); ?></p>
             </form>
                 <?php
             }

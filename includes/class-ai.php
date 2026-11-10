@@ -456,6 +456,8 @@ trait TechnoRapper_AI_Wire_AI {
             (string) ($copy['instagram'] ?? ''),
             (string) ($copy['instagram_alt'] ?? ''),
             (string) ($copy['reel_script'] ?? ''),
+            (string) ($copy['youtube_title'] ?? ''),
+            (string) ($copy['youtube_description'] ?? ''),
         );
         foreach ((array) ($copy['on_image_bullets'] ?? array()) as $bullet) {
             $parts[] = is_array($bullet) ? (string) ($bullet['text'] ?? implode(' ', $bullet)) : (string) $bullet;
@@ -466,6 +468,9 @@ trait TechnoRapper_AI_Wire_AI {
             } else {
                 $parts[] = (string) $caption;
             }
+        }
+        foreach ((array) ($copy['youtube_tags'] ?? array()) as $tag) {
+            $parts[] = (string) $tag;
         }
         foreach ((array) ($copy['hashtags'] ?? array()) as $tag) {
             $parts[] = (string) $tag;

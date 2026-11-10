@@ -40,6 +40,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option('tr_ai_wire_social_worker_lock');
         remove_all_filters('tr_ai_wire_ffmpeg_path');
         remove_all_filters('tr_ai_wire_fal_poll_seconds');
+        remove_all_filters('tr_ai_wire_youtube_poll_seconds');
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK);
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
         parent::tear_down();
@@ -56,11 +57,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'x_user_access_token' => in_array('x', $platforms, true) ? 'x-token' : '',
             'instagram_user_access_token' => in_array('instagram', $platforms, true) ? 'ig-token' : '',
             'instagram_user_id' => in_array('instagram', $platforms, true) ? '17841400000000000' : '',
+            'youtube_refresh_token' => in_array('youtube', $platforms, true) ? 'yt-refresh' : '',
+            'youtube_access_token' => in_array('youtube', $platforms, true) ? 'yt-token' : '',
+            'youtube_access_expires' => in_array('youtube', $platforms, true) ? (string) (time() + 3600) : '',
+            'youtube_channel_id' => in_array('youtube', $platforms, true) ? 'UCtestchannel' : '',
         );
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
             'social_distribution_enabled' => 1,
             'social_x_enabled' => in_array('x', $platforms, true) ? 1 : 0,
             'social_instagram_enabled' => in_array('instagram', $platforms, true) ? 1 : 0,
+            'social_youtube_enabled' => in_array('youtube', $platforms, true) ? 1 : 0,
         )), false);
         update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, $credentials, false);
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
@@ -607,6 +613,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, (int) $settings['social_distribution_enabled']);
         $this->assertSame(0, (int) $settings['social_x_enabled']);
         $this->assertSame(0, (int) $settings['social_instagram_enabled']);
+        $this->assertSame(0, (int) $settings['social_youtube_enabled']);
+        $this->assertSame('28', $settings['social_youtube_category_id']);
+        $this->assertSame(0, (int) $settings['social_youtube_notify_subscribers']);
         $this->assertSame('single', $settings['social_post_format']);
         $this->assertSame(5, $settings['social_slide_count']);
         $this->assertSame(2, $settings['social_carousel_daily_limit']);
@@ -2302,6 +2311,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Read the full story on TechnoRapper', $copy['instagram']);
         $this->assertNotSame('', $copy['reel_script']);
         $this->assertGreaterThanOrEqual(3, count($copy['reel_captions']));
+        $this->assertSame('Your next phone chip has a server cousin', $copy['youtube_title']);
+        $this->assertStringContainsString($permalink, $copy['youtube_description']);
+        $this->assertContains('ai', $copy['youtube_tags']);
         $this->assertStringNotContainsString('•', $copy['reel_script']);
     }
 
@@ -3504,6 +3516,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('same Writer pass', $captured['user']);
         $this->assertStringContainsString('no swear words', $captured['user']);
         $this->assertStringContainsString('reel_script', $captured['user']);
+        $this->assertStringContainsString('youtube_title', $captured['user']);
+        $this->assertStringContainsString('youtube_description', $captured['user']);
+        $this->assertStringContainsString('youtube_tags', $captured['user']);
         $this->assertStringContainsString('key_takeaways', $captured['user']);
         $this->assertStringContainsString('same chip family', $captured['user']);
         $copy = $this->invoke_private('sanitize_social_copy', array($raw, get_post($post_id)));
@@ -3687,6 +3702,192 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertSame(1, $reels);
         $this->assertSame(0, $carousels);
+    }
+
+    public function test_youtube_is_queued_only_for_reel_posts() {
+        $this->onboard_social(array('instagram', 'youtube'));
+        $settings = $this->plugin->sanitize_settings(array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'reel',
+            'social_mix_saved' => 0,
+        )));
+        $reel_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'YouTube Short story',
+        ));
+        update_post_meta($reel_id, '_tr_ai_wire_queue_id', 920);
+        $this->invoke_private('collect_social_article', array($reel_id, $settings));
+        global $wpdb;
+        $platforms = $wpdb->get_col($wpdb->prepare("SELECT platform FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d ORDER BY platform", $reel_id));
+        $this->assertSame(array('instagram', 'youtube'), $platforms);
+        $this->assertSame('reel', (string) get_post_meta($reel_id, '_tr_ai_wire_social_mode', true));
+
+        $still_settings = $this->plugin->sanitize_settings(array_merge($settings, array(
+            'social_post_format' => 'single',
+            'social_reel_daily_limit' => 0,
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 3,
+        )));
+        $still_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Still story stays off YouTube',
+        ));
+        update_post_meta($still_id, '_tr_ai_wire_queue_id', 921);
+        $this->invoke_private('collect_social_article', array($still_id, $still_settings));
+        $still_platforms = $wpdb->get_col($wpdb->prepare("SELECT platform FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d ORDER BY platform", $still_id));
+        $this->assertSame(array('instagram'), $still_platforms);
+        $this->assertFalse(TechnoRapper_AI_Wire::youtube_credentials_ready(array()));
+        $this->assertTrue(TechnoRapper_AI_Wire::youtube_credentials_ready());
+    }
+
+    public function test_youtube_upload_sends_title_description_and_tags() {
+        $this->onboard_social(array('youtube'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Qualcomm pushes into data centers',
+            'post_excerpt' => 'The chipmaker wants a larger share of AI servers this year.',
+        ));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(
+            'hook' => 'Your next phone chip has a server cousin',
+            'youtube_title' => 'Qualcomm wants the rack, not just the pocket',
+            'youtube_description' => 'The same silicon family now ships in phones and AI racks.',
+            'youtube_tags' => array('Qualcomm', 'AI chips', 'data center'),
+        ), get_post($post_id)));
+        $resource = $this->invoke_private('youtube_video_resource', array($copy, get_post($post_id), TechnoRapper_AI_Wire::defaults()));
+        $this->assertSame('Qualcomm wants the rack, not just the pocket', $resource['snippet']['title']);
+        $this->assertStringContainsString('same silicon family', $resource['snippet']['description']);
+        $this->assertStringContainsString(get_permalink($post_id), $resource['snippet']['description']);
+        $this->assertContains('qualcomm', $resource['snippet']['tags']);
+        $this->assertContains('ai chips', $resource['snippet']['tags']);
+        $this->assertSame('28', $resource['snippet']['categoryId']);
+        $this->assertSame('public', $resource['status']['privacyStatus']);
+        $this->assertFalse($resource['status']['selfDeclaredMadeForKids']);
+        $this->assertTrue($resource['status']['containsSyntheticMedia']);
+
+        $video = sys_get_temp_dir() . '/tr-yt-' . wp_generate_uuid4() . '.mp4';
+        file_put_contents($video, str_repeat('m', 2048));
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            if (strpos($url, 'upload/youtube/v3/videos') !== false) {
+                $captured['init'] = json_decode((string) ($args['body'] ?? ''), true);
+                $captured['notify'] = (strpos($url, 'notifySubscribers=false') !== false);
+                return array(
+                    'headers' => array('location' => 'https://example.org/youtube-upload-session'),
+                    'body' => '',
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            if (strpos($url, 'example.org/youtube-upload-session') !== false) {
+                $captured['bytes'] = strlen((string) ($args['body'] ?? ''));
+                return $this->mock_http_ok(array('id' => 'yt-short-1'));
+            }
+            if (strpos($url, 'googleapis.com/youtube/v3/videos') !== false && strpos($url, 'part=status') !== false) {
+                return $this->mock_http_ok(array(
+                    'items' => array(array(
+                        'id' => 'yt-short-1',
+                        'status' => array('uploadStatus' => 'processed', 'privacyStatus' => 'public'),
+                        'processingDetails' => array('processingStatus' => 'succeeded'),
+                    )),
+                ));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        add_filter('tr_ai_wire_youtube_poll_seconds', function () {
+            return 0;
+        });
+        $result = $this->invoke_private('publish_youtube_short', array(
+            $copy,
+            $video,
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION),
+            TechnoRapper_AI_Wire::defaults(),
+            get_post($post_id),
+        ));
+        @unlink($video);
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame('yt-short-1', $result['id']);
+        $this->assertSame('https://www.youtube.com/shorts/yt-short-1', $result['url']);
+        $this->assertSame('Qualcomm wants the rack, not just the pocket', $captured['init']['snippet']['title'] ?? '');
+        $this->assertContains('qualcomm', $captured['init']['snippet']['tags'] ?? array());
+        $this->assertTrue($captured['notify']);
+        $this->assertSame(2048, $captured['bytes']);
+    }
+
+    public function test_youtube_does_not_post_a_still_image() {
+        $this->onboard_social(array('youtube'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'No stills on YouTube',
+        ));
+        $result = $this->invoke_private('publish_youtube_short', array(
+            array('youtube_title' => 'A title'),
+            '',
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION),
+            TechnoRapper_AI_Wire::defaults(),
+            get_post($post_id),
+        ));
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_yt_video_file', $result->get_error_code());
+        $this->assertStringContainsString('still image', strtolower($result->get_error_message()));
+    }
+
+    public function test_youtube_only_does_not_force_x_or_instagram() {
+        $settings = TechnoRapper_AI_Wire::apply_social_platform_toggles(array(
+            'social_distribution_enabled' => 1,
+            'social_x_enabled' => 0,
+            'social_instagram_enabled' => 0,
+            'social_youtube_enabled' => 1,
+        ));
+        $this->assertSame(0, (int) $settings['social_x_enabled']);
+        $this->assertSame(0, (int) $settings['social_instagram_enabled']);
+        $this->assertSame(1, (int) $settings['social_youtube_enabled']);
+        $this->assertSame(1, (int) $settings['social_distribution_enabled']);
+    }
+
+    public function test_youtube_processing_wait_polls_existing_id_without_uploading_again() {
+        $this->onboard_social(array('youtube'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Already uploaded Short',
+        ));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(
+            'youtube_title' => 'Already uploaded Short',
+            'youtube_description' => 'Poll processing, do not PUT bytes again.',
+            'youtube_tags' => array('youtube', 'shorts'),
+        ), get_post($post_id)));
+        $calls = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$calls) {
+            $url = (string) $url;
+            $calls[] = $url;
+            if (strpos($url, 'upload/youtube/v3/videos') !== false || strpos($url, 'youtube-upload-session') !== false) {
+                return new WP_Error('blocked', 'Must not start a second YouTube upload');
+            }
+            if (strpos($url, 'googleapis.com/youtube/v3/videos') !== false) {
+                return $this->mock_http_ok(array(
+                    'items' => array(array(
+                        'id' => 'yt-short-existing',
+                        'status' => array('uploadStatus' => 'processed', 'privacyStatus' => 'public'),
+                        'processingDetails' => array('processingStatus' => 'succeeded'),
+                    )),
+                ));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $result = $this->invoke_private('publish_youtube_short', array(
+            $copy,
+            '',
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION),
+            TechnoRapper_AI_Wire::defaults(),
+            get_post($post_id),
+            'yt-short-existing',
+        ));
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame('yt-short-existing', $result['id']);
+        $this->assertSame('https://www.youtube.com/shorts/yt-short-existing', $result['url']);
+        $this->assertNotEmpty($calls);
     }
 
     public function test_reel_renderer_uses_captions_not_poster_slides() {
@@ -4040,7 +4241,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (strpos((string) $url, 'openai.com') !== false) {
                 $openai++;
             }
-            if (strpos((string) $url, 'api.x.com') !== false || strpos((string) $url, 'graph.facebook.com') !== false) {
+            if (strpos((string) $url, 'api.x.com') !== false || strpos((string) $url, 'graph.facebook.com') !== false || strpos((string) $url, 'googleapis.com') !== false) {
                 $platform++;
             }
             return new WP_Error('blocked', 'HTTP blocked in test');

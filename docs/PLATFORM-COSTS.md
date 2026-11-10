@@ -7,6 +7,7 @@ AI Wire is free and open source (**GPLv2 or later**). Running it still uses **yo
 | OpenAI | OpenAI | Writer, reviewer, social copy, social images | Plugin monthly budget / token ceiling stops new AI calls |
 | **X API credits** | X (developer console) | **Automated** tweets and media uploads | Social queue shows **`credits depleted`** on X rows |
 | Instagram publishing quota | Meta (no per-post fee) | Automated Instagram posts | Item stays **queued** and is tried again later |
+| YouTube Data API quota | Google (no per-upload fee) | Automated YouTube Shorts | Item stays **queued** (`quota` / daily upload limit) and is tried later |
 
 The plugin’s own “Today: 8 / 8” article cap is a fourth, local control. It does not buy X credits or Instagram quota.
 
@@ -54,11 +55,19 @@ Meta enforces a **rolling 24-hour publishing quota** (documented around 100 API 
 
 Setup: [Instagram Content Publishing Setup](INSTAGRAM-CONTENT-PUBLISHING-SETUP.md). Official quota notes: [Meta content publishing](https://developers.facebook.com/docs/instagram-platform/content-publishing/).
 
+## YouTube — no per-upload fee
+
+YouTube Data API v3 uploads are **not billed per video**. Google meters **quota**: default **100 `videos.insert` calls per day** (1 unit each, own bucket) plus a 10,000-unit pool for other calls such as `videos.list` (1) and `thumbnails.set` (50). Quotas reset at midnight Pacific Time.
+
+The plugin uploads the spoken Reel MP4 as a Short and sets title, description, tags, category, privacy, made-for-kids, and synthetic-media disclosure in that API call. It does **not** post still images to YouTube. A `quota` Social queue error means the Google Cloud project hit its daily API quota, not the OpenAI or Fal budget.
+
+Connect **your** Google Cloud OAuth client and YouTube channel on Social settings. This repository never ships anyone else’s Google client secret.
+
 ## What this repository never includes
 
 Do not expect, and do not commit:
 
-- Anyone else’s OpenAI key, X tokens, or Instagram tokens
+- Anyone else’s OpenAI key, X tokens, Instagram tokens, or Google OAuth client secrets
 - A shared Meta app that posts to a third-party account
 - Hard-coded newsroom voice, desks, or social handle for one publisher
 
