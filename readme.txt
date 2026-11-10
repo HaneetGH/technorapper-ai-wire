@@ -21,7 +21,7 @@ Social distribution stays off until you turn each network on. This plugin does n
 * An OpenAI API key
 * Optional X developer Keys and tokens (API Key, API Key Secret, Access Token, Access Token Secret)
 * Optional Instagram Professional account via your own Meta app
-* Optional Google Cloud OAuth client for YouTube Data API v3 uploads
+* Optional Google Cloud OAuth client, then Sign in with Google (or paste a refresh token) for YouTube Data API v3 uploads. A YouTube API key cannot upload.
 
 **Third-party services.** Article text may be sent to OpenAI for writing, review, and social images. If you enable a network, media and captions are sent to the X API, Instagram Graph API, and/or YouTube Data API. Those services have their own terms and billing. Automated X posts spend X developer credits. Instagram Graph publishing has no Meta per-post fee; Meta enforces a rolling quota. YouTube uploads have no Google per-video fee; Google enforces a daily API quota.
 

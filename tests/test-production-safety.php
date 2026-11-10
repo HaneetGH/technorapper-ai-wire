@@ -3914,6 +3914,27 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('still image', strtolower($result->get_error_message()));
     }
 
+    public function test_youtube_connect_is_google_signin_and_accepts_a_refresh_token() {
+        $this->assertFalse(TechnoRapper_AI_Wire::youtube_credentials_ready());
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
+            'youtube_refresh_token' => '1//pasted-refresh-token',
+        ), false);
+        $this->assertTrue(TechnoRapper_AI_Wire::youtube_credentials_ready());
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
+            'youtube_client_id' => 'yt-client.apps.googleusercontent.com',
+            'youtube_client_secret' => 'yt-secret',
+            'youtube_refresh_token' => '1//pasted-refresh-token',
+        ), false);
+        $url = TechnoRapper_AI_Wire_YouTube_OAuth::connect_url();
+        $this->assertStringContainsString('accounts.google.com/o/oauth2/v2/auth', $url);
+        $this->assertStringContainsString('access_type=offline', $url);
+        $this->assertStringContainsString('youtube.upload', $url);
+        $this->assertStringContainsString('prompt=consent', $url);
+        $this->assertStringNotContainsString('key=', $url);
+    }
+
     public function test_youtube_only_does_not_force_x_or_instagram() {
         $settings = TechnoRapper_AI_Wire::apply_social_platform_toggles(array(
             'social_distribution_enabled' => 1,
@@ -4415,6 +4436,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $html = ob_get_clean();
         $this->assertStringContainsString('Post to X', $html);
         $this->assertStringContainsString('Post to Instagram', $html);
+        $this->assertStringContainsString('Post to YouTube Shorts', $html);
+        $this->assertStringContainsString('Sign in with Google', $html);
+        $this->assertStringContainsString('API key cannot upload', $html);
+        $this->assertStringContainsString('name="social[youtube_refresh_token]"', $html);
         $this->assertStringContainsString('API Key Secret', $html);
         $this->assertStringContainsString('Access Token Secret', $html);
         $this->assertStringContainsString('Bearer is not needed', $html);

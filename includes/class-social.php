@@ -156,6 +156,8 @@ trait TechnoRapper_AI_Wire_Social {
             'instagram_user_access_token',
             'youtube_client_id',
             'youtube_client_secret',
+            'youtube_refresh_token',
+            'youtube_access_token',
         );
         foreach ($secret_fields as $field) {
             if (!empty($_POST['remove_' . $field])) {
@@ -194,6 +196,25 @@ trait TechnoRapper_AI_Wire_Social {
             $next['youtube_access_expires'] = '';
             $next['youtube_channel_id'] = '';
             $next['youtube_channel_title'] = '';
+        } elseif (!empty($input['youtube_refresh_token']) || !empty($input['youtube_access_token'])) {
+            if (!empty($input['youtube_refresh_token']) && empty($input['youtube_access_token'])) {
+                $next['youtube_access_expires'] = '0';
+            } elseif (!empty($input['youtube_access_token'])) {
+                $next['youtube_access_expires'] = (string) (time() + 3300);
+            }
+        }
+        if (
+            empty($next['youtube_channel_id'])
+            && self::youtube_credentials_ready($next)
+            && TechnoRapper_AI_Wire_YouTube_OAuth::configured($next)
+        ) {
+            $yt_token = TechnoRapper_AI_Wire_YouTube_OAuth::access_token($next);
+            if (!is_wp_error($yt_token)) {
+                $channel = TechnoRapper_AI_Wire_YouTube_OAuth::fetch_channel($yt_token);
+                if (!is_wp_error($channel)) {
+                    $next = TechnoRapper_AI_Wire_YouTube_OAuth::store_tokens($next, array(), $channel);
+                }
+            }
         }
         if (get_option(self::SOCIAL_CREDENTIALS_OPTION, null) === null) {
             add_option(self::SOCIAL_CREDENTIALS_OPTION, $next, '', false);
