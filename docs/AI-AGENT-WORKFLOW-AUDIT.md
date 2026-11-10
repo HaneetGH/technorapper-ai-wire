@@ -1,7 +1,7 @@
 # AI Wire — Production Readiness Audit
 
 **Audit date:** 4 November 2026  
-**Note:** Historical snapshot of the 0.2.0 hardening work. Current operator docs are the [README](../README.md) and [What it costs to run](PLATFORM-COSTS.md). The plugin is a generic WordPress install, not a single-publisher pipeline.  
+**Note:** Historical snapshot of the 0.2.0 hardening work. Current operator docs are the [README](../README.md), [Social Distribution Architecture](SOCIAL-DISTRIBUTION-ARCHITECTURE.md) (X, Instagram Reels, YouTube Shorts as shipped in 0.2.54), and [What it costs to run](PLATFORM-COSTS.md). The plugin is a generic WordPress install, not a single-publisher pipeline.  
 **Audited baseline:** merged PR #7 plus the production-hardening branch changes for version 0.2.0.  
 **Architecture:** WordPress/PHP orchestration with two sequential AI roles (Writer → Reviewer). This is not an autonomous multi-agent framework.
 

@@ -1,9 +1,9 @@
 # Image generation cost estimate
 
-**Date:** 6 November 2026  
+**Date:** 10 November 2026  
 **Status:** implementation estimate for the opt-in social distribution feature. The article pipeline still does not generate or replace article featured images.
 
-**Scope:** extra OpenAI spend for one generated social image per published AI Wire article, reused on connected X and Instagram accounts.
+**Scope:** extra OpenAI spend for one generated social image per published AI Wire article, reused on connected X and Instagram stills. Spoken Reels add Mini TTS (OpenAI, social image budget) and Fal motion (separate video budget). YouTube Shorts reuse that MP4 and have no Google per-upload fee.
 
 Verify current [OpenAI image pricing](https://developers.openai.com/api/docs/pricing) before setting a budget. Provider rates change. The plugin's own USD totals are local estimates from `includes/class-ai.php` (`model_rates()`), not a provider invoice.
 
@@ -70,6 +70,7 @@ Silent Fal image-to-video estimates (not an invoice):
 - **Failed items:** only successfully published AI Wire articles enter the social queue; image API calls are therefore limited to eligible published articles.
 - **X API credits:** automated tweets and media uploads are billed by X, not OpenAI. A queue error of `credits depleted` means the X developer balance (or spending limit) is empty. That is not this image budget. Check the X Developer Console. Manual tweets on x.com do not spend API credits.
 - **Instagram:** Meta does not charge a per-post API fee. The plugin honors Meta’s rolling 24-hour publishing quota and defers when it is full. See [What it costs to run](PLATFORM-COSTS.md).
+- **YouTube:** no Google per-upload fee. Quota (default 100 `videos.insert`/day) defers the Short. Connect with Sign in with Google; an API key cannot upload. The spoken file is the Instagram Reel, not a second Fal clip.
 
 ## Cheaper rollout options
 
@@ -82,4 +83,4 @@ Silent Fal image-to-video estimates (not an invoice):
 
 For the default GPT Image 2 low portrait output, the image output is about **$0.005**; the implementation reserves **$0.006 per image** to include a small prompt allowance. The dashboard records a local estimate and stops at the separate image budget; check the OpenAI usage dashboard for the invoice amount. At 10 articles/day, this reserve is about **$1.80/month** before retries and output variation. Image and ambiguous platform failures go to review; Instagram quota-full items remain queued for a later check. No platform post is sent without its branded image.
 
-The image budget is a local estimate and not a provider-side hard limit. Check OpenAI usage, X credits, Instagram quota, and the target WordPress host during the staging canary before raising either the daily article cap or image budget.
+The image budget is a local estimate and not a provider-side hard limit. Check OpenAI usage, X credits, Instagram quota, YouTube quota, Fal spend, and the target WordPress host during the staging canary before raising the daily article cap, image budget, or video budget.

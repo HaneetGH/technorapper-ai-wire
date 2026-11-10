@@ -148,6 +148,8 @@ Expected response:
 
 The post is then published to the Instagram account associated with the credentials.
 
+Spoken Reels use the same Graph publishing flow with `media_type=REELS` and a publicly reachable HTTPS **video_url** (the spoken MP4 in WordPress Media). Meta fetches that file the same way it fetches a JPEG. Missing `ffmpeg`, a Fal.ai key, or video budget holds the Reel in the Social queue; the plugin does not post a still as fake video. YouTube Shorts reuse that MP4 through Google sign-in, not this Meta flow. See [Social Distribution Architecture](SOCIAL-DISTRIBUTION-ARCHITECTURE.md).
+
 ## 7. End-to-end flow
 
 ```text
