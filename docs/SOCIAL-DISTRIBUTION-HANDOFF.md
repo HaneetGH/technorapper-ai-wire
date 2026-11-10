@@ -93,7 +93,7 @@ Read these files first:
 3. [`docs/PLATFORM-COSTS.md`](PLATFORM-COSTS.md) and [`docs/IMAGE-GENERATION-COST.md`](IMAGE-GENERATION-COST.md): OpenAI vs X credits vs Instagram quota, plus image estimates.
 4. `includes/class-publisher.php`: AI Wire article creation and `_tr_ai_wire_queue_id` metadata.
 5. `includes/class-admin.php`, `includes/class-settings.php`, `includes/class-schema.php`, and `includes/class-plugin.php`: dashboard, settings sanitization, schema upgrade, and hooks.
-6. `includes/class-social.php`: credentials, queue worker, social copy, branded graphic, X and Instagram publishing, retries, and queue UI.
+6. `includes/class-social.php` and `includes/class-social-reel.php`: credentials, queue worker, social copy, branded graphic, Writer-model Reel script, Mini TTS, ffmpeg mux, X and Instagram publishing, retries, and queue UI.
 7. [`docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md`](SOCIAL-DISTRIBUTION-ARCHITECTURE.md): editorial vs distribution boundary.
 
 Current plugin compatibility declared in `technorapper-ai-wire.php`: WordPress 6.2+ and PHP 7.4+. The social image renderer additionally requires PHP GD. A TrueType font is optional; the renderer has a built-in GD font fallback.
@@ -104,7 +104,7 @@ Current plugin compatibility declared in `technorapper-ai-wire.php`: WordPress 6
 - Separate non-autoloaded credentials option for X Keys and tokens and Instagram token/account ID. Save/remove actions are capability-checked and nonce-protected; the secret is not redisplayed.
 - `tr_ai_wire_social` table with a unique `(post_id, platform)` key, independent row states, attempts, image attachment ID, remote ID/URL, and error text.
 - `wp_after_insert_post` queueing for published AI Wire posts and a WP-Cron consumer under a worker lock.
-- One copy pass writes hook, on-image headline, captions and visual brief. GPT Image 2 low generates a portrait; GD overlays this WordPress site's name, headline, supporting line and handle as a 1080×1350 JPEG using one of five hashed poster layouts. Same attachment is reused across platforms and is never the article featured image.
+- One copy pass writes hook, on-image headline, captions, visual brief, and a spoken Reel script with the **current Writer model**. GPT Image 2 low generates a portrait; GD overlays this WordPress site's name, headline, supporting line and handle as a 1080×1350 JPEG using one of five hashed poster layouts. Same attachment is reused across platforms and is never the article featured image. Instagram format `reel` muxes Mini TTS plus burned-in captions on a 9:16 B-roll crop of that photo (`includes/class-social-reel.php`); ffmpeg is required or the job is held.
 - Local monthly social-image estimate at `$0.006` per image, with `$5` default budget. Separate from X API credits and from Instagram quota.
 - X v2 media initialize/append/finalize/status followed by post creation. X credits/plan charges are outside the image budget.
 - Instagram Graph API container creation/status/publish, including optional carousel packing of 4–6 website articles, or a collage of those posters.

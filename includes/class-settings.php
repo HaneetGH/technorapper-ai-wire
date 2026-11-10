@@ -244,7 +244,7 @@ trait TechnoRapper_AI_Wire_Settings {
         }
         $out['social_daily_limit'] = min(20, max(1, absint($input['social_daily_limit'] ?? $defaults['social_daily_limit'])));
         $out['social_image_budget_usd'] = min(10000, max(0, (float) ($input['social_image_budget_usd'] ?? $defaults['social_image_budget_usd'])));
-        $formats = array('single', 'carousel', 'collage');
+        $formats = array('single', 'carousel', 'collage', 'reel');
         $format = sanitize_key((string) ($input['social_post_format'] ?? $defaults['social_post_format']));
         $out['social_post_format'] = in_array($format, $formats, true) ? $format : 'single';
         $pack = absint($input['social_slide_count'] ?? $defaults['social_slide_count']);

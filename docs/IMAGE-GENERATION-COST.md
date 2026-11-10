@@ -56,6 +56,7 @@ Image generation dominates the text pipeline at higher volumes. For the configur
 
 - **Sideload / disk:** generated JPEGs must be stored in WordPress media. ~400 KB × 350 posts/day ≈ **4 GB/month**. Hosting/CDN is usually cents compared with the API.
 - **Prompt writing:** the implementation reuses the article title and excerpt (or a short body excerpt) for the image prompt; prompt tokens are included in the local per-image reserve. Negligible beside image output.
+- **Spoken Reels:** the current Writer model writes the 15–18s script in the same social copy JSON as the captions (Writer/Reviewer budget). GPT-4o Mini TTS is about **$0.004** per voiceover and is reserved from the social image budget. There is no Kling/Veo/Sora video model on this path.
 - **Failed items:** only successfully published AI Wire articles enter the social queue; image API calls are therefore limited to eligible published articles.
 - **X API credits:** automated tweets and media uploads are billed by X, not OpenAI. A queue error of `credits depleted` means the X developer balance (or spending limit) is empty. That is not this image budget. Check the X Developer Console. Manual tweets on x.com do not spend API credits.
 - **Instagram:** Meta does not charge a per-post API fee. The plugin honors Meta’s rolling 24-hour publishing quota and defers when it is full. See [What it costs to run](PLATFORM-COSTS.md).

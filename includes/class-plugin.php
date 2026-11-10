@@ -16,8 +16,9 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Social;
+    use TechnoRapper_AI_Wire_Social_Reel;
 
-    const VERSION = '0.2.50';
+    const VERSION = '0.2.51';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -33,6 +34,10 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_IMAGE_MODEL = 'gpt-image-2';
     const SOCIAL_IMAGE_ESTIMATED_USD = 0.006;
     const SOCIAL_IMAGE_LAYOUT = 'poster-v2';
+    const SOCIAL_REEL_LAYOUT = 'reel-v1';
+    const SOCIAL_TTS_MODEL = 'gpt-4o-mini-tts';
+    const SOCIAL_TTS_VOICE = 'cedar';
+    const SOCIAL_TTS_ESTIMATED_USD = 0.004;
     const INSTAGRAM_GRAPH_VERSION = 'v22.0';
     const SOCIAL_CONTEXT_TTL = 1209600;
     const TABLE_SUFFIX = 'tr_ai_wire_items';

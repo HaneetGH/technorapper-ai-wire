@@ -3,18 +3,18 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.50
+Stable tag: 0.2.51
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Turns your RSS/Atom feeds into AI-reviewed WordPress posts, with optional X and Instagram graphics.
+Turns your RSS/Atom feeds into AI-reviewed WordPress posts, with optional X and Instagram graphics or spoken Reels.
 
 == Description ==
 
 AI Wire is an open-source WordPress plugin any publisher can run. It is licensed under **GPLv2 or later**.
 
-It takes RSS or Atom feeds you configure, writes an attributed draft, runs a separate AI review, and can publish to WordPress. After an article is live, it can optionally create one branded graphic and post it to **your** X and/or Instagram accounts. Site name, desks, and the poster brand mark come from this WordPress site.
+It takes RSS or Atom feeds you configure, writes an attributed draft, runs a separate AI review, and can publish to WordPress. After an article is live, it can optionally create one branded graphic and post it to **your** X and/or Instagram accounts. Instagram can instead publish a spoken 9:16 Reel for that one article — not a slideshow of posters. Site name, desks, and the poster brand mark come from this WordPress site.
 
 Social distribution stays off until you turn each network on. This plugin does not ship API keys. You provide:
 
@@ -51,6 +51,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.51 =
+* Optional Instagram Reels: one spoken story per article. The current Writer model writes the 15–18s script in the same social copy pass; Mini TTS and ffmpeg mux voiceover plus captions on one B-roll shot. Not a Ken Burns slideshow. X still gets the still graphic.
+
 = 0.2.50 =
 * Keep the previous Run now, review-score, homepage pin, and social outcomes on the decoupled pipeline: writer quality and the 85 review scale stay the same, scheduled ticks still do one stage, and auto-publish still pins and syndicates after a verified publish.
 
@@ -70,6 +73,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.51 =
+Adds an optional spoken Instagram Reel format. The current Writer model writes the 15–18s script; Mini TTS and ffmpeg turn it into one-article voiceover, not a slideshow of stills.
 
 = 0.2.50 =
 Same publish, homepage, and social results as before, with committed pipeline stages so an API or adapter failure cannot roll back a finished step.
