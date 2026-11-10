@@ -513,10 +513,12 @@ trait TechnoRapper_AI_Wire_AI {
             return array();
         }
         $spaced = trim((string) preg_replace('/[^a-z0-9]+/i', ' ', $plain));
-        $joined = strtolower((string) preg_replace('/(?<=[a-z])[^a-z0-9]+(?=[a-z])/i', '', $plain));
-        $joined = trim((string) preg_replace('/[^a-z0-9]+/i', ' ', $joined));
+        $no_fillers = str_replace(array('*', '#', '@', '$', '!'), '', $plain);
+        $no_fillers = trim((string) preg_replace('/[^a-z0-9]+/i', ' ', $no_fillers));
+        $between = preg_replace('/(?<=[a-z])[^a-z0-9\s]+(?=[a-z])/i', '', $plain);
+        $between = trim((string) preg_replace('/[^a-z0-9]+/i', ' ', (string) $between));
         $out = array();
-        foreach (array($spaced, $joined) as $blob) {
+        foreach (array($spaced, $no_fillers, $between) as $blob) {
             if ($blob !== '' && !in_array($blob, $out, true)) {
                 $out[] = $blob;
             }
@@ -541,6 +543,9 @@ trait TechnoRapper_AI_Wire_AI {
             'dyke',
             'fag',
             'faggot',
+            'fck',
+            'fcked',
+            'fcking',
             'fuck',
             'fucked',
             'fucker',

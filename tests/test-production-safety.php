@@ -3462,9 +3462,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 return $this->mock_http_ok(array('status' => 'COMPLETED'));
             }
             if (strpos($url, 'queue.fal.run') !== false) {
-                return $this->mock_http_ok(array('video' => array('url' => 'https://fal.media/files/motion.mp4')));
+                return $this->mock_http_ok(array('video' => array('url' => 'https://example.org/fal-motion.mp4')));
             }
-            if (strpos($url, 'fal.media') !== false) {
+            if (strpos($url, 'example.org/fal-motion.mp4') !== false) {
                 return array(
                     'headers' => array(),
                     'body' => str_repeat('m', 2048),
