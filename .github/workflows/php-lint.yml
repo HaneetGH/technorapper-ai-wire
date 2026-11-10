@@ -2,9 +2,8 @@ name: PHP lint
 
 on:
   push:
-    branches: [main, "fix/**", "feature/**", "production-hardening-and-pipeline-docs"]
+    branches: [main, "fix/**", "feature/**", "cursor/**", "production-hardening-and-pipeline-docs"]
   pull_request:
-    branches: [main]
 
 jobs:
   lint:

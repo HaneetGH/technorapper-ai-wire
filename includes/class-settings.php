@@ -33,6 +33,9 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_distribution_enabled' => 0,
             'social_x_enabled' => 0,
             'social_instagram_enabled' => 0,
+            'social_youtube_enabled' => 0,
+            'social_youtube_category_id' => '28',
+            'social_youtube_notify_subscribers' => 0,
             'social_daily_limit' => 10,
             'social_image_budget_usd' => 5,
             'social_video_budget_usd' => 10,
@@ -76,6 +79,9 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_distribution_enabled',
             'social_x_enabled',
             'social_instagram_enabled',
+            'social_youtube_enabled',
+            'social_youtube_category_id',
+            'social_youtube_notify_subscribers',
             'social_daily_limit',
             'social_image_budget_usd',
             'social_video_budget_usd',
@@ -96,14 +102,16 @@ trait TechnoRapper_AI_Wire_Settings {
         $settings = is_array($settings) ? $settings : array();
         $x = empty($settings['social_x_enabled']) ? 0 : 1;
         $instagram = empty($settings['social_instagram_enabled']) ? 0 : 1;
+        $youtube = empty($settings['social_youtube_enabled']) ? 0 : 1;
         $master = empty($settings['social_distribution_enabled']) ? 0 : 1;
-        if ($master && !$x && !$instagram) {
+        if ($master && !$x && !$instagram && !$youtube) {
             $x = 1;
             $instagram = 1;
         }
         $settings['social_x_enabled'] = $x;
         $settings['social_instagram_enabled'] = $instagram;
-        $settings['social_distribution_enabled'] = ($x || $instagram) ? 1 : 0;
+        $settings['social_youtube_enabled'] = $youtube;
+        $settings['social_distribution_enabled'] = ($x || $instagram || $youtube) ? 1 : 0;
         return $settings;
     }
 
@@ -141,6 +149,9 @@ trait TechnoRapper_AI_Wire_Settings {
             }
             if (empty($old['social_instagram_enabled']) && !empty($new['social_instagram_enabled'])) {
                 $this->enqueue_missing_platform_posts('instagram');
+            }
+            if (empty($old['social_youtube_enabled']) && !empty($new['social_youtube_enabled'])) {
+                $this->enqueue_missing_platform_posts('youtube');
             }
         }
     }
@@ -247,12 +258,17 @@ trait TechnoRapper_AI_Wire_Settings {
         }
         $explicit_toggles = !empty($input['social_platform_toggles'])
             || array_key_exists('social_x_enabled', $input)
-            || array_key_exists('social_instagram_enabled', $input);
+            || array_key_exists('social_instagram_enabled', $input)
+            || array_key_exists('social_youtube_enabled', $input);
         $out = array();
         $out['social_x_enabled'] = empty($input['social_x_enabled']) ? 0 : 1;
         $out['social_instagram_enabled'] = empty($input['social_instagram_enabled']) ? 0 : 1;
+        $out['social_youtube_enabled'] = empty($input['social_youtube_enabled']) ? 0 : 1;
+        $category = preg_replace('/[^0-9]/', '', (string) ($input['social_youtube_category_id'] ?? $defaults['social_youtube_category_id']));
+        $out['social_youtube_category_id'] = array_key_exists($category, self::youtube_video_categories()) ? $category : '28';
+        $out['social_youtube_notify_subscribers'] = empty($input['social_youtube_notify_subscribers']) ? 0 : 1;
         if ($explicit_toggles) {
-            $out['social_distribution_enabled'] = ($out['social_x_enabled'] || $out['social_instagram_enabled']) ? 1 : 0;
+            $out['social_distribution_enabled'] = ($out['social_x_enabled'] || $out['social_instagram_enabled'] || $out['social_youtube_enabled']) ? 1 : 0;
         } else {
             $out['social_distribution_enabled'] = empty($input['social_distribution_enabled']) ? 0 : 1;
         }

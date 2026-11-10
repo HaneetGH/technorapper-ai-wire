@@ -2,7 +2,7 @@
 
 **Status:** Architecture and rollout reference for the opt-in social distribution feature. Production validation and a live canary remain separate gates for each operator.  
 **Date:** 9 November 2026  
-**Scope:** Post-publication distribution to X and Instagram on **any** WordPress site that installs the plugin.  
+**Scope:** Post-publication distribution to X, Instagram, and YouTube Shorts on **any** WordPress site that installs the plugin.  
 **Core boundary:** AI Wire owns editorial content and WordPress article publishing. The Distribution Engine owns social copy, social assets and platform delivery. AI-generated images are only for social media; they are never required or generated for the WordPress article.
 
 ## Purpose and design principles
@@ -28,8 +28,10 @@ flowchart LR
     M --> N[Social Creative Engine]
     N --> O[X adapter]
     N --> P[Instagram adapter]
+    N --> R[YouTube adapter]
     O --> Q[Platform result + analytics]
     P --> Q
+    R --> Q
 ```
 
 The separation is intentional:
@@ -38,7 +40,7 @@ The separation is intentional:
 - **The Distribution Engine is a downstream consumer.** It only receives an article after WordPress confirms it is published. A draft, rejected item or failed article publication creates no social post.
 - **The Distribution Agent repackages.** It creates platform-specific copy and creative instructions from approved article fields. It does not write or alter the article.
 - **The Social Creative Engine creates social assets.** It can select an allowed source image, render a branded template, or generate an optional AI image for social destinations only.
-- **Platform adapters deliver independently.** An X failure must not prevent an Instagram post, or vice versa.
+- **Platform adapters deliver independently.** An X, Instagram, or YouTube failure must not prevent the other destinations.
 
 ## System responsibilities
 
@@ -91,21 +93,26 @@ Suggested output (the exact limits must be checked against each platform at impl
     "hashtags": ["Technology"],
     "visual_type": "source_image|branded_card|ai_image",
     "asset_brief": "Instructions for a social-only visual"
+  },
+  "youtube": {
+    "title": "YouTube ranking title, max 100 characters",
+    "description": "Two short lines that finish the lesson; URL is appended",
+    "tags": ["qualcomm", "ai chips"]
   }
 }
 ```
 
-Output validation checks schema, allowed priority/visual type, link correctness, text limits, forbidden unsupported claims and required fields before enqueueing. Invalid output is retried under the normal bounded retry policy or held for review; it is never sent directly to an adapter. Before any X or Instagram publish, outbound copy (captions, Reel script, on-image lines, pack captions) is scanned with a local profanity/slur list and OpenAI Moderation. A hit is held for review and is never posted.
+Output validation checks schema, allowed priority/visual type, link correctness, text limits, forbidden unsupported claims and required fields before enqueueing. Invalid output is retried under the normal bounded retry policy or held for review; it is never sent directly to an adapter. Before any X, Instagram, or YouTube publish, outbound copy (captions, Reel script, YouTube title/description/tags, on-image lines, pack captions) is scanned with a local profanity/slur list and OpenAI Moderation. A hit is held for review and is never posted.
 
 ## End-to-end data flow
 
 1. **Editorial processing:** AI Wire discovers and deduplicates a source, then runs Writer → Reviewer and applies its existing gates.
 2. **Article creation:** A passing item becomes a WordPress draft or published post according to current AI Wire settings. Social work only starts after WordPress confirms `post_status=publish`; a later transition from draft to publish should trigger the same event.
 3. **Publication event:** The Distribution Engine records the WordPress post ID, canonical URL, publication timestamp and an immutable content snapshot/version. It inserts one distribution job using a uniqueness key based on post ID and distribution version.
-4. **Copy generation:** The Distribution Agent receives only approved article fields needed for distribution. It produces separate X and Instagram copy/creative briefs. It does not receive credentials and cannot call platform APIs.
+4. **Copy generation:** The Distribution Agent receives only approved article fields needed for distribution. It produces separate X, Instagram, and YouTube copy/creative briefs. It does not receive credentials and cannot call platform APIs.
 5. **Creative selection:** The Social Creative Engine resolves an asset independently for each platform according to the asset policy below. It stores social assets separately from article media fields.
 6. **Queueing:** A destination delivery is queued only when that platform is enabled, its copy passes validation and required creative is ready. Each destination has an independent state machine.
-7. **Publishing:** The X and Instagram adapters upload/post using the appropriate API and credentials. A successful response records platform post/media IDs and timestamps. An ambiguous timeout is reconciled before another create request is issued.
+7. **Publishing:** The X, Instagram, and YouTube adapters upload/post using the appropriate API and credentials. YouTube Shorts reuse the spoken Reel MP4 and set title, description, tags, category, privacy, made-for-kids, and synthetic-media disclosure in `videos.insert`. A successful response records platform post/media IDs and timestamps. An ambiguous timeout is reconciled before another create request is issued.
 8. **Measurement:** Delivery outcomes and supported platform metrics are stored against the distribution and delivery records. Article analytics remain distinct from social impressions, engagement and referral traffic.
 
 ## Social queue and data model
@@ -134,7 +141,7 @@ Unique constraint: `(post_id, distribution_version)`. A change to an already pub
 | Field | Purpose |
 |---|---|
 | `id`, `distribution_id` | Identity and parent relationship |
-| `platform` | `x` or `instagram` |
+| `platform` | `x`, `instagram`, or `youtube` |
 | `state` | `pending`, `generating_asset`, `ready`, `publishing`, `published`, `retry_wait`, `held`, `failed`, `cancelled` |
 | `copy_json` | Validated, platform-specific copy |
 | `asset_id` | Reference to a social asset, if required |

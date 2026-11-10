@@ -17,8 +17,9 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Social;
     use TechnoRapper_AI_Wire_Social_Reel;
+    use TechnoRapper_AI_Wire_Social_YouTube;
 
-    const VERSION = '0.2.53';
+    const VERSION = '0.2.54';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';

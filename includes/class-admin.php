@@ -161,12 +161,12 @@ trait TechnoRapper_AI_Wire_Admin {
             $backfill = (int) ($_GET['social_backfill'] ?? 0);
             $backfill_platform = sanitize_key((string) ($_GET['social_backfill_platform'] ?? ''));
             if ($backfill > 0 && $backfill_platform !== '') {
-                $label = $backfill_platform === 'instagram' ? 'Instagram' : 'X';
+                $label = TechnoRapper_AI_Wire::social_platform_label($backfill_platform);
                 echo ' Queued ' . esc_html((string) $backfill) . ' existing article' . ($backfill === 1 ? '' : 's') . ' for ' . esc_html($label) . ' using saved graphics — no new images will be generated.';
             }
             ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
-            <p>Connect X and Instagram here, then turn either network on or off without removing its tokens. Delivery status is on the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Social queue</a>.</p>
+            <p>Connect X, Instagram, and YouTube here, then turn each network on or off without removing its tokens. Delivery status is on the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Social queue</a>.</p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data">
                 <input type="hidden" name="action" value="tr_ai_wire_save_social_credentials">
                 <input type="hidden" name="<?php echo esc_attr($option); ?>[social_platform_toggles]" value="1">
@@ -198,14 +198,50 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p class="description">Leave this off to keep the Instagram token saved without posting. X can stay on. Use the Facebook Page access token from Graph API Explorer GET me/accounts, not the User Token at the top of Explorer.</p>
                 </div>
                 <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+                    <h2>YouTube</h2>
+                    <?php
+                    $yt_ready = TechnoRapper_AI_Wire::youtube_credentials_ready($social_credentials);
+                    $yt_oauth_ready = TechnoRapper_AI_Wire_YouTube_OAuth::configured($social_credentials);
+                    $yt_on = !empty($s['social_youtube_enabled']) || !$yt_ready;
+                    $yt_channel = (string) ($social_credentials['youtube_channel_title'] ?? '');
+                    ?>
+                    <p>Status: <?php echo $yt_ready ? '<strong>channel connected' . ($yt_channel !== '' ? ' — ' . esc_html($yt_channel) : '') . '</strong>' : '<strong>not connected</strong>'; ?> · posting is <strong><?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'on' : 'off'; ?></strong></p>
+                    <p class="description">YouTube gets the same spoken 9:16 Short as the Instagram Reel — not a still image. The file uploads <strong>public immediately</strong>: title, description, tags, category, language, license, audience (not made for kids), and AI-content disclosure are all set in that API call. There is no YouTube draft or scheduled-publish step. Google does not charge per upload; default quota is 100 uploads/day.</p>
+                    <p><strong>Connect with Google sign-in.</strong> A YouTube or Google API key cannot upload. Google requires OAuth (Sign in with Google) so this site can post as your channel. The client ID/secret below identify this plugin; they are not the channel login.</p>
+                    <p><label for="tr-yt-client-id"><strong>Google OAuth client ID</strong></label><br><input id="tr-yt-client-id" name="social[youtube_client_id]" type="text" class="regular-text" autocomplete="off" placeholder="<?php echo TechnoRapper_AI_Wire_YouTube_OAuth::client_id($social_credentials) !== '' ? esc_attr('Saved — enter a new ID to replace it') : esc_attr('Google Cloud → APIs & Services → Credentials → OAuth client'); ?>" value=""></p>
+                    <p><label for="tr-yt-client-secret"><strong>Google OAuth client secret</strong></label><br><input id="tr-yt-client-secret" name="social[youtube_client_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo TechnoRapper_AI_Wire_YouTube_OAuth::client_secret($social_credentials) !== '' ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('OAuth client secret, not an API key'); ?>"></p>
+                    <p class="description">Create a Web application OAuth client, enable YouTube Data API v3, and add this redirect URI: <code><?php echo esc_html(TechnoRapper_AI_Wire_YouTube_OAuth::redirect_uri()); ?></code>. Or set <code>TR_AI_WIRE_GOOGLE_CLIENT_ID</code> and <code>TR_AI_WIRE_GOOGLE_CLIENT_SECRET</code> in wp-config.php.</p>
+                    <?php if ($yt_oauth_ready) : ?>
+                    <p><a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_youtube_oauth_start'), 'tr_ai_wire_youtube_oauth_start')); ?>"><?php echo $yt_ready ? 'Reconnect with Google' : 'Sign in with Google'; ?></a> <span class="description">Opens Google single sign-on, then returns a channel refresh token. That is the supported upload login.</span></p>
+                    <?php else : ?>
+                    <p class="description">Save the Google OAuth client ID and secret first, then a <strong>Sign in with Google</strong> button appears here.</p>
+                    <?php endif; ?>
+                    <details style="margin:12px 0;">
+                        <summary>Advanced: paste a Google refresh token instead</summary>
+                        <p class="description">Use this only if you already completed Google OAuth elsewhere. A YouTube Data API key will not work here. A refresh token stays valid; an access token expires in about an hour.</p>
+                        <p><label for="tr-yt-refresh"><strong>Google refresh token</strong></label><br><input id="tr-yt-refresh" name="social[youtube_refresh_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['youtube_refresh_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('OAuth refresh token for the channel'); ?>"></p>
+                        <p><label for="tr-yt-access"><strong>Google access token</strong> (optional)</label><br><input id="tr-yt-access" name="social[youtube_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['youtube_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Short-lived; leave blank to refresh automatically'); ?>"></p>
+                    </details>
+                    <?php if ($yt_ready) : ?><p><label><input type="checkbox" name="remove_youtube_oauth" value="1"> Remove saved YouTube channel</label></p><?php endif; ?>
+                    <p><label><input id="tr-social-yt-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_youtube_enabled]" value="1" <?php checked($yt_on); ?>> <strong>Post to YouTube Shorts</strong></label></p>
+                    <p><label for="tr-yt-category">YouTube category</label>
+                    <select id="tr-yt-category" name="<?php echo esc_attr($option); ?>[social_youtube_category_id]">
+                        <?php foreach (TechnoRapper_AI_Wire::youtube_video_categories() as $cat_id => $cat_label) : ?>
+                        <option value="<?php echo esc_attr((string) $cat_id); ?>" <?php selected((string) ($s['social_youtube_category_id'] ?? '28'), (string) $cat_id); ?>><?php echo esc_html($cat_label); ?></option>
+                        <?php endforeach; ?>
+                    </select></p>
+                    <p><label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_youtube_notify_subscribers]" value="1" <?php checked(!empty($s['social_youtube_notify_subscribers'])); ?>> Notify YouTube subscribers when a Short goes live</label></p>
+                    <p class="description">Leave posting off to keep the channel connected without uploading. Reels per day still gates the spoken file. X and Instagram stills are unchanged. Subscriber notifications are optional; the Short is public either way.</p>
+                </div>
+                <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
                     <h2>Distribution</h2>
                     <p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per network that is turned on.</span></p>
-                    <p class="description">Outbound captions, Reel scripts, and on-image lines are scanned for profanity/slurs and sent through OpenAI Moderation before X or Instagram. A fail holds the job for review — it does not post.</p>
+                    <p class="description">Outbound captions, Reel scripts, YouTube titles/descriptions/tags, and on-image lines are scanned for profanity/slurs and sent through OpenAI Moderation before X, Instagram, or YouTube. A fail holds the job for review — it does not post.</p>
                     <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_mix_saved]" value="1">
                     <h3 style="margin:16px 0 8px;">How many of each post</h3>
                     <p class="description">Set a type to 0 to turn it off. The job fills Reel quota first (one spoken story), then carousel, then collages, then single stories.</p>
-                    <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"> <span class="description">Spoken 9:16 Instagram video of one article. 0 keeps Reels off. X still gets the still poster.</span></p>
+                    <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"> <span class="description">Spoken 9:16 video of one article. 0 keeps Reels and YouTube Shorts off. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X still gets the still poster.</span></p>
                     <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 2); ?>"> <span class="description">Swipeable Instagram posts. Each one uses several website articles and a curiosity slide so people keep swiping.</span></p>
                     <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
                     <p><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"> <span class="description">Several website articles in one grid image.</span></p>
@@ -314,7 +350,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <?php endforeach; ?>
                 </tbody>
             </table>
-            <p class="description">Writer GPT script tokens stay on the article budget. Mini TTS is about $0.004 per voiceover on the image budget. X API credits and Instagram quota are separate. Fal bills the motion clip; the plugin only reserves the local estimate above.</p>
+            <p class="description">Writer GPT script tokens stay on the article budget. Mini TTS is about $0.004 per voiceover on the image budget. X API credits, Instagram quota, and YouTube Data API quota are separate. Fal bills the motion clip; the plugin only reserves the local estimate above. YouTube uploads have no Google per-video fee.</p>
             <h2>Social stills</h2>
             <p>GPT Image 2 low is about <strong>$0.006</strong> per branded poster. Default image budget is $5/month. Details: plugin file <code>docs/IMAGE-GENERATION-COST.md</code>.</p>
         </div>
