@@ -81,16 +81,73 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_reel_video_models() {
         return array(
             'veo-lite' => array(
+                'label' => 'Veo 3.1 Lite',
+                'short' => 'Suggested for a $10/month budget',
+                'recommended' => true,
                 'endpoint' => 'fal-ai/veo3.1/lite/image-to-video',
                 'usd_per_second' => 0.03,
+                'durations' => array(4, 6, 8),
+                'image_field' => 'image_url',
+                'duration_suffix' => 's',
+                'resolution' => '720p',
+                'aspect_ratio' => '9:16',
+                'auto_fix' => true,
+                'docs' => 'https://fal.ai/models/fal-ai/veo3.1/lite/image-to-video',
+                'blurb' => 'Silent 720p image-to-video. Cheapest Veo that still looks like camera motion, not a Ken Burns still.',
             ),
             'veo-fast' => array(
+                'label' => 'Veo 3.1 Fast',
+                'short' => 'Sharper motion when traffic pays',
+                'recommended' => false,
                 'endpoint' => 'fal-ai/veo3.1/fast/image-to-video',
                 'usd_per_second' => 0.10,
+                'durations' => array(4, 6, 8),
+                'image_field' => 'image_url',
+                'duration_suffix' => 's',
+                'resolution' => '720p',
+                'aspect_ratio' => '9:16',
+                'auto_fix' => true,
+                'docs' => 'https://fal.ai/models/fal-ai/veo3.1/fast/image-to-video',
+                'blurb' => 'Same 4/6/8s Veo family, higher fidelity. About 3× Lite. Raise the video budget first.',
             ),
             'veo' => array(
+                'label' => 'Veo 3.1',
+                'short' => 'Full Veo look, highest Veo bill',
+                'recommended' => false,
                 'endpoint' => 'fal-ai/veo3.1/image-to-video',
                 'usd_per_second' => 0.20,
+                'durations' => array(4, 6, 8),
+                'image_field' => 'image_url',
+                'duration_suffix' => 's',
+                'resolution' => '720p',
+                'aspect_ratio' => '9:16',
+                'auto_fix' => true,
+                'docs' => 'https://fal.ai/models/fal-ai/veo3.1/image-to-video',
+                'blurb' => 'Flagship Veo stills-to-motion. 8s is about $1.60 — roughly $48/month at one Reel/day.',
+            ),
+            'kling-std' => array(
+                'label' => 'Kling 3.0 Standard',
+                'short' => 'Longer clips (up to 15s)',
+                'recommended' => false,
+                'endpoint' => 'fal-ai/kling-video/v3/standard/image-to-video',
+                'usd_per_second' => 0.084,
+                'durations' => array(5, 8, 10, 15),
+                'image_field' => 'start_image_url',
+                'duration_suffix' => '',
+                'docs' => 'https://fal.ai/models/fal-ai/kling-video/v3/standard/image-to-video',
+                'blurb' => 'Silent Kling Standard. 8s is about $0.67; 15s is about $1.26. Use when you want a longer moving shot than Veo 8s.',
+            ),
+            'kling-pro' => array(
+                'label' => 'Kling 3.0 Pro',
+                'short' => 'Best motion, highest bill',
+                'recommended' => false,
+                'endpoint' => 'fal-ai/kling-video/v3/pro/image-to-video',
+                'usd_per_second' => 0.112,
+                'durations' => array(5, 8, 10, 15),
+                'image_field' => 'start_image_url',
+                'duration_suffix' => '',
+                'docs' => 'https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video',
+                'blurb' => 'Silent Kling Pro, up to 15s. 8s is about $0.90; 15s is about $1.68 — a $10 budget is only a handful of clips.',
             ),
         );
     }
@@ -104,8 +161,21 @@ trait TechnoRapper_AI_Wire_Social_Reel {
 
     private function social_reel_clip_seconds($settings = null) {
         $settings = is_array($settings) ? $settings : $this->settings();
-        $seconds = absint($settings['social_reel_clip_seconds'] ?? 8);
-        return in_array($seconds, array(4, 6, 8), true) ? $seconds : 8;
+        $wanted = absint($settings['social_reel_clip_seconds'] ?? 8);
+        $model = $this->social_reel_video_model($settings);
+        $models = $this->social_reel_video_models();
+        $allowed = isset($models[$model]['durations']) ? (array) $models[$model]['durations'] : array(4, 6, 8);
+        if (in_array($wanted, $allowed, true)) {
+            return $wanted;
+        }
+        $best = (int) $allowed[0];
+        foreach ($allowed as $seconds) {
+            $seconds = (int) $seconds;
+            if (abs($seconds - $wanted) < abs($best - $wanted)) {
+                $best = $seconds;
+            }
+        }
+        return $best;
     }
 
     private function social_reel_video_estimate_usd($settings = null) {
@@ -114,6 +184,29 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $model = $this->social_reel_video_model($settings);
         $rate = (float) ($models[$model]['usd_per_second'] ?? 0.03);
         return round($this->social_reel_clip_seconds($settings) * $rate, 4);
+    }
+
+    private function social_fal_motion_payload($model, $image_url, $prompt, $seconds) {
+        $models = $this->social_reel_video_models();
+        $spec = isset($models[$model]) ? $models[$model] : $models[self::SOCIAL_REEL_VIDEO_DEFAULT];
+        $field = (string) ($spec['image_field'] ?? 'image_url');
+        $suffix = (string) ($spec['duration_suffix'] ?? 's');
+        $payload = array(
+            'prompt' => $this->clip_social_text($prompt, 1200),
+            $field => $image_url,
+            'duration' => (string) $seconds . $suffix,
+            'generate_audio' => false,
+        );
+        if (!empty($spec['aspect_ratio'])) {
+            $payload['aspect_ratio'] = (string) $spec['aspect_ratio'];
+        }
+        if (!empty($spec['resolution'])) {
+            $payload['resolution'] = (string) $spec['resolution'];
+        }
+        if (!empty($spec['auto_fix'])) {
+            $payload['auto_fix'] = true;
+        }
+        return $payload;
     }
 
     private function fallback_reel_script($copy, $post) {
@@ -504,15 +597,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
         $prompt = $brief !== '' ? $brief : 'Photoreal cinematic news B-roll of the story, slow camera move.';
         $prompt .= ' Slow cinematic push-in, natural light, no text, no logos, no watermarks, no subtitles, no captions.';
-        $submitted = $this->social_fal_submit($endpoint, array(
-            'prompt' => $this->clip_social_text($prompt, 1200),
-            'image_url' => $image_url,
-            'aspect_ratio' => '9:16',
-            'duration' => (string) $seconds . 's',
-            'resolution' => '720p',
-            'generate_audio' => false,
-            'auto_fix' => true,
-        ));
+        $submitted = $this->social_fal_submit($endpoint, $this->social_fal_motion_payload($model, $image_url, $prompt, $seconds));
         if (is_wp_error($submitted)) {
             return $submitted;
         }

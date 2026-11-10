@@ -251,11 +251,11 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_daily_limit'] = min(20, max(1, absint($input['social_daily_limit'] ?? $defaults['social_daily_limit'])));
         $out['social_image_budget_usd'] = min(10000, max(0, (float) ($input['social_image_budget_usd'] ?? $defaults['social_image_budget_usd'])));
         $out['social_video_budget_usd'] = min(10000, max(0, (float) ($input['social_video_budget_usd'] ?? $defaults['social_video_budget_usd'])));
-        $video_models = array('veo-lite', 'veo-fast', 'veo');
+        $video_models = array_keys($this->social_reel_video_models());
         $video_model = sanitize_key((string) ($input['social_reel_video_model'] ?? $defaults['social_reel_video_model']));
         $out['social_reel_video_model'] = in_array($video_model, $video_models, true) ? $video_model : 'veo-lite';
         $clip = absint($input['social_reel_clip_seconds'] ?? $defaults['social_reel_clip_seconds']);
-        $out['social_reel_clip_seconds'] = in_array($clip, array(4, 6, 8), true) ? $clip : 8;
+        $out['social_reel_clip_seconds'] = in_array($clip, array(4, 5, 6, 8, 10, 15), true) ? $clip : 8;
         $formats = array('single', 'carousel', 'collage', 'reel');
         $format = sanitize_key((string) ($input['social_post_format'] ?? $defaults['social_post_format']));
         $out['social_post_format'] = in_array($format, $formats, true) ? $format : 'single';

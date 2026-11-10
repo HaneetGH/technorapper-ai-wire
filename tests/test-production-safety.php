@@ -2565,6 +2565,28 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(6, (int) $upgraded['social_reel_clip_seconds']);
         $this->assertSame(0.24, $this->invoke_private('social_reel_video_estimate_usd', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertLessThan(10.0, $this->invoke_private('social_reel_video_estimate_usd', array(TechnoRapper_AI_Wire::defaults())) * 30);
+        $kling = $this->plugin->sanitize_settings(array(
+            'social_post_format' => 'reel',
+            'social_reel_video_model' => 'kling-pro',
+            'social_reel_clip_seconds' => 15,
+        ));
+        $this->assertSame('kling-pro', $kling['social_reel_video_model']);
+        $this->assertSame(15, (int) $kling['social_reel_clip_seconds']);
+        $this->assertTrue(!empty($this->invoke_private('social_reel_video_models')['veo-lite']['recommended']));
+        $this->assertSame(5, $this->invoke_private('social_reel_clip_seconds', array(array(
+            'social_reel_video_model' => 'kling-std',
+            'social_reel_clip_seconds' => 4,
+        ))));
+        $kling_payload = $this->invoke_private('social_fal_motion_payload', array(
+            'kling-std',
+            'https://example.org/broll.jpg',
+            'Slow cinematic push-in',
+            8,
+        ));
+        $this->assertSame('https://example.org/broll.jpg', $kling_payload['start_image_url'] ?? '');
+        $this->assertArrayNotHasKey('image_url', $kling_payload);
+        $this->assertSame('8', $kling_payload['duration'] ?? '');
+        $this->assertFalse($kling_payload['generate_audio'] ?? true);
         $rejected = $this->plugin->sanitize_settings(array(
             'social_post_format' => 'album',
             'social_slide_count' => 9,
