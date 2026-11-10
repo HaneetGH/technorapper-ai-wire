@@ -187,6 +187,7 @@ trait TechnoRapper_AI_Wire_Social {
             $this->kick_social_queue(5);
             $this->queue_site_context_job(!$was_connected);
         }
+        $this->process_social_ideas_from_request();
         wp_safe_redirect(add_query_arg(array(
             'page' => 'tr-ai-wire-social-settings',
             'social_credentials_saved' => '1',
@@ -194,6 +195,183 @@ trait TechnoRapper_AI_Wire_Social {
             'social_backfill_platform' => $backfill_platform,
         ), admin_url('admin.php')));
         exit;
+    }
+
+    private function social_custom_ideas() {
+        $stored = get_option(self::SOCIAL_IDEAS_OPTION, array());
+        $items = is_array($stored) ? ($stored['items'] ?? $stored) : array();
+        $clean = array();
+        foreach ((array) $items as $item) {
+            $idea = $this->sanitize_social_idea_item($item);
+            if ($idea) {
+                $clean[] = $idea;
+            }
+        }
+        return $clean;
+    }
+
+    private function save_social_custom_ideas($ideas) {
+        $items = array();
+        foreach ((array) $ideas as $item) {
+            $idea = $this->sanitize_social_idea_item($item);
+            if ($idea) {
+                $items[] = $idea;
+            }
+        }
+        $payload = array(
+            'items' => $items,
+            'updated_at' => current_time('mysql', true),
+        );
+        if (get_option(self::SOCIAL_IDEAS_OPTION, null) === null) {
+            add_option(self::SOCIAL_IDEAS_OPTION, $payload, '', false);
+            return $items;
+        }
+        update_option(self::SOCIAL_IDEAS_OPTION, $payload, false);
+        return $items;
+    }
+
+    private function sanitize_social_idea_item($item) {
+        if (!is_array($item)) {
+            return null;
+        }
+        $title = $this->clip_social_text($item['title'] ?? '', 80);
+        $description = $this->clip_social_block($item['description'] ?? '', 800);
+        if ($title === '' || $description === '') {
+            return null;
+        }
+        $id = sanitize_key((string) ($item['id'] ?? ''));
+        if (!preg_match('/^idea_[a-z0-9]+$/', $id)) {
+            $id = 'idea_' . substr(md5($title . '|' . $description), 0, 12);
+        }
+        $image_id = absint($item['image_id'] ?? 0);
+        if ($image_id > 0 && !wp_attachment_is_image($image_id)) {
+            $image_id = 0;
+        }
+        return array(
+            'id' => $id,
+            'title' => $title,
+            'description' => $description,
+            'image_id' => $image_id,
+            'enabled' => empty($item['enabled']) ? 0 : 1,
+            'created_at' => sanitize_text_field((string) ($item['created_at'] ?? current_time('mysql', true))),
+        );
+    }
+
+    private function process_social_ideas_from_request() {
+        $remove = array();
+        foreach ((array) wp_unslash($_POST['remove_social_idea'] ?? array()) as $id) {
+            $id = sanitize_key((string) $id);
+            if ($id !== '') {
+                $remove[] = $id;
+            }
+        }
+        $enabled = array();
+        foreach ((array) wp_unslash($_POST['social_idea_enabled'] ?? array()) as $id) {
+            $id = sanitize_key((string) $id);
+            if ($id !== '') {
+                $enabled[] = $id;
+            }
+        }
+        $has_idea_fields = isset($_POST['social_idea_keep']) || isset($_POST['social_idea_enabled']) || isset($_POST['remove_social_idea']);
+        $next = array();
+        foreach ($this->social_custom_ideas() as $idea) {
+            if (in_array($idea['id'], $remove, true)) {
+                continue;
+            }
+            if ($has_idea_fields) {
+                $idea['enabled'] = in_array($idea['id'], $enabled, true) ? 1 : 0;
+            }
+            $next[] = $idea;
+        }
+        $created = $this->social_idea_from_request_upload();
+        if (is_array($created)) {
+            $next[] = $created;
+        }
+        $this->save_social_custom_ideas($next);
+    }
+
+    private function social_idea_from_request_upload() {
+        $title = $this->clip_social_text(wp_unslash($_POST['social_idea_title'] ?? ''), 80);
+        $description = $this->clip_social_block(wp_unslash($_POST['social_idea_description'] ?? ''), 800);
+        $has_file = !empty($_FILES['social_idea_image']['name']) && !empty($_FILES['social_idea_image']['tmp_name']);
+        if ($title === '' || $description === '') {
+            return null;
+        }
+        $image_id = 0;
+        if ($has_file) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            $uploaded = media_handle_upload('social_idea_image', 0);
+            if (!is_wp_error($uploaded)) {
+                $image_id = (int) $uploaded;
+                update_post_meta($image_id, '_tr_ai_wire_social_idea', '1');
+            }
+        }
+        return array(
+            'id' => 'idea_' . strtolower(wp_generate_password(8, false, false)),
+            'title' => $title,
+            'description' => $description,
+            'image_id' => $image_id,
+            'enabled' => 1,
+            'created_at' => current_time('mysql', true),
+        );
+    }
+
+    private function social_custom_idea($id) {
+        $id = sanitize_key((string) $id);
+        foreach ($this->social_custom_ideas() as $idea) {
+            if ($idea['id'] === $id) {
+                return $idea;
+            }
+        }
+        return null;
+    }
+
+    private function selected_social_news_formats($settings, $role = 'story') {
+        $catalog = self::social_news_formats();
+        $chosen = array();
+        $saved = isset($settings['social_news_formats']) ? (array) $settings['social_news_formats'] : array_keys($catalog);
+        foreach ($saved as $id) {
+            $id = sanitize_key((string) $id);
+            if (!isset($catalog[$id])) {
+                continue;
+            }
+            if ($role !== '' && (($catalog[$id]['role'] ?? 'story') !== $role)) {
+                continue;
+            }
+            $chosen[] = $id;
+        }
+        if ($role !== 'cover') {
+            foreach ($this->social_custom_ideas() as $idea) {
+                if (!empty($idea['enabled'])) {
+                    $chosen[] = $idea['id'];
+                }
+            }
+        }
+        if (!$chosen && $role === 'story') {
+            $chosen[] = 'editorial_poster';
+        }
+        return array_values(array_unique($chosen));
+    }
+
+    private function social_news_format_for_post($post, $settings, $role = 'story') {
+        $pool = $this->selected_social_news_formats($settings, $role);
+        if (!$pool) {
+            return '';
+        }
+        $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
+        $revision = $id > 0 ? (int) get_post_meta($id, '_tr_ai_wire_social_image_revision', true) : 0;
+        $index = (int) (sprintf('%u', crc32($role . ':' . $id . ':' . $revision)) % count($pool));
+        return $pool[$index];
+    }
+
+    private function social_news_format_has_custom_overlay($format) {
+        $format = sanitize_key((string) $format);
+        if (in_array($format, array('photo_brief', 'weekly_recap', 'numbered_roundup', 'product_roundup', 'rumor_card', 'device_mockup'), true)) {
+            return true;
+        }
+        return $this->social_custom_idea($format) ? true : false;
     }
 
     private function site_context_defaults() {
@@ -904,6 +1082,95 @@ trait TechnoRapper_AI_Wire_Social {
         return $pack;
     }
 
+    private function social_pack_cover_url($prepared, $settings) {
+        $cover_id = $this->maybe_social_pack_cover($prepared, $settings);
+        if ($cover_id < 1) {
+            return '';
+        }
+        $url = wp_get_attachment_url($cover_id);
+        return (is_string($url) && $url !== '' && wp_http_validate_url($url)) ? $url : '';
+    }
+
+    private function maybe_social_pack_cover($prepared, $settings) {
+        if (!is_array($prepared) || count($prepared) < 2) {
+            return 0;
+        }
+        $lead = $prepared[0]['post'] ?? null;
+        if (!$lead instanceof WP_Post) {
+            return 0;
+        }
+        $format = $this->social_news_format_for_post($lead, $settings, 'cover');
+        if ($format === '') {
+            return 0;
+        }
+        $copy = $this->social_cover_copy($prepared, $format);
+        $catalog = self::social_news_formats();
+        $family = (string) ($catalog[$format]['family'] ?? 'title_card');
+        if ($family === 'photo' && !empty($prepared[0]['image_path']) && is_readable($prepared[0]['image_path'])) {
+            $bytes = file_get_contents($prepared[0]['image_path']);
+            $branded = is_string($bytes) ? $this->brand_social_image($bytes, $copy) : null;
+        } else {
+            $branded = $this->render_local_social_graphic($copy);
+        }
+        if (is_wp_error($branded) || !is_string($branded) || $branded === '') {
+            return 0;
+        }
+        $stored = $this->store_social_jpeg($lead, $branded, (string) ($copy['on_image_headline'] ?? self::site_brand_name()), $copy, 'cover', 'cover');
+        return is_wp_error($stored) ? 0 : (int) $stored;
+    }
+
+    private function social_cover_copy($prepared, $format) {
+        $count = max(2, count($prepared));
+        $topic = $this->social_cover_topic($prepared);
+        $tagline = trim(wp_strip_all_tags((string) get_bloginfo('description')));
+        if ($tagline === '') {
+            $tagline = 'Stories from ' . self::site_brand_name();
+        }
+        $copy = array(
+            '_news_format' => $format,
+            'instagram_alt' => self::site_brand_name() . ' roundup cover',
+            'on_image_kicker' => strtoupper($topic) . ' NEWS',
+        );
+        if ($format === 'weekly_recap') {
+            $copy['on_image_headline'] = 'THIS WEEK IN ' . $topic;
+            $copy['on_image_subhead'] = $this->clip_social_text($tagline, 48);
+            return $copy;
+        }
+        if ($format === 'numbered_roundup') {
+            $copy['on_image_headline'] = $count . ' ' . strtolower($topic) . ' shifts this week you can\'t ignore';
+            return $copy;
+        }
+        $copy['on_image_headline'] = $count . ' BIG ' . $topic . ' NEWS';
+        $copy['on_image_subhead'] = 'YOU NEED TO KNOW';
+        return $copy;
+    }
+
+    private function social_cover_topic($prepared) {
+        foreach ((array) $prepared as $item) {
+            $copy = is_array($item['copy'] ?? null) ? $item['copy'] : array();
+            $category = strtoupper($this->clip_social_text((string) ($copy['category'] ?? ''), 16));
+            if ($category !== '' && !is_numeric($category)) {
+                return $category;
+            }
+            if ($item['post'] instanceof WP_Post) {
+                $snapshot = $this->social_article_snapshot($item['post']);
+                $category = strtoupper($this->clip_social_text((string) ($snapshot['category'] ?? ''), 16));
+                if ($category !== '' && !is_numeric($category)) {
+                    return $category;
+                }
+            }
+        }
+        $profile = $this->site_context_profile();
+        $desks = (array) ($profile['desks'] ?? array());
+        if (!empty($desks[0])) {
+            $desk = strtoupper($this->clip_social_text((string) $desks[0], 16));
+            if ($desk !== '') {
+                return $desk;
+            }
+        }
+        return 'TECH';
+    }
+
     private function publish_instagram_pack($pack, $credentials, $settings) {
         if (empty($credentials['instagram_user_access_token']) || empty($credentials['instagram_user_id'])) {
             return new WP_Error('tr_ai_wire_ig_missing_token', 'The Instagram access token or account ID is no longer configured.');
@@ -923,6 +1190,16 @@ trait TechnoRapper_AI_Wire_Social {
         $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'carousel');
         $caption = $this->instagram_pack_caption($prepared);
         $alt = (string) ($prepared[0]['copy']['instagram_alt'] ?? (self::site_brand_name() . ' stories'));
+        if ($format === 'carousel') {
+            $cover_url = $this->social_pack_cover_url($prepared, $settings);
+            if ($cover_url) {
+                $urls = array($cover_url);
+                foreach ($prepared as $item) {
+                    $urls[] = $item['image_url'];
+                }
+                return $this->publish_instagram_post($caption, $alt, $urls, $credentials);
+            }
+        }
         if ($format === 'collage') {
             $bytes = array();
             foreach ($prepared as $item) {
@@ -1150,13 +1427,15 @@ trait TechnoRapper_AI_Wire_Social {
         $system = 'You are the social desk for ' . $brand . '. Repackage an already-published article for X and Instagram. Do not write a new article. Use only supplied article fields plus the site context. Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. Return JSON only.';
         $user = 'Build one social package that matches this publisher\'s priorities. Principles to hit when the article supports them: hook that stops the scroll; curiosity; a feeling (stakes for a reader\'s phone/job/money, not melodrama); relatability; pattern interrupt; before/after contrast; a tiny story; useful value; a clear CTA to read the article; branding; shareability; saveability; cultural relevance when the source has it. '
             . 'on_image_headline: Instagram poster headline, 4–9 words, punchy, can include a number only if it is in the article. Written to sit in huge condensed type on a photo, so keep it short enough for 2–3 lines. on_image_subhead: one supporting line, max 10 words. '
-            . 'visual_brief: describe only the photograph (tight device close-up, crowded office from behind, factory, night city, server hall). Prefer dusk, night, or hard rim light. Do not include the headline wording. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
+            . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits the article. Use RUMORS only if the article itself is a rumor or leak. '
+            . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks** so they can be highlighted on the graphic. Never invent facts. '
+            . 'visual_brief: describe only the photograph (tight device close-up, crowded office from behind, factory, night city, server hall, product still life). Prefer dusk, night, or hard rim light. Do not include the headline wording. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
             . 'x_text: hook plus one curiosity or value line; do not include the URL. instagram_caption: hook, 2–4 short lines of value/story, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags for this site, no spam. instagram_alt: factual description of the graphic. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }
         $user .= "Article JSON:\n" . wp_json_encode($snapshot)
-            . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array).";
+            . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array).";
         $copy_settings = $s;
         $copy_settings['max_output_tokens'] = min(1200, max(400, (int) ($s['max_output_tokens'] ?? 1200)));
         return $this->ai_json($s['writer_model'] ?? 'gpt-6-luna', $system, $user, $copy_settings, false);
@@ -1207,10 +1486,13 @@ trait TechnoRapper_AI_Wire_Social {
             }
         }
         $caption = $this->clip_social_block($caption, 2200);
+        $kicker = $this->clip_social_text($raw['on_image_kicker'] ?? $raw['kicker'] ?? '', 28);
         return array(
             'hook' => $hook,
             'on_image_headline' => $headline,
             'on_image_subhead' => $subhead,
+            'on_image_kicker' => $kicker,
+            'on_image_bullets' => $this->sanitize_social_bullets($raw, $post),
             'visual_brief' => $visual,
             'cta' => $cta,
             'x' => $x,
@@ -1218,6 +1500,64 @@ trait TechnoRapper_AI_Wire_Social {
             'instagram_alt' => $alt,
             'hashtags' => $hashtags,
         );
+    }
+
+    private function sanitize_social_bullets($raw, $post) {
+        $bullets = array();
+        $source = array();
+        if (is_array($raw) && isset($raw['on_image_bullets'])) {
+            $source = (array) $raw['on_image_bullets'];
+        } elseif (is_array($raw) && isset($raw['bullets'])) {
+            $source = (array) $raw['bullets'];
+        }
+        foreach ($source as $bullet) {
+            if (is_array($bullet)) {
+                $bullet = (string) ($bullet['text'] ?? '');
+            }
+            $bullet = $this->sanitize_social_bullet_text($bullet);
+            if ($bullet === '' || in_array($bullet, $bullets, true)) {
+                continue;
+            }
+            $bullets[] = $bullet;
+            if (count($bullets) >= 3) {
+                return $bullets;
+            }
+        }
+        $snapshot = ($post instanceof WP_Post) ? $this->social_article_snapshot($post) : array('key_takeaways' => array(), 'excerpt' => '');
+        foreach ((array) ($snapshot['key_takeaways'] ?? array()) as $line) {
+            $line = $this->sanitize_social_bullet_text($line);
+            if ($line === '' || in_array($line, $bullets, true)) {
+                continue;
+            }
+            $bullets[] = $line;
+            if (count($bullets) >= 3) {
+                return $bullets;
+            }
+        }
+        $excerpt = trim((string) ($snapshot['excerpt'] ?? ''));
+        if ($excerpt !== '' && count($bullets) < 3) {
+            foreach (preg_split('/(?<=[.!?])\s+/', $excerpt) as $sentence) {
+                $sentence = $this->sanitize_social_bullet_text($sentence);
+                if ($sentence === '' || in_array($sentence, $bullets, true)) {
+                    continue;
+                }
+                $bullets[] = $sentence;
+                if (count($bullets) >= 3) {
+                    break;
+                }
+            }
+        }
+        return $bullets;
+    }
+
+    private function sanitize_social_bullet_text($value) {
+        $value = preg_replace('/\s+/', ' ', wp_strip_all_tags((string) $value));
+        $value = trim((string) $value);
+        if ($value === '') {
+            return '';
+        }
+        $value = preg_replace('/\*{3,}/', '**', $value);
+        return $this->limit_social_chars($value, 110);
     }
 
     private function clip_social_text($value, $max) {
@@ -1283,7 +1623,13 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_social_image_key', 'Add the OpenAI API key before generating social images.');
         }
         $copy = is_array($copy) ? $copy : array();
-        $copy['_poster_variant'] = $this->social_poster_variant_for_post($post);
+        $copy['_news_format'] = $this->social_news_format_for_post($post, $settings, 'story');
+        $copy['_poster_variant'] = ($copy['_news_format'] === 'breaking_kicker')
+            ? 'kicker-bar'
+            : $this->social_poster_variant_for_post($post);
+        if ($copy['_news_format'] === 'breaking_kicker' && empty($copy['on_image_kicker'])) {
+            $copy['on_image_kicker'] = 'TECH NEWS';
+        }
         $headline = (string) ($copy['on_image_headline'] ?? $post->post_title);
         $prompt = $this->social_image_prompt($post, $copy);
         $response = wp_remote_post('https://api.openai.com/v1/images/generations', array(
@@ -1357,20 +1703,70 @@ trait TechnoRapper_AI_Wire_Social {
         $profile = $this->site_context_profile();
         $revision = ($post instanceof WP_Post) ? (int) get_post_meta($post->ID, '_tr_ai_wire_social_image_revision', true) : 0;
         $variant = $this->normalize_poster_variant($copy['_poster_variant'] ?? $this->social_poster_variant_for_post($post));
-        $prompt = 'Untitled photoreal cinematic photograph, vertical 4:5, full-bleed, no graphic design. '
-            . 'One real-world scene, magazine lighting, shallow depth of field, high contrast. This is a photograph, not a poster, not a title card, not a thumbnail. '
-            . $this->social_image_safe_zone($variant) . ' '
-            . 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. '
-            . 'Do not draw a poster, card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup. '
-            . 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. '
-            . 'Art direction: ' . $this->social_image_art_direction($profile) . '. '
-            . 'Camera: ' . $this->social_image_camera($post, $revision) . '. '
-            . ($brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one clear technology-news photograph with a single subject. ')
-            . 'Make the picture stop a social-media scroll.';
+        $format = sanitize_key((string) ($copy['_news_format'] ?? ''));
+        $prompt = $this->social_image_prompt_for_format($format, $variant, $post, $revision, $profile, $brief);
+        $idea = $this->social_custom_idea($format);
+        if ($idea) {
+            $prompt .= ' Publisher-supplied format idea (layout inspiration only; do not copy trademarks, celebrity likenesses, or any specific headline from a reference): '
+                . $this->clip_social_text($idea['title'] . '. ' . $idea['description'], 420) . '.';
+            if (!empty($idea['image_id'])) {
+                $prompt .= ' Match the density and overlay rhythm of a publisher-supplied reference stored in their library. Invent a new scene.';
+            }
+        }
         if ($revision > 0) {
             $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story. Still no text in the photograph.';
         }
         return $prompt;
+    }
+
+    private function social_image_prompt_for_format($format, $variant, $post, $revision, $profile, $brief) {
+        $art = $this->social_image_art_direction($profile);
+        $camera = $this->social_image_camera($post, $revision);
+        $scene = $brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one clear technology-news photograph with a single subject. ';
+        $no_text = 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. ';
+        $no_people_brands = 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. No real brand logos. ';
+        if ($format === 'device_mockup') {
+            return 'Untitled photoreal product photograph, vertical 4:5, full-bleed studio or desk still life. '
+                . 'One generic phone, wearable, laptop, or similar device that fits the story. No readable UI, no logos, no model names. '
+                . 'Keep the upper third simpler so we can overlay a headline later. '
+                . $no_text
+                . 'This is product photography, not a poster, not a title card, not a thumbnail. '
+                . $no_people_brands
+                . 'Art direction: ' . $art . '. Camera: ' . $camera . '. '
+                . $scene
+                . 'Make the picture stop a social-media scroll.';
+        }
+        if ($format === 'rumor_card') {
+            return 'Untitled photoreal studio photograph, vertical 4:5, full-bleed, light background. '
+                . 'A tight cluster of generic rounded tiles or unbranded devices on a pale surface. No real app icons, no logos, no letters. '
+                . 'Keep the top of the frame clean for a headline overlay. '
+                . $no_text
+                . 'This is a photograph, not a poster, not a title card. '
+                . $no_people_brands
+                . 'Art direction: ' . $art . '. Camera: ' . $camera . '. '
+                . $scene
+                . 'Make the picture stop a social-media scroll.';
+        }
+        if ($format === 'photo_brief') {
+            return 'Untitled photoreal cinematic photograph, vertical 4:5, full-bleed, no graphic design. '
+                . 'One real-world scene, magazine lighting, shallow depth of field, high contrast. This is a photograph, not a poster, not a title card, not a thumbnail. '
+                . 'The whole frame can hold a subject; we will darken it and overlay type later. '
+                . $no_text
+                . 'Do not draw a poster, card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, or UI screenshot. '
+                . $no_people_brands
+                . 'Art direction: ' . $art . '. Camera: ' . $camera . '. '
+                . $scene
+                . 'Make the picture stop a social-media scroll.';
+        }
+        return 'Untitled photoreal cinematic photograph, vertical 4:5, full-bleed, no graphic design. '
+            . 'One real-world scene, magazine lighting, shallow depth of field, high contrast. This is a photograph, not a poster, not a title card, not a thumbnail. '
+            . $this->social_image_safe_zone($variant) . ' '
+            . $no_text
+            . 'Do not draw a poster, card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup. '
+            . $no_people_brands
+            . 'Art direction: ' . $art . '. Camera: ' . $camera . '. '
+            . $scene
+            . 'Make the picture stop a social-media scroll.';
     }
 
     private function social_poster_variants() {
@@ -1678,6 +2074,10 @@ trait TechnoRapper_AI_Wire_Social {
         update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
         update_post_meta($attachment_id, '_tr_ai_wire_social_layout', self::SOCIAL_IMAGE_LAYOUT);
         update_post_meta($attachment_id, '_tr_ai_wire_social_variant', sanitize_key((string) $variant));
+        $format = sanitize_key((string) ($copy['_news_format'] ?? ''));
+        if ($format !== '') {
+            update_post_meta($attachment_id, '_tr_ai_wire_social_news_format', $format);
+        }
         return (int) $attachment_id;
     }
 
@@ -1993,7 +2393,13 @@ trait TechnoRapper_AI_Wire_Social {
         imagecopyresampled($canvas, $source, 0, 0, $source_x, $source_y, $target_width, $target_height, $crop_width, $crop_height);
         imagedestroy($source);
         $variant = $this->normalize_poster_variant($copy['_poster_variant'] ?? 'bottom-center');
-        $this->draw_social_poster_variant($canvas, $variant, $headline, $subhead, $target_width, $target_height);
+        $format = sanitize_key((string) ($copy['_news_format'] ?? ''));
+        if ($this->social_news_format_has_custom_overlay($format)) {
+            $this->draw_social_news_format($canvas, $format, $copy, $target_width, $target_height);
+        } else {
+            $kicker = trim((string) ($copy['on_image_kicker'] ?? ''));
+            $this->draw_social_poster_variant($canvas, $variant, $headline, $subhead, $target_width, $target_height, $kicker);
+        }
         ob_start();
         imagejpeg($canvas, null, 88);
         $result = ob_get_clean();
@@ -2001,7 +2407,7 @@ trait TechnoRapper_AI_Wire_Social {
         return $result ? $result : new WP_Error('tr_ai_wire_social_image_render', 'Could not render the branded image.');
     }
 
-    private function draw_social_poster_variant($canvas, $variant, $headline, $subhead, $width, $height) {
+    private function draw_social_poster_variant($canvas, $variant, $headline, $subhead, $width, $height, $kicker = '') {
         $font = $this->social_font_path();
         $cyan = imagecolorallocate($canvas, 43, 213, 255);
         $white = imagecolorallocate($canvas, 255, 255, 255);
@@ -2036,6 +2442,7 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
         if ($variant === 'kicker-bar') {
+            $bar = $kicker !== '' ? $this->social_poster_headline($this->clip_social_text($kicker, 28)) : (($subhead !== '') ? $this->social_poster_headline($this->clip_social_text($subhead, 28)) : 'TECH NEWS');
             $this->draw_social_bottom_gradient($canvas, $width, $height);
             $this->draw_social_brand_mark($canvas, $font, $white, $cyan, 48, 78);
             $this->draw_social_type_block($canvas, $headline, $subhead, $font, $white, $muted, $stroke, $width, $height, array(
@@ -2045,7 +2452,7 @@ trait TechnoRapper_AI_Wire_Social {
                 'max_block' => (int) round($height * 0.42),
                 'min_baseline' => 640,
                 'handle' => 'right',
-                'kicker' => ($subhead !== '') ? $this->social_poster_headline($this->clip_social_text($subhead, 28)) : 'TECH NEWS',
+                'kicker' => $bar,
             ));
             return;
         }
@@ -2073,6 +2480,273 @@ trait TechnoRapper_AI_Wire_Social {
             'min_baseline' => 620,
             'handle' => 'right',
         ));
+    }
+
+    private function draw_social_news_format($canvas, $format, $copy, $width, $height) {
+        $copy = is_array($copy) ? $copy : array();
+        $format = sanitize_key((string) $format);
+        if ($format === 'weekly_recap') {
+            $this->draw_social_weekly_recap($canvas, $copy, $width, $height);
+            return;
+        }
+        if ($format === 'numbered_roundup') {
+            $this->draw_social_numbered_roundup($canvas, $copy, $width, $height);
+            return;
+        }
+        if ($format === 'product_roundup') {
+            $this->draw_social_product_roundup($canvas, $copy, $width, $height);
+            return;
+        }
+        if ($format === 'rumor_card') {
+            $this->draw_social_rumor_card($canvas, $copy, $width, $height);
+            return;
+        }
+        if ($format === 'device_mockup') {
+            $this->draw_social_device_mockup($canvas, $copy, $width, $height);
+            return;
+        }
+        $bullets = (array) ($copy['on_image_bullets'] ?? array());
+        if ($format === 'photo_brief' || ($this->social_custom_idea($format) && count($bullets) >= 2)) {
+            $this->draw_social_photo_brief($canvas, $copy, $width, $height);
+            return;
+        }
+        $headline = $this->social_poster_headline((string) ($copy['on_image_headline'] ?? $copy['hook'] ?? ''));
+        $subhead = trim(wp_strip_all_tags((string) ($copy['on_image_subhead'] ?? '')));
+        $this->draw_social_poster_variant($canvas, 'bottom-center', $headline, $subhead, $width, $height, (string) ($copy['on_image_kicker'] ?? ''));
+    }
+
+    private function render_local_social_graphic($copy) {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            return new WP_Error('tr_ai_wire_social_gd', 'PHP GD is required to render the branded social image.');
+        }
+        $width = 1080;
+        $height = 1350;
+        $canvas = imagecreatetruecolor($width, $height);
+        imagealphablending($canvas, true);
+        $this->draw_social_news_format($canvas, (string) ($copy['_news_format'] ?? 'weekly_recap'), $copy, $width, $height);
+        ob_start();
+        imagejpeg($canvas, null, 88);
+        $result = ob_get_clean();
+        imagedestroy($canvas);
+        return $result ? $result : new WP_Error('tr_ai_wire_social_image_render', 'Could not render the branded image.');
+    }
+
+    private function draw_social_light_top($canvas, $width, $height, $cover_until = 0.36) {
+        $span = (int) round($height * (float) $cover_until);
+        for ($i = 0; $i < $span; $i++) {
+            $t = 1 - ($i / max(1, $span));
+            $alpha = (int) max(0, min(127, (int) round(20 + ((1 - $t) * 100))));
+            imageline($canvas, 0, $i, $width, $i, imagecolorallocatealpha($canvas, 248, 248, 250, $alpha));
+        }
+    }
+
+    private function draw_social_dim($canvas, $width, $height, $alpha = 70) {
+        $alpha = max(0, min(127, (int) $alpha));
+        $overlay = imagecolorallocatealpha($canvas, 0, 0, 0, $alpha);
+        imagefilledrectangle($canvas, 0, 0, $width, $height, $overlay);
+    }
+
+    private function draw_social_weekly_recap($canvas, $copy, $width, $height) {
+        for ($y = 0; $y < $height; $y++) {
+            $t = $y / max(1, $height - 1);
+            $r = (int) round(108 - ($t * 36));
+            $g = (int) round(52 + ($t * 28));
+            $b = (int) round(196 - ($t * 48));
+            imageline($canvas, 0, $y, $width, $y, imagecolorallocate($canvas, $r, $g, $b));
+        }
+        $font = $this->social_font_path();
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        $muted = imagecolorallocate($canvas, 230, 230, 240);
+        $stroke = imagecolorallocate($canvas, 40, 10, 80);
+        $this->draw_social_brand_mark($canvas, $font, $white, imagecolorallocate($canvas, 255, 255, 255), $width - 360, 78);
+        $headline = trim(wp_strip_all_tags((string) ($copy['on_image_headline'] ?? 'THIS WEEK')));
+        $layout = $this->social_poster_headline_layout($headline, $font, 980, 720, 4);
+        $y = 430;
+        foreach ($layout['lines'] as $index => $line) {
+            $this->draw_social_aligned_text($canvas, $line, $layout['size'], $y, 'left', 64, $white, $font, $width, $stroke, 2);
+            $y += $layout['line_height'];
+        }
+        $subhead = trim(wp_strip_all_tags((string) ($copy['on_image_subhead'] ?? '')));
+        if ($subhead !== '') {
+            $this->draw_social_aligned_text($canvas, $subhead, $font ? 28 : 5, $y + 24, 'left', 64, $muted, $font, $width, $stroke, 1);
+        }
+    }
+
+    private function draw_social_numbered_roundup($canvas, $copy, $width, $height) {
+        imagefilledrectangle($canvas, 0, 0, $width, $height, imagecolorallocate($canvas, 8, 42, 58));
+        $grid = imagecolorallocatealpha($canvas, 40, 120, 140, 110);
+        for ($x = 40; $x < $width; $x += 48) {
+            imageline($canvas, $x, 0, $x, $height, $grid);
+        }
+        for ($y = 40; $y < $height; $y += 48) {
+            imageline($canvas, 0, $y, $width, $y, $grid);
+        }
+        $font = $this->social_font_path();
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        $lilac = imagecolorallocate($canvas, 176, 150, 255);
+        $chip = imagecolorallocate($canvas, 176, 150, 255);
+        $chip_bg = imagecolorallocate($canvas, 55, 48, 110);
+        $kicker = strtoupper($this->clip_social_text((string) ($copy['on_image_kicker'] ?? 'NEWS'), 22));
+        imagefilledrectangle($canvas, 56, 86, 56 + max(160, (int) (strlen($kicker) * 18)), 138, $chip_bg);
+        $this->draw_social_aligned_text($canvas, $kicker, $font ? 18 : 4, 122, 'left', 72, $chip, $font, $width, null, 0);
+        $headline = trim(wp_strip_all_tags((string) ($copy['on_image_headline'] ?? '')));
+        $words = preg_split('/\s+/', $headline);
+        $accent_count = min(3, max(1, (int) ceil(count($words) / 2)));
+        $accent = implode(' ', array_slice($words, 0, $accent_count));
+        $rest = trim(implode(' ', array_slice($words, $accent_count)));
+        $y = 280;
+        $size = $font ? 72 : 5;
+        if ($accent !== '') {
+            foreach ($this->wrap_social_lines($accent, 960, $size, $font, 16, 3) as $line) {
+                $this->draw_social_aligned_text($canvas, $line, $size, $y, 'left', 56, $lilac, $font, $width, null, 0);
+                $y += (int) round($size * 1.08);
+            }
+        }
+        if ($rest !== '') {
+            foreach ($this->wrap_social_lines($rest, 960, $size, $font, 16, 3) as $line) {
+                $this->draw_social_aligned_text($canvas, $line, $size, $y, 'left', 56, $white, $font, $width, null, 0);
+                $y += (int) round($size * 1.08);
+            }
+        }
+        $this->draw_social_brand_mark($canvas, $font, $white, $lilac, 56, $height - 64);
+    }
+
+    private function draw_social_product_roundup($canvas, $copy, $width, $height) {
+        $this->draw_social_dim($canvas, $width, $height, 55);
+        $this->draw_social_bottom_gradient($canvas, $width, $height, 0.55);
+        $font = $this->social_font_path();
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        $lilac = imagecolorallocate($canvas, 176, 150, 255);
+        $stroke = imagecolorallocate($canvas, 0, 0, 0);
+        $this->draw_social_brand_mark($canvas, $font, $white, $lilac, (int) ($width / 2) - 140, 96);
+        $headline = $this->social_poster_headline((string) ($copy['on_image_headline'] ?? ''));
+        $layout = $this->social_poster_headline_layout($headline, $font, 980, 520, 4);
+        $y = 520;
+        foreach ($layout['lines'] as $index => $line) {
+            $color = ($index === count($layout['lines']) - 1 && count($layout['lines']) > 1) ? $lilac : $white;
+            $this->draw_social_aligned_text($canvas, $line, $layout['size'], $y, 'center', 50, $color, $font, $width, $stroke, 3);
+            $y += $layout['line_height'];
+        }
+        $subhead = $this->social_poster_headline($this->clip_social_text((string) ($copy['on_image_subhead'] ?? ''), 28));
+        if ($subhead !== '') {
+            $pill_y = $y + 36;
+            imagefilledrectangle($canvas, (int) ($width / 2) - 220, $pill_y - 28, (int) ($width / 2) + 220, $pill_y + 18, imagecolorallocate($canvas, 18, 18, 24));
+            $this->draw_social_aligned_text($canvas, $subhead, $font ? 22 : 5, $pill_y, 'center', 50, $white, $font, $width, null, 0);
+        }
+    }
+
+    private function draw_social_rumor_card($canvas, $copy, $width, $height) {
+        $this->draw_social_light_top($canvas, $width, $height, 0.42);
+        $font = $this->social_font_path();
+        $black = imagecolorallocate($canvas, 20, 20, 24);
+        $red = imagecolorallocate($canvas, 196, 32, 32);
+        $muted = imagecolorallocate($canvas, 90, 90, 98);
+        $kicker = strtoupper($this->clip_social_text((string) ($copy['on_image_kicker'] ?? 'NEWS'), 28));
+        $this->draw_social_aligned_text($canvas, $kicker, $font ? 18 : 4, 78, 'center', 40, $red, $font, $width, null, 0);
+        $headline = trim(wp_strip_all_tags((string) ($copy['on_image_headline'] ?? '')));
+        $size = $font ? 42 : 5;
+        $y = 140;
+        foreach ($this->wrap_social_lines($headline, 960, $size, $font, 22, 4) as $line) {
+            $this->draw_social_aligned_text($canvas, $line, $size, $y, 'center', 40, $black, $font, $width, null, 0);
+            $y += (int) round($size * 1.15);
+        }
+        $handle = self::site_brand_handle();
+        if ($handle !== '') {
+            $this->draw_social_aligned_text($canvas, $handle, $font ? 16 : 4, $height - 36, 'center', 40, $muted, $font, $width, null, 0);
+        }
+    }
+
+    private function draw_social_device_mockup($canvas, $copy, $width, $height) {
+        $this->draw_social_light_top($canvas, $width, $height, 0.34);
+        $font = $this->social_font_path();
+        $black = imagecolorallocate($canvas, 20, 20, 24);
+        $red = imagecolorallocate($canvas, 196, 32, 32);
+        $kicker = strtoupper($this->clip_social_text((string) ($copy['on_image_kicker'] ?? 'NEWS'), 28));
+        $this->draw_social_aligned_text($canvas, $kicker, $font ? 16 : 4, 64, 'center', 40, $red, $font, $width, null, 0);
+        $headline = trim(wp_strip_all_tags((string) ($copy['on_image_headline'] ?? '')));
+        $size = $font ? 40 : 5;
+        $y = 120;
+        foreach ($this->wrap_social_lines($headline, 960, $size, $font, 22, 3) as $line) {
+            $this->draw_social_aligned_text($canvas, $line, $size, $y, 'center', 40, $black, $font, $width, null, 0);
+            $y += (int) round($size * 1.12);
+        }
+    }
+
+    private function draw_social_photo_brief($canvas, $copy, $width, $height) {
+        $this->draw_social_dim($canvas, $width, $height, 60);
+        $this->draw_social_bottom_gradient($canvas, $width, $height, 0.72);
+        $font = $this->social_font_path();
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        $cyan = imagecolorallocate($canvas, 43, 213, 255);
+        $stroke = imagecolorallocate($canvas, 0, 0, 0);
+        $this->draw_social_brand_mark($canvas, $font, $white, $cyan, (int) ($width / 2) - 140, 92);
+        $headline = trim(wp_strip_all_tags((string) ($copy['on_image_headline'] ?? '')));
+        $size = $font ? 42 : 5;
+        $y = 210;
+        foreach ($this->wrap_social_lines($headline, 960, $size, $font, 22, 3) as $line) {
+            $this->draw_social_aligned_text($canvas, $line, $size, $y, 'center', 50, $white, $font, $width, $stroke, 2);
+            $y += (int) round($size * 1.12);
+        }
+        $bullets = (array) ($copy['on_image_bullets'] ?? array());
+        $y += 36;
+        foreach (array_slice($bullets, 0, 3) as $bullet) {
+            $y = $this->draw_social_highlighted_bullet($canvas, (string) $bullet, $font, 72, $y, $width, $white, $stroke);
+            $y += 28;
+        }
+    }
+
+    private function draw_social_highlighted_bullet($canvas, $text, $font, $x, $y, $width, $white, $stroke) {
+        $segments = $this->social_highlight_segments($text);
+        $size = $font ? 26 : 5;
+        imagefilledellipse($canvas, $x, $y - 8, 10, 10, $white);
+        $cursor = $x + 28;
+        $max = $width - 64;
+        $line_y = $y;
+        foreach ($segments as $segment) {
+            $chunk = (string) ($segment['text'] ?? '');
+            if ($chunk === '') {
+                continue;
+            }
+            $chunk_width = $this->social_text_width($chunk, $size, $font, strlen($chunk) * 12);
+            if ($cursor + $chunk_width > $max && $cursor > $x + 28) {
+                $line_y += (int) round($size * 1.25);
+                $cursor = $x + 28;
+            }
+            if (!empty($segment['highlight'])) {
+                $pad = 6;
+                $chip = imagecolorallocatealpha($canvas, 70, 150, 190, 40);
+                imagefilledrectangle($canvas, $cursor - $pad, $line_y - $size, $cursor + $chunk_width + $pad, $line_y + 8, $chip);
+            }
+            $this->draw_social_stroked_text($canvas, $chunk, $size, $cursor, $line_y, $white, $font, $stroke, 2);
+            $cursor += $chunk_width + 8;
+        }
+        return $line_y + (int) round($size * 0.4);
+    }
+
+    private function social_highlight_segments($text) {
+        $parts = preg_split('/(\*\*[^*]+\*\*)/', (string) $text, -1, PREG_SPLIT_DELIM_CAPTURE);
+        $segments = array();
+        foreach ((array) $parts as $part) {
+            if ($part === '') {
+                continue;
+            }
+            if (preg_match('/^\*\*(.+)\*\*$/', $part, $matches)) {
+                $segments[] = array('text' => $matches[1], 'highlight' => true);
+            } else {
+                $segments[] = array('text' => $part, 'highlight' => false);
+            }
+        }
+        return $segments;
+    }
+
+    private function social_text_width($text, $size, $font, $fallback) {
+        if ($font && function_exists('imagettfbbox')) {
+            $box = imagettfbbox($size, 0, $font, (string) $text);
+            if (is_array($box)) {
+                return max(1, abs((int) $box[2] - (int) $box[0]));
+            }
+        }
+        return max(1, (int) $fallback);
     }
 
     private function draw_social_brand_mark($canvas, $font, $white, $cyan, $x, $y) {

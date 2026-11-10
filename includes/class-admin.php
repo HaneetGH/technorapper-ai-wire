@@ -166,7 +166,7 @@ trait TechnoRapper_AI_Wire_Admin {
             ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <p>Connect X and Instagram here, then turn either network on or off without removing its tokens. Delivery status is on the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Social queue</a>.</p>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data">
                 <input type="hidden" name="action" value="tr_ai_wire_save_social_credentials">
                 <input type="hidden" name="<?php echo esc_attr($option); ?>[social_platform_toggles]" value="1">
                 <?php wp_nonce_field('tr_ai_wire_save_social_credentials'); ?>
@@ -206,9 +206,75 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p><label for="tr-social-single-daily">Independent posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 3); ?>"></p>
                     <p class="description">Artwork is GPT Image 2 low; type is overlaid locally. That file is a social asset only — it never becomes the article featured image. Local image estimate is $0.006 each; X API charges are separate.</p>
                 </div>
+                <?php $this->render_social_news_formats_card($s, $option); ?>
                 <?php submit_button('Save social settings'); ?>
             </form>
             <?php $this->render_site_context_card('tr-ai-wire-social-settings'); ?>
+        </div>
+        <?php
+    }
+
+    private function render_social_news_formats_card($settings, $option) {
+        $catalog = TechnoRapper_AI_Wire::social_news_formats();
+        $selected = TechnoRapper_AI_Wire::sanitize_social_news_format_ids($settings['social_news_formats'] ?? array_keys($catalog));
+        $ideas = $this->social_custom_ideas();
+        $groups = array();
+        foreach ($catalog as $id => $format) {
+            $group = (string) ($format['group'] ?? 'Single story');
+            if (!isset($groups[$group])) {
+                $groups[$group] = array();
+            }
+            $groups[$group][$id] = $format;
+        }
+        ?>
+        <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+            <h2>News graphics we can produce</h2>
+            <p>Select every format you want in rotation. Unchecked formats are never generated. Sample posts you may have seen elsewhere are <strong>examples of look-and-feel only</strong> — they are not the options below, and we will not reuse those headlines, brands, or layouts as presets.</p>
+            <?php foreach ($groups as $group => $formats) : ?>
+                <h3 style="margin:16px 0 8px;"><?php echo esc_html($group); ?></h3>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;">
+                    <?php foreach ($formats as $id => $format) : ?>
+                        <label for="tr-news-format-<?php echo esc_attr($id); ?>" style="display:block;margin:0;padding:12px 14px;border:1px solid #dcdcde;border-radius:4px;background:#fff;">
+                            <input id="tr-news-format-<?php echo esc_attr($id); ?>" type="checkbox" name="<?php echo esc_attr($option); ?>[social_news_formats][]" value="<?php echo esc_attr($id); ?>" <?php checked(in_array($id, $selected, true)); ?>>
+                            <strong><?php echo esc_html((string) $format['label']); ?></strong>
+                            <span class="description" style="display:block;margin:6px 0 0;"><?php echo esc_html((string) $format['description']); ?></span>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            <?php endforeach; ?>
+            <h3 style="margin:24px 0 8px;">Your ideas</h3>
+            <p class="description">Upload a written brief and an optional reference image. We treat it as another selectable format. Do not upload someone else’s finished post as a template to copy — describe the layout you want in your own words.</p>
+            <?php if ($ideas) : ?>
+                <table class="widefat striped" style="margin:12px 0;">
+                    <thead><tr><th>Use</th><th>Idea</th><th>Reference</th><th>Remove</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($ideas as $idea) : ?>
+                        <tr>
+                            <td><label><input type="checkbox" name="social_idea_enabled[]" value="<?php echo esc_attr($idea['id']); ?>" <?php checked(!empty($idea['enabled'])); ?>> On</label></td>
+                            <td>
+                                <strong><?php echo esc_html($idea['title']); ?></strong>
+                                <p class="description" style="margin:4px 0 0;"><?php echo esc_html($idea['description']); ?></p>
+                                <input type="hidden" name="social_idea_keep[]" value="<?php echo esc_attr($idea['id']); ?>">
+                            </td>
+                            <td><?php
+                                if (!empty($idea['image_id'])) {
+                                    echo wp_get_attachment_image((int) $idea['image_id'], 'thumbnail');
+                                } else {
+                                    echo '—';
+                                }
+                            ?></td>
+                            <td><label><input type="checkbox" name="remove_social_idea[]" value="<?php echo esc_attr($idea['id']); ?>"> Remove</label></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+            <p><label for="tr-social-idea-title">New idea title</label><br>
+                <input id="tr-social-idea-title" name="social_idea_title" type="text" class="regular-text" maxlength="80" placeholder="Night recap cover, product cluster, …"></p>
+            <p><label for="tr-social-idea-description">Describe the graphic</label><br>
+                <textarea id="tr-social-idea-description" name="social_idea_description" class="large-text" rows="4" maxlength="800" placeholder="Layout, lighting, type placement, and what should sit in the photo. Do not paste another publisher’s headline."></textarea></p>
+            <p><label for="tr-social-idea-image">Optional reference image</label><br>
+                <input id="tr-social-idea-image" name="social_idea_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></p>
         </div>
         <?php
     }
