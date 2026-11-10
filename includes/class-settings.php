@@ -303,7 +303,7 @@ trait TechnoRapper_AI_Wire_Settings {
                 'group' => 'Cover / roundup',
                 'role' => 'cover',
                 'family' => 'title_card',
-                'description' => 'Bold stacked title card on a gradient. Used as the first slide of a weekly roundup carousel.',
+                'description' => 'Bold stacked title card on a gradient. Used as the first slide of a weekly roundup carousel, with a swipe cue so people keep going.',
             ),
             'numbered_roundup' => array(
                 'label' => 'Numbered list cover',

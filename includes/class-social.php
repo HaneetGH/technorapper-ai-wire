@@ -1133,10 +1133,6 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_cover_copy($prepared, $format) {
         $count = max(2, count($prepared));
         $topic = $this->social_cover_topic($prepared);
-        $tagline = trim(wp_strip_all_tags((string) get_bloginfo('description')));
-        if ($tagline === '') {
-            $tagline = 'Stories from ' . self::site_brand_name();
-        }
         $copy = array(
             '_news_format' => $format,
             'instagram_alt' => self::site_brand_name() . ' roundup cover',
@@ -1144,16 +1140,76 @@ trait TechnoRapper_AI_Wire_Social {
         );
         if ($format === 'weekly_recap') {
             $copy['on_image_headline'] = 'THIS WEEK IN ' . $topic;
-            $copy['on_image_subhead'] = $this->clip_social_text($tagline, 48);
+            $copy['on_image_subhead'] = 'SWIPE — the last slide is the one';
             return $copy;
         }
         if ($format === 'numbered_roundup') {
-            $copy['on_image_headline'] = $count . ' ' . strtolower($topic) . ' shifts this week you can\'t ignore';
+            $copy['on_image_headline'] = $count . ' ' . strtolower($topic) . ' shifts. Wait for the last one';
+            $copy['on_image_subhead'] = 'SWIPE →';
             return $copy;
         }
         $copy['on_image_headline'] = $count . ' BIG ' . $topic . ' NEWS';
-        $copy['on_image_subhead'] = 'YOU NEED TO KNOW';
+        $copy['on_image_subhead'] = 'SWIPE TO THE LAST ONE';
         return $copy;
+    }
+
+    private function social_curiosity_slide_copy($prepared) {
+        $count = max(2, is_array($prepared) ? count($prepared) : 2);
+        $topic = $this->social_cover_topic($prepared);
+        return array(
+            '_news_format' => 'weekly_recap',
+            'instagram_alt' => 'Swipe for the next ' . strtolower($topic) . ' story',
+            'on_image_kicker' => 'WAIT',
+            'on_image_headline' => 'THE NEXT SLIDE IS THE ONE',
+            'on_image_subhead' => 'SWIPE — don\'t skip story ' . (string) $count,
+        );
+    }
+
+    private function social_pack_curiosity_url($prepared) {
+        if (!is_array($prepared) || count($prepared) < 2) {
+            return '';
+        }
+        $lead = $prepared[0]['post'] ?? null;
+        if (!$lead instanceof WP_Post) {
+            return '';
+        }
+        $copy = $this->social_curiosity_slide_copy($prepared);
+        $branded = $this->render_local_social_graphic($copy);
+        if (is_wp_error($branded) || !is_string($branded) || $branded === '') {
+            return '';
+        }
+        $stored = $this->store_social_jpeg($lead, $branded, (string) $copy['on_image_headline'], $copy, 'curiosity', 'curiosity');
+        if (is_wp_error($stored)) {
+            return '';
+        }
+        $url = wp_get_attachment_url((int) $stored);
+        return (is_string($url) && $url !== '' && wp_http_validate_url($url)) ? $url : '';
+    }
+
+    private function instagram_carousel_urls($prepared, $settings) {
+        $story_urls = array();
+        foreach ((array) $prepared as $item) {
+            if (!empty($item['image_url']) && is_string($item['image_url'])) {
+                $story_urls[] = $item['image_url'];
+            }
+        }
+        $urls = array();
+        $cover = $this->social_pack_cover_url($prepared, $settings);
+        if ($cover !== '') {
+            $urls[] = $cover;
+        }
+        $curiosity = $this->social_pack_curiosity_url($prepared);
+        $last = count($story_urls) - 1;
+        foreach ($story_urls as $i => $url) {
+            if ($curiosity !== '' && $i === $last && $last >= 1 && count($urls) < 9) {
+                $urls[] = $curiosity;
+            }
+            $urls[] = $url;
+            if (count($urls) >= 10) {
+                break;
+            }
+        }
+        return $urls;
     }
 
     private function social_cover_topic($prepared) {
@@ -1202,14 +1258,7 @@ trait TechnoRapper_AI_Wire_Social {
         $caption = $this->instagram_pack_caption($prepared);
         $alt = (string) ($prepared[0]['copy']['instagram_alt'] ?? (self::site_brand_name() . ' stories'));
         if ($format === 'carousel') {
-            $cover_url = $this->social_pack_cover_url($prepared, $settings);
-            if ($cover_url) {
-                $urls = array($cover_url);
-                foreach ($prepared as $item) {
-                    $urls[] = $item['image_url'];
-                }
-                return $this->publish_instagram_post($caption, $alt, $urls, $credentials);
-            }
+            return $this->publish_instagram_post($caption, $alt, $this->instagram_carousel_urls($prepared, $settings), $credentials);
         }
         if ($format === 'collage') {
             $bytes = array();
@@ -1280,7 +1329,7 @@ trait TechnoRapper_AI_Wire_Social {
                 $titles[] = $title;
             }
         }
-        $caption = 'Today on ' . self::site_brand_name() . ': ' . implode(' • ', $titles);
+        $caption = 'Last photo is the one. Today on ' . self::site_brand_name() . ': ' . implode(' • ', $titles);
         $home = home_url('/');
         if (strpos($caption, $home) === false) {
             $caption .= ' ' . $home;
@@ -1289,7 +1338,10 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function instagram_pack_caption($prepared) {
-        $lines = array('Today on ' . self::site_brand_name() . ':');
+        $lines = array(
+            'Don\'t skip the last slide.',
+            'Today on ' . self::site_brand_name() . ':',
+        );
         $hashtags = array();
         $cta = 'Read the full stories on ' . self::site_brand_name();
         foreach ($prepared as $item) {
@@ -2732,6 +2784,10 @@ trait TechnoRapper_AI_Wire_Social {
                 $this->draw_social_aligned_text($canvas, $line, $size, $y, 'left', 56, $white, $font, $width, null, 0);
                 $y += (int) round($size * 1.08);
             }
+        }
+        $subhead = trim(wp_strip_all_tags((string) ($copy['on_image_subhead'] ?? '')));
+        if ($subhead !== '') {
+            $this->draw_social_aligned_text($canvas, $subhead, $font ? 28 : 5, $y + 28, 'left', 56, $white, $font, $width, null, 0);
         }
         $this->draw_social_brand_mark($canvas, $font, $white, $lilac, 56, $height - 64);
     }

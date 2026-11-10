@@ -2749,6 +2749,45 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Untitled photoreal cinematic photograph', $idea_prompt);
     }
 
+    public function test_carousel_cover_and_curiosity_slide_ask_for_a_swipe() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render the curiosity slide.');
+        }
+        $posts = array();
+        foreach (array('First story', 'Second story', 'Third story') as $title) {
+            $posts[] = array(
+                'post' => get_post($this->factory()->post->create(array(
+                    'post_status' => 'publish',
+                    'post_title' => $title,
+                    'post_excerpt' => $title,
+                ))),
+                'copy' => array('on_image_headline' => $title, 'cta' => 'Read more'),
+                'image_url' => 'https://example.org/' . sanitize_title($title) . '.jpg',
+            );
+        }
+        $cover = $this->invoke_private('social_cover_copy', array($posts, 'weekly_recap'));
+        $this->assertStringContainsString('THIS WEEK IN', $cover['on_image_headline']);
+        $this->assertStringContainsString('SWIPE', $cover['on_image_subhead']);
+        $numbered = $this->invoke_private('social_cover_copy', array($posts, 'numbered_roundup'));
+        $this->assertStringContainsString('Wait for the last one', $numbered['on_image_headline']);
+        $product = $this->invoke_private('social_cover_copy', array($posts, 'product_roundup'));
+        $this->assertSame('SWIPE TO THE LAST ONE', $product['on_image_subhead']);
+        $curiosity = $this->invoke_private('social_curiosity_slide_copy', array($posts));
+        $this->assertSame('THE NEXT SLIDE IS THE ONE', $curiosity['on_image_headline']);
+        $this->assertStringContainsString('SWIPE', $curiosity['on_image_subhead']);
+        $caption = $this->invoke_private('instagram_pack_caption', array($posts));
+        $this->assertStringContainsString('Don\'t skip the last slide.', $caption);
+        $this->assertStringContainsString('First story', $caption);
+        $urls = $this->invoke_private('instagram_carousel_urls', array($posts, array(
+            'social_news_formats' => array('editorial_poster'),
+        )));
+        $this->assertCount(4, $urls);
+        $this->assertSame($posts[0]['image_url'], $urls[0]);
+        $this->assertSame($posts[1]['image_url'], $urls[1]);
+        $this->assertSame($posts[2]['image_url'], $urls[3]);
+        $this->assertNotSame($posts[2]['image_url'], $urls[2]);
+    }
+
     public function test_instagram_job_packs_three_website_articles_into_one_carousel() {
         $this->onboard_social(array('instagram'));
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
@@ -2848,8 +2887,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 $pack_caption = (string) ($body['caption'] ?? '');
             }
         }
-        $this->assertSame(4, $child_items);
+        $this->assertSame(5, $child_items);
         $this->assertSame(1, $parents);
+        $this->assertStringContainsString('Don\'t skip the last slide.', $pack_caption);
         $this->assertStringContainsString('Today on ' . get_bloginfo('name'), $pack_caption);
         $this->assertStringContainsString('13-inch or 15-inch Air?', $pack_caption);
         $this->assertStringContainsString('When fake IDs become easier to scale', $pack_caption);
