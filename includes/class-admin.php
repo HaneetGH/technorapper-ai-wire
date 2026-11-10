@@ -23,6 +23,9 @@ trait TechnoRapper_AI_Wire_Admin {
         $dashboard_key = get_option(self::API_KEY_OPTION, '');
         $key_ready = (bool) $this->api_key();
         $key_managed_in_dashboard = is_string($dashboard_key) && $dashboard_key !== '';
+        $gemini_dashboard_key = get_option(self::GEMINI_API_KEY_OPTION, '');
+        $gemini_ready = (bool) $this->gemini_api_key();
+        $gemini_managed_in_dashboard = is_string($gemini_dashboard_key) && $gemini_dashboard_key !== '';
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
@@ -40,9 +43,15 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p><label for="tr-ai-wire-api-key"><strong>OpenAI API key</strong></label></p>
                     <p><input id="tr-ai-wire-api-key" name="api_key" type="password" class="regular-text" autocomplete="new-password" spellcheck="false" placeholder="<?php echo $key_managed_in_dashboard ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Paste your API key'); ?>"></p>
                     <p class="description">Saved in a dedicated non-autoloaded WordPress option. Existing key is retained when this field is blank. API usage is billed separately from ChatGPT.</p>
+                    <p><label for="tr-ai-wire-gemini-key"><strong>Gemini API key</strong> (optional fallback)</label></p>
+                    <p><input id="tr-ai-wire-gemini-key" name="gemini_api_key" type="password" class="regular-text" autocomplete="new-password" spellcheck="false" placeholder="<?php echo $gemini_managed_in_dashboard ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Paste a Google AI Studio key'); ?>"></p>
+                    <p class="description"><?php echo $gemini_ready ? 'Gemini key configured. ' : ''; ?>When OpenAI flags a prompt, AI Wire first retries a shorter excerpt on the same model. If that is still blocked, Gemini 2.5 Flash writes the same JSON. Leave this blank to keep OpenAI only. A blank field does not remove a saved key.</p>
                     <?php submit_button($key_managed_in_dashboard ? 'Save / replace API key' : 'Save API key', 'primary', 'submit', false); ?>
                     <?php if ($key_managed_in_dashboard) : ?>
-                        <label style="margin-left:12px;"><input type="checkbox" name="remove_api_key" value="1"> Remove saved dashboard key</label>
+                        <label style="margin-left:12px;"><input type="checkbox" name="remove_api_key" value="1"> Remove saved OpenAI key</label>
+                    <?php endif; ?>
+                    <?php if ($gemini_managed_in_dashboard) : ?>
+                        <label style="margin-left:12px;"><input type="checkbox" name="remove_gemini_api_key" value="1"> Remove saved Gemini key</label>
                     <?php endif; ?>
                 </form>
                 <p class="description">A server-level constant can still be used as a fallback if no dashboard key is saved.</p>

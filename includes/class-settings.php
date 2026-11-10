@@ -399,6 +399,20 @@ trait TechnoRapper_AI_Wire_Settings {
         return '';
     }
 
+    private function gemini_api_key() {
+        $dashboard_key = get_option(self::GEMINI_API_KEY_OPTION, '');
+        if (is_string($dashboard_key) && $dashboard_key !== '') {
+            return $dashboard_key;
+        }
+        if (defined('TR_AI_WIRE_GEMINI_API_KEY') && TR_AI_WIRE_GEMINI_API_KEY) {
+            return TR_AI_WIRE_GEMINI_API_KEY;
+        }
+        if (defined('GEMINI_API_KEY') && GEMINI_API_KEY) {
+            return GEMINI_API_KEY;
+        }
+        return '';
+    }
+
     private function fal_api_key() {
         $dashboard_key = get_option(self::FAL_API_KEY_OPTION, '');
         if (is_string($dashboard_key) && $dashboard_key !== '') {
@@ -420,20 +434,35 @@ trait TechnoRapper_AI_Wire_Settings {
         check_admin_referer('tr_ai_wire_save_api_key');
         $remove = !empty($_POST['remove_api_key']);
         $submitted = isset($_POST['api_key']) ? trim((string) wp_unslash($_POST['api_key'])) : '';
+        $remove_gemini = !empty($_POST['remove_gemini_api_key']);
+        $gemini = isset($_POST['gemini_api_key']) ? trim((string) wp_unslash($_POST['gemini_api_key'])) : '';
+        if (($submitted !== '' && !$this->secret_is_storable($submitted)) || ($gemini !== '' && !$this->secret_is_storable($gemini))) {
+            wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire&api_key_error=1'));
+            exit;
+        }
         if ($remove) {
             delete_option(self::API_KEY_OPTION);
         } elseif ($submitted !== '') {
-            if (strlen($submitted) > 512 || preg_match('/\\s/', $submitted)) {
-                wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire&api_key_error=1'));
-                exit;
-            }
-            if (get_option(self::API_KEY_OPTION, null) === null) {
-                add_option(self::API_KEY_OPTION, $submitted, '', false);
-            } else {
-                update_option(self::API_KEY_OPTION, $submitted, false);
-            }
+            $this->store_secret_option(self::API_KEY_OPTION, $submitted);
+        }
+        if ($remove_gemini) {
+            delete_option(self::GEMINI_API_KEY_OPTION);
+        } elseif ($gemini !== '') {
+            $this->store_secret_option(self::GEMINI_API_KEY_OPTION, $gemini);
         }
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire&api_key_saved=' . ($remove ? 'removed' : '1')));
         exit;
+    }
+
+    private function secret_is_storable($secret) {
+        return strlen($secret) <= 512 && !preg_match('/\s/', $secret);
+    }
+
+    private function store_secret_option($option, $secret) {
+        if (get_option($option, null) === null) {
+            add_option($option, $secret, '', false);
+            return;
+        }
+        update_option($option, $secret, false);
     }
 }
