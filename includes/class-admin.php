@@ -25,7 +25,7 @@ trait TechnoRapper_AI_Wire_Admin {
         ?>
         <div class="wrap">
             <h1>TechnoRapper AI Wire</h1>
-            <p>Feed items are rewritten, reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead. Social publishing is on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>.</p>
+            <p>Feed items are rewritten, independently reviewed, and <strong>published automatically</strong> when they pass the review and SEO gates. Uncheck Auto-publish if you want drafts instead. Social publishing is on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a> and runs only after WordPress publishes a permanent URL.</p>
             <div class="card" style="max-width:900px;margin:20px 0;padding:16px 20px;">
                 <h2>1. OpenAI API connection</h2>
                 <?php if ($key_ready) : ?>
@@ -100,7 +100,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <tr><th scope="row">Independent web search</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_web_search]" value="1" <?php checked($s['enable_web_search'], 1); ?>> Enable up to one web-search call during each review</label><p class="description">Adds search-tool charges (currently $0.01 per call, plus tokens). Search is corroboration, not a guarantee. Leave off to check claims against the supplied feed only.</p></td></tr>
                     <tr><th scope="row">Editorial A/B experiment</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_experiment]" value="1" <?php checked($s['enable_experiment'], 1); ?>> Enable 50/50 writer experiment</label><p class="description">A = current writer. B = original editorial writer. Assignment is stable per source item. Disable to use A for new items.</p><label for="tr-experiment-id">Experiment ID</label> <input id="tr-experiment-id" type="text" maxlength="64" name="<?php echo esc_attr(self::OPTION); ?>[experiment_id]" value="<?php echo esc_attr($s['experiment_id']); ?>"></td></tr>
                     <tr><th scope="row">When to create a draft</th><td>
-                        <p><label for="tr-draft-min-score"><strong>Minimum review score</strong></label> <input id="tr-draft-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[draft_min_score]" value="<?php echo esc_attr($s['draft_min_score']); ?>"> <span class="description">0–100. The reviewer scores an article a human would publish at 85 or higher. 70–84 means a concrete edit is still required. Below this stays quarantined. Retry asks the reviewer again; it does not publish a score under this minimum.</span></p>
+                        <p><label for="tr-draft-min-score"><strong>Minimum review score</strong></label> <input id="tr-draft-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[draft_min_score]" value="<?php echo esc_attr($s['draft_min_score']); ?>"> <span class="description">0–100. The independent reviewer scores an article a human would publish at 85 or higher. 70–84 means a concrete edit is still required. Below this stays quarantined. Retry asks the reviewer again; it does not publish a score under this minimum.</span></p>
                         <p><label>Accept reviewer verdict </label><select name="<?php echo esc_attr(self::OPTION); ?>[draft_allow_revise]"><option value="1" <?php selected($s['draft_allow_revise'], 1); ?>>pass or revise</option><option value="0" <?php selected($s['draft_allow_revise'], 0); ?>>pass only</option></select></p>
                         <p><label>Maximum similarity risk </label><select name="<?php echo esc_attr(self::OPTION); ?>[draft_max_similarity]"><?php foreach (array('high' => 'Allow high (most drafts)', 'medium' => 'Medium or lower', 'low' => 'Low only (strictest)') as $value => $label) : ?><option value="<?php echo esc_attr($value); ?>" <?php selected($s['draft_max_similarity'], $value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></p>
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[draft_require_grounded]" value="1" <?php checked($s['draft_require_grounded'], 1); ?>> Require grounded in the source</label></p>
@@ -123,7 +123,7 @@ trait TechnoRapper_AI_Wire_Admin {
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_run_now">
                 <?php wp_nonce_field('tr_ai_wire_run_now'); ?>
-                <p class="description">This runs immediately: fetch new feed items, rewrite, review, and publish (or save drafts if Auto-publish is off). It can take up to a minute. Save settings first if you just changed feeds.</p>
+                <p class="description">This runs immediately: fetch new feed items, rewrite, independently review, and publish (or save drafts if Auto-publish is off). Each stage is saved before the next starts. It can take up to a minute. Save settings first if you just changed feeds.</p>
                 <?php submit_button('Fetch feeds and process queue now', 'secondary'); ?>
             </form>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
@@ -402,9 +402,19 @@ trait TechnoRapper_AI_Wire_Admin {
         $page = max(1, absint($_GET['paged'] ?? 1));
         $per_page = 50;
         $status_filter = sanitize_key(wp_unslash($_GET['status'] ?? ''));
-        $allowed_statuses = array('new', 'waiting_budget', 'retry_wait', 'rewritten', 'reviewed', 'draft', 'published', 'quarantined', 'error');
+        $status_aliases = array('new' => 'pending', 'rewritten' => 'generated');
+        if (isset($status_aliases[$status_filter])) {
+            $status_filter = $status_aliases[$status_filter];
+        }
+        $allowed_statuses = array('pending', 'waiting_budget', 'retry_wait', 'generated', 'reviewed', 'draft', 'published', 'quarantined', 'error');
         if (!in_array($status_filter, $allowed_statuses, true)) { $status_filter = ''; }
-        $where = $status_filter ? $wpdb->prepare(' WHERE status = %s', $status_filter) : '';
+        $status_match = array('pending' => array('pending', 'new'), 'generated' => array('generated', 'rewritten'));
+        if ($status_filter && isset($status_match[$status_filter])) {
+            $placeholders = implode(', ', array_fill(0, count($status_match[$status_filter]), '%s'));
+            $where = $wpdb->prepare(' WHERE status IN (' . $placeholders . ')', $status_match[$status_filter]);
+        } else {
+            $where = $status_filter ? $wpdb->prepare(' WHERE status = %s', $status_filter) : '';
+        }
         $total_rows = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->table}{$where}");
         $offset = ($page - 1) * $per_page;
         $rows = $wpdb->get_results($wpdb->prepare("SELECT id, feed_name, source_title, source_url, status, wp_post_id, created_at, error_text, review_json, rewrite_json FROM {$this->table}{$where} ORDER BY id DESC LIMIT %d OFFSET %d", $per_page, $offset), ARRAY_A);

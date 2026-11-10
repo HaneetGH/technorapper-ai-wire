@@ -11,12 +11,13 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Queue;
     use TechnoRapper_AI_Wire_Feeds;
     use TechnoRapper_AI_Wire_AI;
+    use TechnoRapper_AI_Wire_Pipeline;
     use TechnoRapper_AI_Wire_SEO;
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Social;
 
-    const VERSION = '0.2.48';
+    const VERSION = '0.2.50';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -39,8 +40,9 @@ final class TechnoRapper_AI_Wire {
     const SEARCH_CALL_USD = 0.01;
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
     const PROCESSING_LOCK_TTL = 2700;
-    const SCHEMA_VERSION = '8';
+    const SCHEMA_VERSION = '9';
     const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
+    const QUARANTINE_TABLE_SUFFIX = 'tr_ai_wire_quarantine';
 
     private $table;
 
@@ -81,7 +83,7 @@ final class TechnoRapper_AI_Wire {
         add_action('wp_head', array($this, 'track_article_view'), 20);
         add_action('rest_api_init', array($this, 'register_tracking_route'));
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
-        add_action('wp_after_insert_post', array($this, 'queue_social_for_post'), 50, 4);
+        add_action('transition_post_status', array($this, 'queue_social_for_post'), 10, 3);
         add_action(self::SOCIAL_CRON_HOOK, array($this, 'process_social_queue'));
         add_action(self::SOCIAL_CONTEXT_CRON_HOOK, array($this, 'process_site_context'));
         add_action('init', array($this, 'maybe_requeue_instagram_quota_field_failures'), 12);

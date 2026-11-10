@@ -113,28 +113,33 @@ trait TechnoRapper_AI_Wire_Feeds {
             $summary['skipped'] = 'Daily post cap is 0 or already used. Raise Maximum posts per day and run again.';
             return;
         }
-        global $wpdb;
         $processed_this_run = 0;
         $run_limit = (int) $s['max_items_per_run'];
         $started_at = microtime(true);
         $time_budget_seconds = $foreground ? 90 : 25;
-        $new_ids = $this->ingest_new_feed_items($s, $summary);
-        $waiting_ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->table} WHERE (status IN ('new', 'waiting_budget', 'rewritten', 'reviewed', 'quarantined') AND wp_post_id IS NULL) OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s)) ORDER BY id DESC LIMIT %d", current_time('mysql', true), max(1, $run_limit)));
-        $ids = array_values(array_unique(array_merge($new_ids, array_map('intval', $waiting_ids))));
-        foreach ($ids as $waiting_id) {
-            if ((microtime(true) - $started_at) >= $time_budget_seconds) {
-                wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
+        $this->ingest_new_feed_items($s, $summary);
+        $touched = array();
+        while ((microtime(true) - $started_at) < $time_budget_seconds) {
+            if (!$this->refresh_processing_lock($lock_token)) {
                 return;
             }
-            if (!$this->refresh_processing_lock($lock_token)) { return; }
             if ($this->remaining_posts_today($s) <= 0) {
                 return;
             }
-            if ($processed_this_run >= $run_limit) {
+            if (count($touched) >= max(1, $run_limit)) {
                 wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
                 return;
             }
-            $this->process_item((int) $waiting_id, $s, $foreground);
+            $waiting_id = $this->next_pipeline_item_id($touched);
+            if ($waiting_id < 1) {
+                break;
+            }
+            if ($foreground) {
+                $this->advance_item_until_idle((int) $waiting_id, $s, 5, $started_at, $time_budget_seconds, $lock_token);
+            } else {
+                $this->process_item((int) $waiting_id, $s, false);
+            }
+            $touched[(int) $waiting_id] = true;
             $processed_this_run++;
             $summary['processed'] = $processed_this_run;
             $row = $this->get_item((int) $waiting_id);

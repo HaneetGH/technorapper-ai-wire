@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.48
+Stable tag: 0.2.50
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -51,6 +51,12 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.50 =
+* Keep the previous Run now, review-score, homepage pin, and social outcomes on the decoupled pipeline: writer quality and the 85 review scale stay the same, scheduled ticks still do one stage, and auto-publish still pins and syndicates after a verified publish.
+
+= 0.2.49 =
+* Split the editorial queue into committed stages (pending, generated, reviewed, quarantined, published), send failed reviews to a quarantine table, and syndicate socially only after a verified draft-to-publish transition.
+
 = 0.2.48 =
 * WordPress.org Plugin Check: Tested up to 7.1 in readme only, escape the scores chart, and prepare social/view SQL against prefixed table names.
 
@@ -64,6 +70,12 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.50 =
+Same publish, homepage, and social results as before, with committed pipeline stages so an API or adapter failure cannot roll back a finished step.
+
+= 0.2.49 =
+Decouples ingestion, generation, independent review, publishing, and social distribution so an API or adapter failure cannot roll back a finished stage.
 
 = 0.2.48 =
 Required for wordpress.org upload: current Tested up to, readme-only header, and Plugin Check SQL/escaping fixes.

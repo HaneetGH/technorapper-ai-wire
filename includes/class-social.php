@@ -516,14 +516,34 @@ trait TechnoRapper_AI_Wire_Social {
         echo '</div>';
     }
 
-    public function queue_social_for_post($post_id, $post, $update, $post_before) {
-        if (!($post instanceof WP_Post) || $post->post_status !== 'publish' || $post->post_type !== 'post') {
+    /**
+     * Social adapters fire only after WordPress confirms a verified publish
+     * transition (draft/pending/future → publish) with a public permalink.
+     * Failures here must never roll back the article.
+     */
+    public function queue_social_for_post($new_status, $old_status, $post) {
+        try {
+            $this->queue_social_on_verified_publish($new_status, $old_status, $post);
+        } catch (Throwable $e) {
+            // Distribution errors are isolated from CMS integrity.
+        }
+    }
+
+    private function queue_social_on_verified_publish($new_status, $old_status, $post) {
+        if ($new_status !== 'publish' || !($post instanceof WP_Post) || $post->post_type !== 'post') {
             return;
         }
-        if ($post_before instanceof WP_Post && $post_before->post_status === 'publish') {
+        if (!in_array((string) $old_status, array('draft', 'pending', 'future', 'auto-draft'), true)) {
             return;
         }
-        if (wp_is_post_revision($post_id) || !get_post_meta($post_id, '_tr_ai_wire_queue_id', true)) {
+        if (wp_is_post_revision($post->ID) || !get_post_meta($post->ID, '_tr_ai_wire_queue_id', true)) {
+            return;
+        }
+        if (get_post_status($post) !== 'publish') {
+            return;
+        }
+        $permalink = get_permalink($post);
+        if (!$permalink || strpos((string) $permalink, 'preview=true') !== false) {
             return;
         }
         $settings = $this->settings();
@@ -534,8 +554,7 @@ trait TechnoRapper_AI_Wire_Social {
         if (!$platforms) {
             return;
         }
-
-        $this->collect_social_article((int) $post_id, $settings);
+        $this->collect_social_article((int) $post->ID, $settings);
     }
 
     public function process_social_queue() {
