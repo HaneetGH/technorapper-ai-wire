@@ -686,6 +686,18 @@ trait TechnoRapper_AI_Wire_Publisher {
             'no_found_rows' => true,
         ));
         $rewrite = $this->prepare_rewrite_seo($rewrite);
+        $guard = $this->policy_guard_rewrite($rewrite);
+        if (is_wp_error($guard)) {
+            if ($guard->get_error_code() === 'tr_ai_wire_policy_unavailable') {
+                $this->handle_stage_error($id, $guard);
+                return;
+            }
+            $this->quarantine_item($id, $guard->get_error_message(), $item, array(
+                'rewrite_json' => wp_json_encode($rewrite),
+                'review_json' => wp_json_encode($review),
+            ));
+            return;
+        }
         if (!empty($existing_posts)) {
             $existing_id = (int) $existing_posts[0];
             $this->maybe_set_featured_image($existing_id, $item, $rewrite);

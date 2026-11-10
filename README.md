@@ -53,6 +53,7 @@ flowchart TD
 | Assignment | Stable A/B assignment from the source key | Retries keep the same experiment and variant |
 | Generation | Writer produces title, lede, body, category and tags | Source content is treated as untrusted input |
 | Review | Separate model evaluates factual consistency, novelty, usefulness and policy flags | Fail closed: only explicit passing output proceeds |
+| Policy scan | Local profanity/slur list plus OpenAI Moderation on the article and on every social caption, Reel script, and on-image line | Fail closed: violating copy is quarantined or held for review, never posted |
 | Draft or publish | Sanitized content is published automatically, or saved as a draft if Auto-publish is unchecked | Reject stays quarantined |
 | Measurement | GA4 event plus first-party 3-second visible-read counter | Signed REST payload, per-session browser dedupe, no IP storage |
 | Analysis | WordPress dashboard and GA4 Explore | Do not infer revenue or SEO lift from draft counts or a small sample |

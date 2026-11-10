@@ -53,6 +53,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 = 0.2.51 =
 * Optional Instagram Reels: one spoken story per article. The current Writer model writes the 15–18s script; Fal motion (suggested Veo 3.1 Lite, ~$0.24 / 8s, $10/month default) animates the social photo. Operators can pick Veo Fast, Veo 3.1, Kling Standard, or Kling Pro; each model has a price info icon and a Price estimate page. Mini TTS and ffmpeg mux voiceover plus captions. Not a Ken Burns slideshow. X still gets the still graphic.
+* Profanity and policy guardrails: a local slur/profanity list plus OpenAI Moderation run on every article and social caption before it is published. Violations are held, never posted.
 
 = 0.2.50 =
 * Keep the previous Run now, review-score, homepage pin, and social outcomes on the decoupled pipeline: writer quality and the 85 review scale stay the same, scheduled ticks still do one stage, and auto-publish still pins and syndicates after a verified publish.

@@ -14,10 +14,19 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
         delete_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         unset($_SERVER['REMOTE_ADDR']);
+        add_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10, 2);
+    }
+
+    public function allow_moderation_in_tests($result, $text) {
+        if (is_array($result)) {
+            return $result;
+        }
+        return array('flagged' => false, 'categories' => array());
     }
 
     public function tear_down() {
         remove_all_filters('pre_http_request');
+        remove_all_filters('tr_ai_wire_moderation_result');
         delete_option(TechnoRapper_AI_Wire::API_KEY_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_BATCH_OPTION);
@@ -748,6 +757,40 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('quarantined', $row['status']);
         $this->assertEmpty($row['wp_post_id']);
         $this->assertStringContainsString('verdict=reject', (string) $row['error_text']);
+    }
+
+    public function test_policy_local_hits_catch_profanity_not_class() {
+        $this->assertNotEmpty($this->invoke_private('policy_local_hits', array('This is fucking news')));
+        $this->assertNotEmpty($this->invoke_private('policy_local_hits', array('This is f*cking news')));
+        $this->assertSame(array(), $this->invoke_private('policy_local_hits', array('The assistant class assignment passed on the shell.')));
+        $this->assertStringContainsString('no profanity', $this->invoke_private('writer_prompt', array('A')));
+        $guard = $this->invoke_private('policy_guard_text', array('A grounded phone-chip update.', 'social'));
+        $this->assertTrue($guard);
+    }
+
+    public function test_profane_rewrite_stays_quarantined() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>This is a fucking disaster for the chip roadmap.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'safe_to_publish' => true,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, TechnoRapper_AI_Wire::defaults()));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertStringContainsString('profanity', (string) $row['error_text']);
     }
 
     public function test_min_score_setting_can_hold_a_revise_item() {
@@ -3156,6 +3199,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertFalse(is_wp_error($raw), is_wp_error($raw) ? $raw->get_error_message() : '');
         $this->assertSame('gpt-6.1-terra', $captured['model']);
         $this->assertStringContainsString('same Writer pass', $captured['user']);
+        $this->assertStringContainsString('no swear words', $captured['user']);
         $this->assertStringContainsString('reel_script', $captured['user']);
         $this->assertStringContainsString('key_takeaways', $captured['user']);
         $this->assertStringContainsString('same chip family', $captured['user']);
@@ -4577,6 +4621,82 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('ig-media-reuse', $published['remote_id']);
         $this->assertSame($attachment_id, (int) $published['image_attachment_id']);
         $this->assertSame(0, $image_calls);
+    }
+
+    public function test_profane_social_copy_is_held_not_posted() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social policy path.');
+        }
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Chip news',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 91);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'This is fucking news',
+            'on_image_headline' => 'This is fucking news',
+            'x' => 'This is fucking news',
+            'instagram' => 'This is fucking news',
+            'instagram_alt' => 'Alt',
+        )));
+        $this->fire_social_publish($post_id);
+        $posted = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$posted) {
+            if (strpos((string) $url, 'api.x.com') !== false) {
+                $posted++;
+                return new WP_Error('blocked', 'X must not receive policy-violating copy.');
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('needs_review', $row['status']);
+        $this->assertStringContainsString('profanity', (string) $row['error_text']);
+        $this->assertSame(0, $posted);
+    }
+
+    public function test_moderation_flag_holds_social_post() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required for the social policy path.');
+        }
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Chip news',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 92);
+        update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'hook' => 'A grounded phone-chip update',
+            'on_image_headline' => 'Phone chip update',
+            'x' => 'A grounded phone-chip update',
+            'instagram' => 'A grounded phone-chip update',
+            'instagram_alt' => 'Alt',
+        )));
+        $this->fire_social_publish($post_id);
+        remove_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10);
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('hate' => true));
+        });
+        $posted = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$posted) {
+            if (strpos((string) $url, 'api.x.com') !== false) {
+                $posted++;
+                return new WP_Error('blocked', 'X must not receive moderated copy.');
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id), ARRAY_A);
+        $this->assertSame('needs_review', $row['status']);
+        $this->assertStringContainsString('Moderation', (string) $row['error_text']);
+        $this->assertSame(0, $posted);
     }
 
     public function test_late_x_onboard_queues_saved_graphics_without_generating() {

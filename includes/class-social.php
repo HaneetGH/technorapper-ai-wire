@@ -844,6 +844,14 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_social_post', 'The source article is no longer published.');
         }
         $copy = $this->social_copy($post, $settings);
+        if (is_wp_error($copy)) {
+            return $copy;
+        }
+        $guard = $this->policy_guard_social_copy($copy);
+        if (is_wp_error($guard)) {
+            delete_post_meta($post->ID, '_tr_ai_wire_social_copy');
+            return $guard;
+        }
         $wants_reel = $this->social_wants_reel($settings) && (($row['platform'] ?? '') === 'instagram');
         $force_new_image = (string) get_post_meta($post->ID, '_tr_ai_wire_social_regenerate_image', true) === '1';
         if ($wants_reel && $this->social_broll_id($post->ID) < 1) {
@@ -968,6 +976,10 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'carousel');
         $caption = $this->instagram_pack_caption($prepared);
+        $guard = $this->policy_guard_text($caption, 'social');
+        if (is_wp_error($guard)) {
+            return $guard;
+        }
         $alt = (string) ($prepared[0]['copy']['instagram_alt'] ?? (self::site_brand_name() . ' stories'));
         if ($format === 'collage') {
             $bytes = array();
@@ -1023,7 +1035,12 @@ trait TechnoRapper_AI_Wire_Social {
                 break;
             }
         }
-        return $this->publish_x_post($this->x_pack_caption($prepared), $paths, $credentials);
+        $caption = $this->x_pack_caption($prepared);
+        $guard = $this->policy_guard_text($caption, 'social');
+        if (is_wp_error($guard)) {
+            return $guard;
+        }
+        return $this->publish_x_post($caption, $paths, $credentials);
     }
 
     private function x_pack_caption($prepared) {
@@ -1137,13 +1154,24 @@ trait TechnoRapper_AI_Wire_Social {
         $generated = $this->generate_social_copy($post, $settings);
         if (!is_wp_error($generated) && is_array($generated)) {
             $copy = $this->sanitize_social_copy($generated, $post);
+            $guard = $this->policy_guard_social_copy($copy);
+            if (is_wp_error($guard)) {
+                return $guard;
+            }
             update_post_meta($post->ID, '_tr_ai_wire_social_copy', wp_json_encode($copy));
             return $copy;
+        }
+        if (is_wp_error($generated) && $generated->get_error_code() === 'tr_ai_wire_policy') {
+            return $generated;
         }
         if (is_array($decoded)) {
             return $this->sanitize_social_copy($decoded, $post);
         }
         $copy = $this->sanitize_social_copy(array(), $post);
+        $guard = $this->policy_guard_social_copy($copy);
+        if (is_wp_error($guard)) {
+            return $guard;
+        }
         update_post_meta($post->ID, '_tr_ai_wire_social_copy', wp_json_encode($copy));
         return $copy;
     }
@@ -1202,13 +1230,14 @@ trait TechnoRapper_AI_Wire_Social {
         $snapshot = $this->social_article_snapshot($post);
         $profile = $this->site_context_profile();
         $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this site';
-        $system = 'You are the social desk for ' . $brand . '. Repackage an already-published article for X and Instagram. Do not write a new article. Use only supplied article fields plus the site context. Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. Return JSON only.';
+        $system = 'You are the social desk for ' . $brand . '. Repackage an already-published article for X and Instagram. Do not write a new article. Use only supplied article fields plus the site context. Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake urgency or countdown deals. No profanity, slurs, hate, harassment, sexual content, self-harm, or illegal advice. Return JSON only.';
         $user = 'Build one social package that matches this publisher\'s priorities. Principles to hit when the article supports them: hook that stops the scroll; curiosity; a feeling (stakes for a reader\'s phone/job/money, not melodrama); relatability; pattern interrupt; before/after contrast; a tiny story; useful value; a clear CTA to read the article; branding; shareability; saveability; cultural relevance when the source has it. '
             . 'on_image_headline: Instagram poster headline, 4–9 words, punchy, can include a number only if it is in the article. Written to sit in huge condensed type on a photo, so keep it short enough for 2–3 lines. on_image_subhead: one supporting line, max 10 words. '
             . 'visual_brief: describe only the photograph (tight device close-up, crowded office from behind, factory, night city, server hall). Prefer dusk, night, or hard rim light. Do not include the headline wording. Anonymous people from behind or in shadow are ok. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). '
             . 'x_text: hook plus one curiosity or value line; do not include the URL. instagram_caption: hook, 2–4 short lines of value/story, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags for this site, no spam. instagram_alt: factual description of the graphic. '
             . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway without opening the article. Three beats: hook in the first sentence; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
-            . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. ';
+            . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
+            . 'Every field must be safe to post on X and Instagram: no swear words, slurs, nudity, gore, or attacks on people. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }
@@ -1434,6 +1463,7 @@ trait TechnoRapper_AI_Wire_Social {
             . 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. '
             . 'Do not draw a poster, card, border, navy panel, illustration, cartoon, 3D render, collage, infographic, UI screenshot, or product mockup. '
             . 'Do not imitate a specific existing photo. Anonymous people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. '
+            . 'No nudity, sexual content, gore, hate symbols, or graphic violence. '
             . 'Art direction: ' . $this->social_image_art_direction($profile) . '. '
             . 'Camera: ' . $this->social_image_camera($post, $revision) . '. '
             . ($brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one clear technology-news photograph with a single subject. ')
@@ -3045,7 +3075,7 @@ trait TechnoRapper_AI_Wire_Social {
             'queued' => 'Waiting. If a graphic already exists, the worker posts that file and does not generate another.',
             'processing' => 'In progress: generating the graphic or talking to the platform.',
             'published' => 'Posted on this platform. If the graphic is wrong, regenerate and post again — the plugin deletes the live post first, then publishes a new graphic.',
-            'needs_review' => 'The platform response was unclear. Confirm this is not already live, then post the saved graphic or generate a new one.',
+            'needs_review' => 'Held for review. If this is a policy hold, edit or regenerate the copy. If it is a platform error, confirm the post is not already live, then retry the saved graphic.',
         );
         $status = sanitize_key((string) $status);
         return isset($map[$status]) ? $map[$status] : '';
