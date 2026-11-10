@@ -1657,9 +1657,9 @@ trait TechnoRapper_AI_Wire_Social {
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook, 2–4 short lines that pay off the curiosity, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
             . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway without opening the article. Three beats: hook in the first sentence; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
             . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
-            . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. This is the YouTube ranking line, not the Instagram caption. '
-            . 'youtube_description: two short lines that finish the lesson; do not include the URL (we append it). No hashtag dump. '
-            . 'youtube_tags: 3–8 short YouTube tags (words, not #hashtags) grounded in the article. '
+            . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
+            . 'youtube_description: two short lines that finish the lesson; do not include the URL or #Shorts (we append both). No hashtag dump. '
+            . 'youtube_tags: 3–8 short YouTube tags (words, not #hashtags) grounded in the article. They are sent in the upload API with the public listing. '
             . 'Every field must be safe to post on X, Instagram, and YouTube: no swear words, slurs, nudity, gore, or attacks on people. ';
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";

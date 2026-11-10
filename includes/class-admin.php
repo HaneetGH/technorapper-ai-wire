@@ -206,7 +206,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     $yt_channel = (string) ($social_credentials['youtube_channel_title'] ?? '');
                     ?>
                     <p>Status: <?php echo $yt_ready ? '<strong>channel connected' . ($yt_channel !== '' ? ' — ' . esc_html($yt_channel) : '') . '</strong>' : '<strong>not connected</strong>'; ?> · posting is <strong><?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'on' : 'off'; ?></strong></p>
-                    <p class="description">YouTube gets the same spoken 9:16 Short as the Instagram Reel — not a still image. Title, description, tags, category, privacy, and made-for-kids are set through the YouTube Data API when the file uploads. Google does not charge per upload; default quota is 100 uploads/day.</p>
+                    <p class="description">YouTube gets the same spoken 9:16 Short as the Instagram Reel — not a still image. The file uploads <strong>public immediately</strong>: title, description, tags, category, language, license, audience (not made for kids), and AI-content disclosure are all set in that API call. There is no YouTube draft or scheduled-publish step. Google does not charge per upload; default quota is 100 uploads/day.</p>
                     <p><label for="tr-yt-client-id"><strong>Google client ID</strong></label><br><input id="tr-yt-client-id" name="social[youtube_client_id]" type="text" class="regular-text" autocomplete="off" placeholder="<?php echo TechnoRapper_AI_Wire_YouTube_OAuth::client_id($social_credentials) !== '' ? esc_attr('Saved — enter a new ID to replace it') : esc_attr('From Google Cloud → APIs & Services → Credentials'); ?>" value=""></p>
                     <p><label for="tr-yt-client-secret"><strong>Google client secret</strong></label><br><input id="tr-yt-client-secret" name="social[youtube_client_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo TechnoRapper_AI_Wire_YouTube_OAuth::client_secret($social_credentials) !== '' ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('OAuth client secret'); ?>"></p>
                     <p class="description">Redirect URI to add in Google Cloud: <code><?php echo esc_html(TechnoRapper_AI_Wire_YouTube_OAuth::redirect_uri()); ?></code>. Enable YouTube Data API v3. You can instead set <code>TR_AI_WIRE_GOOGLE_CLIENT_ID</code> and <code>TR_AI_WIRE_GOOGLE_CLIENT_SECRET</code> in wp-config.php.</p>
@@ -221,8 +221,8 @@ trait TechnoRapper_AI_Wire_Admin {
                         <option value="<?php echo esc_attr((string) $cat_id); ?>" <?php selected((string) ($s['social_youtube_category_id'] ?? '28'), (string) $cat_id); ?>><?php echo esc_html($cat_label); ?></option>
                         <?php endforeach; ?>
                     </select></p>
-                    <p><label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_youtube_notify_subscribers]" value="1" <?php checked(!empty($s['social_youtube_notify_subscribers'])); ?>> Notify YouTube subscribers when a Short uploads</label></p>
-                    <p class="description">Leave posting off to keep the channel connected without uploading. Reels per day still gates the spoken file. X and Instagram stills are unchanged.</p>
+                    <p><label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_youtube_notify_subscribers]" value="1" <?php checked(!empty($s['social_youtube_notify_subscribers'])); ?>> Notify YouTube subscribers when a Short goes live</label></p>
+                    <p class="description">Leave posting off to keep the channel connected without uploading. Reels per day still gates the spoken file. X and Instagram stills are unchanged. Subscriber notifications are optional; the Short is public either way.</p>
                 </div>
                 <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
                     <h2>Distribution</h2>

@@ -3761,9 +3761,17 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains('qualcomm', $resource['snippet']['tags']);
         $this->assertContains('ai chips', $resource['snippet']['tags']);
         $this->assertSame('28', $resource['snippet']['categoryId']);
+        $this->assertNotEmpty($resource['snippet']['defaultLanguage']);
+        $this->assertStringContainsString('#Shorts', $resource['snippet']['description']);
+        $this->assertContains('shorts', $resource['snippet']['tags']);
         $this->assertSame('public', $resource['status']['privacyStatus']);
         $this->assertFalse($resource['status']['selfDeclaredMadeForKids']);
         $this->assertTrue($resource['status']['containsSyntheticMedia']);
+        $this->assertTrue($resource['status']['embeddable']);
+        $this->assertTrue($resource['status']['publicStatsViewable']);
+        $this->assertSame('youtube', $resource['status']['license']);
+        $this->assertArrayNotHasKey('publishAt', $resource['status']);
+        $this->assertNotEmpty($resource['recordingDetails']['recordingDate'] ?? '');
 
         $video = sys_get_temp_dir() . '/tr-yt-' . wp_generate_uuid4() . '.mp4';
         file_put_contents($video, str_repeat('m', 2048));
@@ -3812,8 +3820,80 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('https://www.youtube.com/shorts/yt-short-1', $result['url']);
         $this->assertSame('Qualcomm wants the rack, not just the pocket', $captured['init']['snippet']['title'] ?? '');
         $this->assertContains('qualcomm', $captured['init']['snippet']['tags'] ?? array());
+        $this->assertSame('public', $captured['init']['status']['privacyStatus'] ?? '');
+        $this->assertArrayNotHasKey('publishAt', $captured['init']['status'] ?? array());
+        $this->assertStringContainsString('#Shorts', $captured['init']['snippet']['description'] ?? '');
         $this->assertTrue($captured['notify']);
         $this->assertSame(2048, $captured['bytes']);
+    }
+
+    public function test_youtube_forces_public_if_channel_default_is_private() {
+        $this->onboard_social(array('youtube'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Channel defaulted to private',
+        ));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(
+            'youtube_title' => 'This must go live now',
+            'youtube_description' => 'No draft, no schedule.',
+            'youtube_tags' => array('ai'),
+        ), get_post($post_id)));
+        $video = sys_get_temp_dir() . '/tr-yt-priv-' . wp_generate_uuid4() . '.mp4';
+        file_put_contents($video, str_repeat('m', 1024));
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            $method = strtoupper((string) ($args['method'] ?? 'GET'));
+            if (strpos($url, 'upload/youtube/v3/videos') !== false) {
+                return array(
+                    'headers' => array('location' => 'https://example.org/youtube-upload-session'),
+                    'body' => '',
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            if (strpos($url, 'example.org/youtube-upload-session') !== false) {
+                return $this->mock_http_ok(array(
+                    'id' => 'yt-was-private',
+                    'status' => array('privacyStatus' => 'private', 'uploadStatus' => 'uploaded'),
+                ));
+            }
+            if ($method === 'PUT' && strpos($url, 'googleapis.com/youtube/v3/videos') !== false) {
+                $captured['update'] = json_decode((string) ($args['body'] ?? ''), true);
+                return $this->mock_http_ok(array(
+                    'id' => 'yt-was-private',
+                    'status' => array('privacyStatus' => 'public', 'uploadStatus' => 'processed'),
+                ));
+            }
+            if (strpos($url, 'googleapis.com/youtube/v3/videos') !== false) {
+                $privacy = empty($captured['update']) ? 'private' : 'public';
+                return $this->mock_http_ok(array(
+                    'items' => array(array(
+                        'id' => 'yt-was-private',
+                        'status' => array('uploadStatus' => 'processed', 'privacyStatus' => $privacy),
+                        'processingDetails' => array('processingStatus' => 'succeeded'),
+                    )),
+                ));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        add_filter('tr_ai_wire_youtube_poll_seconds', function () {
+            return 0;
+        });
+        $result = $this->invoke_private('publish_youtube_short', array(
+            $copy,
+            $video,
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION),
+            TechnoRapper_AI_Wire::defaults(),
+            get_post($post_id),
+        ));
+        @unlink($video);
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame('yt-was-private', $result['id']);
+        $this->assertSame('public', $captured['update']['status']['privacyStatus'] ?? '');
+        $this->assertArrayNotHasKey('publishAt', $captured['update']['status'] ?? array());
+        $this->assertFalse($captured['update']['status']['selfDeclaredMadeForKids'] ?? true);
     }
 
     public function test_youtube_does_not_post_a_still_image() {

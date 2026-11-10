@@ -134,7 +134,7 @@ PHPUnit covers onboarding gates, unique-article daily cap, mocked X publish, Ins
 
 - Requires **your** Google Cloud OAuth client (YouTube Data API v3 enabled) and a connected channel. Scopes are `youtube.upload` and `youtube.readonly`. Redirect URI is `wp-admin/admin-post.php?action=tr_ai_wire_youtube_oauth_callback`.
 - The worker uploads the spoken Reel MP4 bytes. Google does not fetch a WordPress Media URL. Vertical ≤3 minutes is classified as a Short automatically; there is no Shorts flag on `videos.insert`.
-- Metadata is API-only: `snippet.title` (max 100), `snippet.description` (max 5000 bytes, permalink appended), `snippet.tags`, `snippet.categoryId`, `status.privacyStatus=public`, `status.selfDeclaredMadeForKids=false`, `status.containsSyntheticMedia=true`.
+- Metadata is API-only and goes live immediately (no Studio draft): `snippet.title` (max 100), `snippet.description` (permalink + `#Shorts` + tag hashtags), `snippet.tags`, `snippet.categoryId`, `snippet.defaultLanguage`, `status.privacyStatus=public`, `status.selfDeclaredMadeForKids=false`, `status.containsSyntheticMedia=true`, `status.license=youtube`, `status.embeddable`, `status.publicStatsViewable`. `publishAt` is never set. If the channel default is private, the worker updates the video to public.
 - There is no Google per-upload fee. Default quota is 100 `videos.insert` calls per day. A `quota` Social queue error means the Google Cloud project hit its daily API quota. After a successful byte upload, a processing wait stores the video ID and polls instead of uploading again.
 
 ### WordPress and cost

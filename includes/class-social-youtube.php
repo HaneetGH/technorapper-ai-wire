@@ -4,9 +4,9 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * YouTube Shorts reuse the spoken Reel MP4. Title, description, tags,
- * category, privacy, audience, and synthetic-media disclosure are set
- * through YouTube Data API v3 videos.insert — not Studio, not stills.
+ * YouTube Shorts reuse the spoken Reel MP4. The listing goes live in the
+ * same videos.insert call: public, not a draft, with title, description,
+ * tags, category, audience, license, and synthetic-media disclosure.
  */
 trait TechnoRapper_AI_Wire_Social_YouTube {
     public static function youtube_credentials_ready($credentials = null) {
@@ -113,31 +113,100 @@ trait TechnoRapper_AI_Wire_Social_YouTube {
                 break;
             }
         }
+        if (!in_array('shorts', $tags, true) && $total + 7 <= 450 && count($tags) < 8) {
+            $tags[] = 'shorts';
+        }
         return $tags;
+    }
+
+    private function youtube_default_language() {
+        $lang = str_replace('_', '-', (string) get_bloginfo('language'));
+        if (!preg_match('/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/', $lang)) {
+            return 'en';
+        }
+        return $lang;
+    }
+
+    private function youtube_recording_date($post) {
+        if (!$post instanceof WP_Post) {
+            return '';
+        }
+        $gmt = trim((string) $post->post_date_gmt);
+        if ($gmt === '' || $gmt === '0000-00-00 00:00:00') {
+            $gmt = (string) get_gmt_from_date((string) $post->post_date);
+        }
+        $ts = strtotime($gmt . ' UTC');
+        if (!$ts) {
+            return '';
+        }
+        return gmdate('Y-m-d\TH:i:s\Z', $ts);
+    }
+
+    private function youtube_public_status() {
+        return array(
+            'privacyStatus' => 'public',
+            'selfDeclaredMadeForKids' => false,
+            'embeddable' => true,
+            'publicStatsViewable' => true,
+            'license' => 'youtube',
+            'containsSyntheticMedia' => true,
+        );
+    }
+
+    private function youtube_public_description($description, $tags) {
+        $description = trim((string) $description);
+        $line = array();
+        if (stripos($description, '#shorts') === false) {
+            $line[] = '#Shorts';
+        }
+        foreach ((array) $tags as $tag) {
+            $tag = ltrim(strtolower(trim((string) $tag)), '#');
+            if ($tag === '' || $tag === 'shorts') {
+                continue;
+            }
+            $hash = '#' . str_replace(' ', '', $tag);
+            if (stripos($description, $hash) === false) {
+                $line[] = $hash;
+            }
+        }
+        if ($line) {
+            $description = trim($description . "\n\n" . implode(' ', $line));
+        }
+        if (function_exists('mb_strlen') && mb_strlen($description, 'UTF-8') > 5000) {
+            return mb_substr($description, 0, 5000, 'UTF-8');
+        }
+        if (strlen($description) > 5000) {
+            return substr($description, 0, 5000);
+        }
+        return $description;
     }
 
     private function youtube_video_resource($copy, $post, $settings) {
         $copy = is_array($copy) ? $copy : array();
         $title = $this->sanitize_youtube_title($copy['youtube_title'] ?? '', $copy, $post);
-        $description = $this->sanitize_youtube_description($copy['youtube_description'] ?? '', $copy, $post);
         $tags = $this->sanitize_youtube_tags($copy['youtube_tags'] ?? array(), $copy);
+        $description = $this->youtube_public_description(
+            $this->sanitize_youtube_description($copy['youtube_description'] ?? '', $copy, $post),
+            $tags
+        );
         $snippet = array(
             'title' => $title,
             'description' => $description,
             'categoryId' => $this->youtube_category_id($settings),
+            'defaultLanguage' => $this->youtube_default_language(),
         );
         if ($tags) {
             $snippet['tags'] = $tags;
         }
-        return array(
+        $resource = array(
             'snippet' => $snippet,
-            'status' => array(
-                'privacyStatus' => 'public',
-                'selfDeclaredMadeForKids' => false,
-                'embeddable' => true,
-                'containsSyntheticMedia' => true,
-            ),
+            'status' => $this->youtube_public_status(),
         );
+        $recorded = $this->youtube_recording_date($post);
+        if ($recorded !== '') {
+            $resource['recordingDetails'] = array('recordingDate' => $recorded);
+        }
+        return $resource;
     }
 
     private function publish_youtube_short($copy, $video_path, $credentials, $settings, $post, $existing_id = '') {
@@ -156,6 +225,10 @@ trait TechnoRapper_AI_Wire_Social_YouTube {
                     $wait->add_data($existing_id);
                 }
                 return $wait;
+            }
+            $live = $this->youtube_force_public($existing_id, $token);
+            if (is_wp_error($live)) {
+                return $live;
             }
             return array(
                 'id' => $existing_id,
@@ -179,8 +252,9 @@ trait TechnoRapper_AI_Wire_Social_YouTube {
             return new WP_Error('tr_ai_wire_yt_title', 'YouTube rejected an empty title. The Writer pass must return youtube_title.');
         }
         $notify = empty($settings['social_youtube_notify_subscribers']) ? 'false' : 'true';
+        $parts = isset($resource['recordingDetails']) ? 'snippet,status,recordingDetails' : 'snippet,status';
         $init = wp_remote_post(
-            'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status&notifySubscribers=' . $notify,
+            'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=' . rawurlencode($parts) . '&notifySubscribers=' . $notify,
             array(
                 'timeout' => 60,
                 'headers' => array(
@@ -260,10 +334,73 @@ trait TechnoRapper_AI_Wire_Social_YouTube {
             }
             return $wait;
         }
+        $live = $this->youtube_force_public($video_id, $token);
+        if (is_wp_error($live)) {
+            return $live;
+        }
         return array(
             'id' => $video_id,
             'url' => 'https://www.youtube.com/shorts/' . rawurlencode($video_id),
         );
+    }
+
+    private function youtube_force_public($video_id, $token) {
+        $video_id = sanitize_text_field((string) $video_id);
+        if ($video_id === '') {
+            return new WP_Error('tr_ai_wire_yt_privacy', 'YouTube did not return a video ID, so the Short cannot be published.');
+        }
+        $lookup = add_query_arg(array(
+            'part' => 'status',
+            'id' => $video_id,
+        ), 'https://www.googleapis.com/youtube/v3/videos');
+        $response = wp_remote_get($lookup, array(
+            'timeout' => 30,
+            'headers' => array('Authorization' => 'Bearer ' . $token),
+        ));
+        $privacy = '';
+        $scheduled = '';
+        if (!is_wp_error($response)) {
+            $data = json_decode(wp_remote_retrieve_body($response), true);
+            $item = is_array($data['items'][0] ?? null) ? $data['items'][0] : array();
+            $privacy = (string) ($item['status']['privacyStatus'] ?? '');
+            $scheduled = (string) ($item['status']['publishAt'] ?? '');
+            if ($privacy === 'public' && $scheduled === '') {
+                return true;
+            }
+        }
+        $update = wp_remote_request(
+            'https://www.googleapis.com/youtube/v3/videos?part=status',
+            array(
+                'method' => 'PUT',
+                'timeout' => 30,
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . $token,
+                    'Content-Type' => 'application/json; charset=UTF-8',
+                ),
+                'body' => wp_json_encode(array(
+                    'id' => $video_id,
+                    'status' => $this->youtube_public_status(),
+                )),
+            )
+        );
+        $quota = $this->youtube_quota_error($update);
+        if (is_wp_error($quota)) {
+            return $quota;
+        }
+        if (is_wp_error($update)) {
+            return new WP_Error('tr_ai_wire_yt_privacy', $update->get_error_message());
+        }
+        $status = (int) wp_remote_retrieve_response_code($update);
+        $data = json_decode(wp_remote_retrieve_body($update), true);
+        $privacy = (string) ($data['status']['privacyStatus'] ?? $privacy);
+        if ($status === 403 || (($data['error']['errors'][0]['reason'] ?? '') === 'forbiddenPrivacySetting')) {
+            return new WP_Error('tr_ai_wire_yt_privacy', 'YouTube refused a public listing. Check the channel default upload privacy in YouTube Studio.');
+        }
+        if ($status < 200 || $status >= 300 || $privacy !== 'public') {
+            $message = sanitize_text_field($data['error']['message'] ?? ('YouTube kept the Short as ' . ($privacy !== '' ? $privacy : 'unpublished') . '.'));
+            return new WP_Error('tr_ai_wire_yt_privacy', $message);
+        }
+        return true;
     }
 
     private function youtube_wait_for_processing($video_id, $token) {

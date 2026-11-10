@@ -57,7 +57,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.2.54 =
-* Optional YouTube Shorts: the same spoken Reel MP4 uploads through YouTube Data API v3 with title, description, tags, category, privacy, and made-for-kids set in the API. Still images are not posted to YouTube. Off until you connect a channel and turn posting on.
+* Optional YouTube Shorts: the same spoken Reel MP4 uploads through YouTube Data API v3 and goes live as public immediately (not a draft). Title, description, tags, category, language, license, audience, and AI-content disclosure are set in that API call. Still images are not posted to YouTube. Off until you connect a channel and turn posting on.
 
 = 0.2.53 =
 * Optional spoken Instagram Reels, off until you set Reels per day above 0. Writer GPT writes the 15–18s script; Fal motion (suggested Veo 3.1 Lite) animates the photo; Mini TTS and ffmpeg mux captions. A local profanity/slur list plus OpenAI Moderation hold unsafe copy. X still gets the still graphic.
