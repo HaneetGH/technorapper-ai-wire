@@ -108,8 +108,18 @@ trait TechnoRapper_AI_Wire_Admin {
                     <tr><th scope="row"><label for="tr-source-chars">Maximum source characters per item</label></th><td><input id="tr-source-chars" type="number" min="1000" max="50000" step="1000" name="<?php echo esc_attr(self::OPTION); ?>[max_source_chars]" value="<?php echo esc_attr($s['max_source_chars']); ?>"></td></tr>
                     <tr><th scope="row">AI models</th><td>Writer: <?php $this->model_select('writer_model', $s['writer_model']); ?><br>Reviewer: <?php $this->model_select('reviewer_model', $s['reviewer_model']); ?><p class="description">Usage estimates use published standard rates for these models. Recheck provider pricing before changing models.</p></td></tr>
                     <tr><th scope="row">Independent web search</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_web_search]" value="1" <?php checked($s['enable_web_search'], 1); ?>> Enable up to one web-search call during each review</label><p class="description">Adds search-tool charges (currently $0.01 per call, plus tokens). Search is corroboration, not a guarantee. Leave off to check claims against the supplied feed only.</p></td></tr>
-                    <tr><th scope="row">Editorial A/B experiment</th><td><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_experiment]" value="1" <?php checked($s['enable_experiment'], 1); ?>> Enable 50/50 writer experiment</label><p class="description">A = current writer. B = original editorial writer. Assignment is stable per source item. Disable to use A for new items.</p><label for="tr-experiment-id">Experiment ID</label> <input id="tr-experiment-id" type="text" maxlength="64" name="<?php echo esc_attr(self::OPTION); ?>[experiment_id]" value="<?php echo esc_attr($s['experiment_id']); ?>"></td></tr>
-                    <tr><th scope="row"><label for="tr-comic-daily">Comic posts per day</label></th><td><input id="tr-comic-daily" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[comic_daily_limit]" value="<?php echo esc_attr((string) (int) ($s['comic_daily_limit'] ?? 0)); ?>"> <p class="description">Today’s first N articles (UTC) get a restrained dry wink in the article and the social graphic. The rest stay straight so you can compare them on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-experiments')); ?>">A/B experiments</a>. Assignment is kept on retry. 0 turns comic off.</p></td></tr>
+                    <tr><th scope="row">Editorial A/B experiment</th><td><label><input id="tr-enable-experiment" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[enable_experiment]" value="1" <?php checked($s['enable_experiment'], 1); ?>> Enable 50/50 writer experiment</label><p class="description">A = current writer. B = original editorial writer. Assignment is stable per source item. Disable to use A for new items.</p>
+                    <div data-tr-reveal="tr-enable-experiment"<?php echo !empty($s['enable_experiment']) ? '' : ' hidden'; ?>>
+                    <p><label for="tr-experiment-id">Experiment ID</label> <input id="tr-experiment-id" type="text" maxlength="64" name="<?php echo esc_attr(self::OPTION); ?>[experiment_id]" value="<?php echo esc_attr($s['experiment_id']); ?>"></p>
+                    </div></td></tr>
+                    <tr><th scope="row">Comic voice</th><td>
+                    <input type="hidden" name="<?php echo esc_attr(self::OPTION); ?>[comic_enabled]" value="0">
+                    <label><input id="tr-comic-enabled" type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[comic_enabled]" value="1" <?php checked((int) ($s['comic_daily_limit'] ?? 0) > 0); ?>> Enable a restrained dry wink on some posts</label>
+                    <p class="description">Leave this off to keep every article straight. Turn it on to A/B comic vs straight on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-experiments')); ?>">A/B experiments</a>.</p>
+                    <div data-tr-reveal="tr-comic-enabled"<?php echo (int) ($s['comic_daily_limit'] ?? 0) > 0 ? '' : ' hidden'; ?>>
+                    <p><label for="tr-comic-daily">Comic posts per day</label> <input id="tr-comic-daily" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[comic_daily_limit]" value="<?php echo esc_attr((string) (int) ($s['comic_daily_limit'] ?? 0)); ?>"></p>
+                    <p class="description">Today’s first N articles (UTC) get a restrained dry wink in the article and the social graphic. The rest stay straight. Assignment is kept on retry.</p>
+                    </div></td></tr>
                     <tr><th scope="row">When to create a draft</th><td>
                         <p><label for="tr-draft-min-score"><strong>Minimum review score</strong></label> <input id="tr-draft-min-score" type="number" min="0" max="100" name="<?php echo esc_attr(self::OPTION); ?>[draft_min_score]" value="<?php echo esc_attr($s['draft_min_score']); ?>"> <span class="description">0–100. The independent reviewer scores a website-publishable article at 85–89 and an Instagram-grade original article at 90 or higher. Complete articles are not parked at 85. 70–84 means a concrete edit is still required. Below this stays quarantined. Retry asks the reviewer again; it does not publish a score under this minimum.</span></p>
                         <p><label>Accept reviewer verdict </label><select name="<?php echo esc_attr(self::OPTION); ?>[draft_allow_revise]"><option value="1" <?php selected($s['draft_allow_revise'], 1); ?>>pass or revise</option><option value="0" <?php selected($s['draft_allow_revise'], 0); ?>>pass only</option></select></p>
@@ -155,6 +165,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <p class="description">Download featured photos and in-article images that still live on other servers into this site’s media library. Older posts stop hotlinking the original CDN. The Inspired by source link at the end stays. This stays on the page and shows a progress bar.</p>
                 <?php submit_button('Migrate older images to this site', 'secondary'); ?>
             </form>
+            <?php $this->render_conditional_settings_script(); ?>
         </div>
         <?php
     }
@@ -167,8 +178,13 @@ trait TechnoRapper_AI_Wire_Admin {
         $social_credentials = $this->social_credentials();
         $x_ready = TechnoRapper_AI_Wire::x_oauth1_ready($social_credentials);
         $ig_ready = TechnoRapper_AI_Wire::instagram_credentials_ready($social_credentials);
+        $yt_ready = TechnoRapper_AI_Wire::youtube_credentials_ready($social_credentials);
         $x_on = !empty($s['social_x_enabled']) || !$x_ready;
         $ig_on = !empty($s['social_instagram_enabled']) || !$ig_ready;
+        $yt_on = !empty($s['social_youtube_enabled']) || !$yt_ready;
+        $reel_on = (int) ($s['social_reel_daily_limit'] ?? 0) > 0;
+        $stills_on = $x_on || $ig_on;
+        $any_network = $x_on || $ig_on || $yt_on;
         $option = self::OPTION;
         ?>
         <div class="wrap">
@@ -216,9 +232,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
                     <h2>YouTube</h2>
                     <?php
-                    $yt_ready = TechnoRapper_AI_Wire::youtube_credentials_ready($social_credentials);
                     $yt_oauth_ready = TechnoRapper_AI_Wire_YouTube_OAuth::configured($social_credentials);
-                    $yt_on = !empty($s['social_youtube_enabled']) || !$yt_ready;
                     $yt_channel = (string) ($social_credentials['youtube_channel_title'] ?? '');
                     ?>
                     <p>Status: <?php echo $yt_ready ? '<strong>channel connected' . ($yt_channel !== '' ? ' — ' . esc_html($yt_channel) : '') . '</strong>' : '<strong>not connected</strong>'; ?> · posting is <strong><?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'on' : 'off'; ?></strong></p>
@@ -240,6 +254,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     </details>
                     <?php if ($yt_ready) : ?><p><label><input type="checkbox" name="remove_youtube_oauth" value="1"> Remove saved YouTube channel</label></p><?php endif; ?>
                     <p><label><input id="tr-social-yt-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_youtube_enabled]" value="1" <?php checked($yt_on); ?>> <strong>Post to YouTube Shorts</strong></label></p>
+                    <div data-tr-reveal="tr-social-yt-enabled"<?php echo $yt_on ? '' : ' hidden'; ?>>
                     <p><label for="tr-yt-category">YouTube category</label>
                     <select id="tr-yt-category" name="<?php echo esc_attr($option); ?>[social_youtube_category_id]">
                         <?php foreach (TechnoRapper_AI_Wire::youtube_video_categories() as $cat_id => $cat_label) : ?>
@@ -247,22 +262,27 @@ trait TechnoRapper_AI_Wire_Admin {
                         <?php endforeach; ?>
                     </select></p>
                     <p><label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_youtube_notify_subscribers]" value="1" <?php checked(!empty($s['social_youtube_notify_subscribers'])); ?>> Notify YouTube subscribers when a Short goes live</label></p>
-                    <p class="description">Leave posting off to keep the channel connected without uploading. Reels per day still gates the spoken file. X and Instagram stills are unchanged. Subscriber notifications are optional; the Short is public either way.</p>
+                    <p class="description">Leave posting off to keep the channel connected without uploading. Reels must also be enabled below — that quota gates the spoken file. X and Instagram stills are unchanged. Subscriber notifications are optional; the Short is public either way.</p>
+                    </div>
                 </div>
                 <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
                     <h2>Distribution</h2>
+                    <p class="description" data-tr-reveal-none="tr-social-x-enabled,tr-social-ig-enabled,tr-social-yt-enabled"<?php echo $any_network ? ' hidden' : ''; ?>>Turn on X, Instagram, or YouTube above to configure how many posts go out each day.</p>
+                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled,tr-social-yt-enabled"<?php echo $any_network ? '' : ' hidden'; ?>>
                     <p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per network that is turned on.</span></p>
-                    <p><label for="tr-social-min-score">Minimum review score to post stills</label> <input id="tr-social-min-score" type="number" min="0" max="100" name="<?php echo esc_attr($option); ?>[social_min_review_score]" value="<?php echo esc_attr((int) ($s['social_min_review_score'] ?? 90)); ?>"> <span class="description">Only stories at or above this score get an Instagram or X graphic. 90 now means a complete original article (named change in the title, unique angle, takeaways, FAQ). A website-publishable 85–89 stays on the site. The writer aims at 90; a clustered 85–89 with no remaining defect is raised to 90, and one polish pass runs when the reviewer named fixes. 0 posts every published article. Default 90. Instagram captions never include a URL (link in bio instead), and stills are spaced at least 3 hours apart. Reels stay off until you raise Reels per day.</span></p>
                     <p class="description">Outbound captions, Reel scripts, YouTube titles/descriptions/tags, and on-image lines are scanned for profanity/slurs and sent through OpenAI Moderation before X, Instagram, or YouTube. A fail holds the job for review — it does not post.</p>
+                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
+                    <p><label for="tr-social-min-score">Minimum review score to post stills</label> <input id="tr-social-min-score" type="number" min="0" max="100" name="<?php echo esc_attr($option); ?>[social_min_review_score]" value="<?php echo esc_attr((int) ($s['social_min_review_score'] ?? 90)); ?>"> <span class="description">Only stories at or above this score get an Instagram or X graphic. 90 now means a complete original article (named change in the title, unique angle, takeaways, FAQ). A website-publishable 85–89 stays on the site. The writer aims at 90; a clustered 85–89 with no remaining defect is raised to 90, and one polish pass runs when the reviewer named fixes. 0 posts every published article. Default 90. Instagram captions never include a URL (link in bio instead), and stills are spaced at least 3 hours apart.</span></p>
                     <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
+                    </div>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_mix_saved]" value="1">
                     <h3 style="margin:16px 0 8px;">How many of each post</h3>
                     <p class="description">Set a type to 0 to turn it off. The job fills Reel quota first (one spoken story), then carousel, then collages, then single stories.</p>
-                    <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"> <span class="description">Spoken 9:16 video of one article. 0 keeps Reels and YouTube Shorts off. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X still gets the still poster.</span></p>
-                    <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 3); ?>"> <span class="description">Swipeable Instagram posts. On smaller accounts these usually beat single stills. Each one uses several website articles and a curiosity slide so people keep swiping. Default 3.</span></p>
-                    <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
-                    <p><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"> <span class="description">Several website articles in one grid image.</span></p>
-                    <p><label for="tr-social-single-daily">Single-story posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 2); ?>"> <span class="description">One website article, one social post. Default 2. Prefer carousels when a story can fill several slides.</span></p>
+                    <div data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
+                    <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="0">
+                    <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X still gets the still poster.</span></p>
+                    <div data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>
+                    <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"></p>
                     <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label> <input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"> <span class="description">Default $10 covers about one 8s Veo Lite clip per day. Raise this before switching to Fast, full Veo, or Kling. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
                     <fieldset id="tr-social-reel-model">
                         <legend>Reel motion model</legend>
@@ -313,12 +333,27 @@ trait TechnoRapper_AI_Wire_Admin {
                     <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->fal_api_key() === '') : ?>
                     <div class="notice notice-warning inline"><p>Reels need a Fal.ai API key to generate motion. Until it is saved, Instagram Reel jobs will be held. The plugin will not Ken Burns the posters instead.</p></div>
                     <?php endif; ?>
-                    <p class="description">Artwork is GPT Image 2 low; type is overlaid locally for stills. A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal model you selected to animate the social photograph, and ffmpeg to mux captions. One article only — not a roundup of the day’s posts. X still gets the still poster. That file is a social asset only — it never becomes the article featured image. Image estimate $0.006 each; Mini TTS about $0.004. X API charges are separate.</p>
+                    </div>
+                    </div>
+                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
+                    <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 3); ?>"> <span class="description">Swipeable Instagram posts. On smaller accounts these usually beat single stills. Each one uses several website articles and a curiosity slide so people keep swiping. Default 3.</span></p>
+                    <p><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"> <span class="description">Several website articles in one grid image.</span></p>
+                    <div data-tr-reveal-any="tr-social-carousel-daily,tr-social-collage-daily"<?php echo ((int) ($s['social_carousel_daily_limit'] ?? 3) > 0 || (int) ($s['social_collage_daily_limit'] ?? 0) > 0) ? '' : ' hidden'; ?>>
+                    <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
+                    </div>
+                    <p><label for="tr-social-single-daily">Single-story posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 2); ?>"> <span class="description">One website article, one social post. Default 2. Prefer carousels when a story can fill several slides.</span></p>
+                    <p class="description">Artwork is GPT Image 2 low; type is overlaid locally for stills. Image estimate $0.006 each. X API charges are separate. That file is a social asset only — it never becomes the article featured image.</p>
+                    </div>
+                    <p class="description" data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal model you selected to animate the social photograph, and ffmpeg to mux captions. One article only — not a roundup of the day’s posts. Mini TTS about $0.004.</p>
+                    </div>
                 </div>
+                <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
                 <?php $this->render_social_news_formats_card($s, $option); ?>
+                </div>
                 <?php submit_button('Save social settings'); ?>
             </form>
             <?php $this->render_site_context_card('tr-ai-wire-social-settings'); ?>
+            <?php $this->render_conditional_settings_script(); ?>
         </div>
         <?php
     }
@@ -436,6 +471,70 @@ trait TechnoRapper_AI_Wire_Admin {
             <p><label for="tr-social-idea-image">Optional reference image</label><br>
                 <input id="tr-social-idea-image" name="social_idea_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></p>
         </div>
+        <?php
+    }
+
+    private function render_conditional_settings_script() {
+        static $printed = false;
+        if ($printed) {
+            return;
+        }
+        $printed = true;
+        ?>
+<script>
+(function () {
+  function isOn(el) {
+    if (!el) return false;
+    if (el.type === 'checkbox' || el.type === 'radio') return !!el.checked;
+    var n = parseInt(el.value, 10);
+    return !isNaN(n) && n > 0;
+  }
+  function syncCount(toggle, field) {
+    if (!toggle || !field) return;
+    if (toggle.checked) {
+      var last = parseInt(field.getAttribute('data-tr-last') || '0', 10);
+      if (parseInt(field.value, 10) < 1) field.value = String(last > 0 ? last : 1);
+    } else {
+      var current = parseInt(field.value, 10);
+      if (current > 0) field.setAttribute('data-tr-last', String(current));
+      field.value = '0';
+    }
+  }
+  function reveal() {
+    document.querySelectorAll('[data-tr-reveal]').forEach(function (box) {
+      box.hidden = !isOn(document.getElementById(box.getAttribute('data-tr-reveal')));
+    });
+    document.querySelectorAll('[data-tr-reveal-any]').forEach(function (box) {
+      box.hidden = !box.getAttribute('data-tr-reveal-any').split(',').some(function (id) {
+        return isOn(document.getElementById(id.trim()));
+      });
+    });
+    document.querySelectorAll('[data-tr-reveal-none]').forEach(function (box) {
+      box.hidden = box.getAttribute('data-tr-reveal-none').split(',').some(function (id) {
+        return isOn(document.getElementById(id.trim()));
+      });
+    });
+  }
+  function bind() {
+    var root = document.querySelector('.wrap');
+    if (!root) return;
+    root.addEventListener('change', function (e) {
+      var t = e.target;
+      if (!t || !t.id) {
+        reveal();
+        return;
+      }
+      if (t.id === 'tr-social-reel-enabled') syncCount(t, document.getElementById('tr-social-reel-daily'));
+      if (t.id === 'tr-comic-enabled') syncCount(t, document.getElementById('tr-comic-daily'));
+      reveal();
+    });
+    root.addEventListener('input', reveal);
+    reveal();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+})();
+</script>
         <?php
     }
 

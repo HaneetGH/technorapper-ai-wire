@@ -5455,6 +5455,78 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('not connected — save', TechnoRapper_AI_Wire::x_status_text(array()));
     }
 
+    public function test_inactive_feature_settings_are_hidden() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+
+        ob_start();
+        $this->plugin->social_settings_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('id="tr-social-reel-enabled"', $html);
+        $this->assertStringContainsString('Enable Reels / YouTube Shorts video', $html);
+        $this->assertStringContainsString('data-tr-reveal="tr-social-reel-enabled"', $html);
+        $this->assertStringContainsString('data-tr-reveal="tr-social-yt-enabled"', $html);
+        $this->assertTrue((bool) preg_match('/data-tr-reveal="tr-social-reel-enabled"[^>]*\bhidden\b/', $html));
+        $this->assertStringContainsString('Reel posts per day', $html);
+        $this->assertStringContainsString('Monthly Reel video budget', $html);
+        $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_reel_daily_limit]"', $html);
+
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_daily_limit' => 2,
+        )), false);
+        ob_start();
+        $this->plugin->social_settings_page();
+        $reel_on = ob_get_clean();
+        $this->assertFalse((bool) preg_match('/data-tr-reveal="tr-social-reel-enabled"[^>]*\bhidden\b/', $reel_on));
+        $this->assertTrue((bool) preg_match('/id="tr-social-reel-enabled"[^>]*\bchecked\b/', $reel_on));
+
+        ob_start();
+        $this->plugin->settings_page();
+        $main = ob_get_clean();
+        $this->assertStringContainsString('id="tr-comic-enabled"', $main);
+        $this->assertStringContainsString('Comic posts per day', $main);
+        $this->assertTrue((bool) preg_match('/data-tr-reveal="tr-comic-enabled"[^>]*\bhidden\b/', $main));
+        $this->assertStringContainsString('id="tr-enable-experiment"', $main);
+        $this->assertFalse((bool) preg_match('/data-tr-reveal="tr-enable-experiment"[^>]*\bhidden\b/', $main));
+
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'enable_experiment' => 0,
+            'comic_daily_limit' => 3,
+        )), false);
+        ob_start();
+        $this->plugin->settings_page();
+        $toggled = ob_get_clean();
+        $this->assertTrue((bool) preg_match('/data-tr-reveal="tr-enable-experiment"[^>]*\bhidden\b/', $toggled));
+        $this->assertFalse((bool) preg_match('/data-tr-reveal="tr-comic-enabled"[^>]*\bhidden\b/', $toggled));
+
+        $off = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_reel_enabled' => 0,
+            'social_reel_daily_limit' => 5,
+            'social_mix_saved' => 1,
+        ));
+        $this->assertSame(0, (int) $off['social_reel_daily_limit']);
+
+        $on = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_reel_enabled' => 1,
+            'social_reel_daily_limit' => 0,
+            'social_mix_saved' => 1,
+        ));
+        $this->assertSame(1, (int) $on['social_reel_daily_limit']);
+
+        $comic_off = $this->plugin->sanitize_settings(array(
+            'comic_enabled' => 0,
+            'comic_daily_limit' => 4,
+        ));
+        $this->assertSame(0, (int) $comic_off['comic_daily_limit']);
+        $comic_on = $this->plugin->sanitize_settings(array(
+            'comic_enabled' => 1,
+            'comic_daily_limit' => 0,
+        ));
+        $this->assertSame(1, (int) $comic_on['comic_daily_limit']);
+    }
+
     public function test_main_settings_save_does_not_clear_social_toggles() {
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
             'social_distribution_enabled' => 1,

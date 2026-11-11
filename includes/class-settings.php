@@ -194,7 +194,13 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['enable_experiment'] = empty($input['enable_experiment']) ? 0 : 1;
         $experiment_id = sanitize_key($input['experiment_id'] ?? $defaults['experiment_id']);
         $out['experiment_id'] = $experiment_id !== '' ? substr($experiment_id, 0, 64) : $defaults['experiment_id'];
-        $out['comic_daily_limit'] = min(100, max(0, absint($input['comic_daily_limit'] ?? $defaults['comic_daily_limit'])));
+        if (array_key_exists('comic_enabled', $input)) {
+            $out['comic_daily_limit'] = empty($input['comic_enabled'])
+                ? 0
+                : min(100, max(1, absint($input['comic_daily_limit'] ?? 1)));
+        } else {
+            $out['comic_daily_limit'] = min(100, max(0, absint($input['comic_daily_limit'] ?? $defaults['comic_daily_limit'])));
+        }
         $out['draft_min_score'] = min(100, max(0, absint($input['draft_min_score'] ?? $defaults['draft_min_score'])));
         $out['draft_allow_revise'] = empty($input['draft_allow_revise']) ? 0 : 1;
         $out['draft_require_grounded'] = empty($input['draft_require_grounded']) ? 0 : 1;
@@ -293,6 +299,11 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_collage_daily_limit'] = min(10, max(0, absint($input['social_collage_daily_limit'] ?? $defaults['social_collage_daily_limit'])));
         $out['social_single_daily_limit'] = min(10, max(0, absint($input['social_single_daily_limit'] ?? $defaults['social_single_daily_limit'])));
         $out['social_reel_daily_limit'] = min(10, max(0, absint($input['social_reel_daily_limit'] ?? $defaults['social_reel_daily_limit'])));
+        if (!empty($input['social_platform_toggles']) && array_key_exists('social_reel_enabled', $input)) {
+            $out['social_reel_daily_limit'] = empty($input['social_reel_enabled'])
+                ? 0
+                : min(10, max(1, $out['social_reel_daily_limit'] > 0 ? $out['social_reel_daily_limit'] : 1));
+        }
         $out['social_min_review_score'] = min(100, max(0, absint($input['social_min_review_score'] ?? $defaults['social_min_review_score'])));
         $out['social_mix_saved'] = empty($input['social_mix_saved']) ? 0 : 1;
         if ($out['social_mix_saved']) {

@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.65
+Stable tag: 0.2.66
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.66 =
+* Settings only show detail fields for features that are on. Reels off hides daily video count, budget, model, clip length, and Fal key. YouTube off hides category and subscriber notify. Comic and A/B experiment IDs stay hidden until those features are enabled.
 
 = 0.2.65 =
 * Hosted-image backfill no longer runs inside a page request (wp-admin or frontend WP-Cron). That timeout was causing WordPress’s “There has been a critical error on this website” screen. Repair homepage still does the work in the background.
@@ -121,6 +124,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.66 =
+Inactive features no longer show their extra settings (Reels per day, video budget, comic count, experiment ID).
 
 = 0.2.65 =
 Fixes the WordPress critical-error / dashboard hang after update. Image backfill now runs in the background.
