@@ -1108,6 +1108,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             $this->apply_seo_meta($existing_id, $rewrite);
             update_post_meta($existing_id, '_tr_ai_wire_voice', $this->item_is_comic($item) ? 'comic' : 'straight');
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
+            $this->store_pre_publish_gate($existing_id, $rewrite, $review, $item, $s);
             $this->maybe_promote_post_status($existing_id, $s);
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => null, 'rewrite_json' => wp_json_encode($rewrite)));
@@ -1172,6 +1173,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             $this->fail_item_without_hosted_image($id, $item);
             return;
         }
+        $this->store_pre_publish_gate((int) $post_id, $rewrite, $review, $item, $s);
         $this->maybe_promote_post_status((int) $post_id, $s);
         $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);
         $this->update_item($id, array(
@@ -1196,6 +1198,12 @@ trait TechnoRapper_AI_Wire_Publisher {
         if (get_post_status($post_id) === $wanted) {
             return;
         }
+        if ($wanted === 'publish') {
+            $gate = get_post_meta($post_id, '_tr_ai_wire_prepublish_gate', true);
+            if ($this->pre_publish_gate_holds($gate)) {
+                return;
+            }
+        }
         $result = wp_update_post(array(
             'ID' => $post_id,
             'post_status' => $wanted,
@@ -1214,61 +1222,7 @@ trait TechnoRapper_AI_Wire_Publisher {
     }
 
     public function print_article_schema() {
-        if (!is_singular('post')) {
-            return;
-        }
-        $post_id = get_queried_object_id();
-        if (!$post_id || !get_post_meta($post_id, '_tr_ai_wire_queue_id', true)) {
-            return;
-        }
-        $faq = json_decode((string) get_post_meta($post_id, '_tr_ai_wire_faq', true), true);
-        $graph = array(
-            array(
-                '@type' => 'NewsArticle',
-                'headline' => get_the_title($post_id),
-                'description' => wp_strip_all_tags(get_the_excerpt($post_id)),
-                'datePublished' => get_the_date('c', $post_id),
-                'dateModified' => get_the_modified_date('c', $post_id),
-                'mainEntityOfPage' => get_permalink($post_id),
-                'author' => array(
-                    '@type' => 'Organization',
-                    'name' => self::site_brand_name() . ' editorial desk',
-                    'url' => home_url('/'),
-                ),
-                'publisher' => array(
-                    '@type' => 'Organization',
-                    'name' => self::site_brand_name(),
-                    'url' => home_url('/'),
-                ),
-            ),
-        );
-        $image = $this->display_image_url($post_id);
-        if ($image !== '') {
-            $graph[0]['image'] = array($image);
-        }
-        if (is_array($faq) && $faq) {
-            $questions = array();
-            foreach ($faq as $row) {
-                if (empty($row['question']) || empty($row['answer'])) {
-                    continue;
-                }
-                $questions[] = array(
-                    '@type' => 'Question',
-                    'name' => $row['question'],
-                    'acceptedAnswer' => array(
-                        '@type' => 'Answer',
-                        'text' => $row['answer'],
-                    ),
-                );
-            }
-            if ($questions) {
-                $graph[] = array(
-                    '@type' => 'FAQPage',
-                    'mainEntity' => $questions,
-                );
-            }
-        }
-        echo '<script type="application/ld+json">' . wp_json_encode(array('@context' => 'https://schema.org', '@graph' => $graph)) . '</script>' . "\n";
+        // Theme / Rank Math / Yoast emit NewsArticle JSON-LD. Do not inject a second graph.
     }
 
     public function track_article_view() {

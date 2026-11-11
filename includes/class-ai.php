@@ -22,7 +22,7 @@ trait TechnoRapper_AI_Wire_AI {
             . '5) Open the lede by answering search_intent in one sentence so it can win a featured snippet. Then give context. '
             . '6) Choose one 2–4 word focus_keyphrase. Put it in the title, the first 80 words, one H2, the first key takeaway, slug, seo_title (50–60 characters), and meta_description (140–155 characters). Also fill social_title and social_description for Discover and Open Graph. Use the keyphrase 4–7 times total. Never stuff. '
             . '7) Return slug as a clean lowercase hyphenated path from the keyphrase, for example qualcomm-data-center-push, never the source URL. '
-            . '8) Weave 2–3 dofollow internal links only to the related posts supplied in the input. Use natural anchors, not “click here”. Do not invent URLs. Never link to the source article, the source site, or its CDN. If none are supplied, omit internal_links — that is not a failure. '
+            . '8) Weave 2-5 dofollow internal links only to the related posts supplied in the input, and only where they help the reader. Never add links merely to hit a number. Use natural anchors, not “click here”. Do not invent URLs. Never link to the source article, the source site, or its CDN. If none are supplied, omit internal_links — that is not a failure. '
             . '9) Return key_takeaways as exactly 3 short bullets grounded in the source. The first bullet must contain the focus keyphrase and answer the search intent. '
             . '10) Return faq as exactly 3 question/answer pairs a reader would search (People Also Ask). Answers are 2–3 sentences, grounded, no invention. '
             . '11) Write as the ' . self::site_brand_name() . ' editorial desk. Include one sentence on how the source was used. No first-person “I tested”, no source-brand voice, no invented quotes, tests, or experience. Do not paste the source URL in the article; Inspired by credit is added after the body. '
@@ -30,7 +30,9 @@ trait TechnoRapper_AI_Wire_AI {
             . '13) Return featured_image_alt as a factual caption for a suitable editorial still. Do not claim you created or saw a photo. '
             . '14) Read the source document and classify it yourself. Set category to exactly one name from the supplied Site categories list. Set tags to 3–6 specific names that appear in or clearly describe the source (products, companies, chips, OS). Never use News or Technology when a desk fits. Do not wait for a human to map the feed. Attribute the source once in prose. Label uncertainty. '
             . '15) Return search_intent as the reader job-to-be-done in one sentence. '
-            . '16) Title names the product, company, or policy AND what changed. Never clone “X announces Y” from the source headline. The first takeaway must answer search_intent so a stranger understands the news. Why it matters names a reader stake the source supports (device, job, money, privacy, or access). If the source has no such stake, say that as labeled analysis — do not invent one. social_title is a tap-worthy restatement of that same named change, not a synonym of the source headline. ';
+            . '16) Title names the product, company, or policy AND what changed. Never clone “X announces Y” from the source headline. The first takeaway must answer search_intent so a stranger understands the news. Why it matters names a reader stake the source supports (device, job, money, privacy, or access). If the source has no such stake, say that as labeled analysis — do not invent one. social_title is a tap-worthy restatement of that same named change, not a synonym of the source headline. '
+            . $this->brand_identity_instructions()
+            . 'Originality: after reading the source, write from a blank outline. Do not keep the source paragraph order, lede sequence, or example order. search_intent must be a query this site\'s reader would type that is not a synonym of the source headline. Do not reuse 4 or more consecutive source words except proper nouns, product names, official titles, and numbers. At most one short attributed quote. Never invent quotes, statistics, citations, or links. Title is specific and natural, not clickbait, and suitable for Google results without extra branding. Do not keyword-stuff. Prefer updating an existing related post when the input says the same story is already covered. ';
         if (!empty($comic)) {
             $prompt .= 'Comic voice: a light wry aside in the lede or Why it matters is welcome; comedy is not the point. A wry title is fine only if it still names the product and the change — never a punchline-only headline. A dry wink in social_title is fine; the change still has to be obvious. ';
         }
@@ -49,11 +51,26 @@ trait TechnoRapper_AI_Wire_AI {
             . 'Do not park a 90-checklist article at 85-89. If issues and suggested_fixes are empty, or only readability/style nits, and the 90 checklist is met, the score MUST be 90 or higher. Do not deduct below 85 for missing internal links when none were supplied, for missing local context when the source has none, for missing jokes, or for labeled analysis (why it matters, who is affected, what to watch next) that adds no new number, quote, date, name, price, or event. Never invent a low score to appear strict. If a human editor would publish it, score 85 or higher with verdict pass. Do not list missing humor as an issue or suggested_fix. '
             . 'fact_flags must be an empty array when every concrete claim appears in the source. Do not flag single-source reporting, lack of independent verification, hedging, readability, or labeled analysis. A non-empty fact_flags array blocks publication, so list only a claim that contradicts the source or is not in the source. Put style and structure notes in issues. '
             . 'Return JSON with score (0-100), verdict (pass/revise/reject), issues (array), fact_flags (array), policy_flags (array), pragmatism {is_new, is_useful, is_grounded, similarity_risk (low/medium/high), notes}, story_value {publish (boolean), substance (thin/solid/major), reader_demand (low/medium/high), adds_value (boolean), reason}, suggested_fixes (array), safe_to_publish (boolean). is_new means the writing is original versus the source, not that the news event is unpublished. Use verdict pass when the score is 85 or higher and fact_flags is empty. Use verdict revise only for a 70-84 article a human must edit. Use reject for fabrication, policy problems, synonym-spin, missing unique angle, or empty/unusable copy. Set safe_to_publish true when the article is grounded, fact_flags is empty, and there are no policy flags. '
-            . 'story_value is a separate publish gate from the score. A clean 85 does not publish a thin story, a list, or a topic readers would not search. Set publish true only when the source describes a concrete development readers would look up: a named product, company, or policy, plus what changed, and there is enough source to explain it. substance is thin when the source cannot explain what changed. reader_demand is low for a deal list, coupon, best-of list, weekly recap, sponsored item, or a minor aside with no named change. adds_value is false when the post would only repeat a press blurb or a list. Set publish false in those cases.';
+            . 'story_value is a separate publish gate from the score. A clean 85 does not publish a thin story, a list, or a topic readers would not search. Set publish true only when the source describes a concrete development readers would look up: a named product, company, or policy, plus what changed, and there is enough source to explain it. substance is thin when the source cannot explain what changed. reader_demand is low for a deal list, coupon, best-of list, weekly recap, sponsored item, or a minor aside with no named change. adds_value is false when the post would only repeat a press blurb or a list. Set publish false in those cases. '
+            . $this->pre_publish_gate_reviewer_instructions();
         if (!empty($s['enable_web_search'])) {
             $prompt .= ' Use the available web search for one corroborating search action and include evidence URLs in issues or notes. Use that search when judging reader_demand, and set it low when readers would not look up the named change. The source text is reference material.';
         }
         return $prompt;
+    }
+
+    private function brand_identity_instructions() {
+        $brand = self::site_brand_name();
+        $site = home_url('/');
+        $prompt = 'Publication identity: ' . $brand . ' is an independent technology publication at ' . $site . '. Do not describe it as an IT services company, a consulting company, a generic blog, or an AI-generated content farm. ';
+        if (stripos($brand, 'technorapper') !== false) {
+            $prompt = 'Publication identity: Brand TechnoRapper, website https://technorapper.com, independent technology publication founded in 2012. Do not describe TechnoRapper as an IT services company, a consulting company, a generic blog, or an AI-generated content farm. ';
+        }
+        return $prompt;
+    }
+
+    private function pre_publish_gate_reviewer_instructions() {
+        return 'Also run the pre-publish SEO and editorial quality gate before any live URL. Existing dashboard score, similarity, and SEO settings still apply. Return gate_status as PUBLISH, PUBLISH_WITH_WARNINGS, or HOLD. HOLD on a blocking P0/P1 failure: unclear or clickbait title, missing excerpt, no primary topic, placeholders or empty headings, near-duplicate of an existing article on this site, factual contradictions, invented quotes/stats/links, or a synonym-spin of the source. PUBLISH_WITH_WARNINGS when there is no blocker but a minor issue remains. Never raise the SEO score by sacrificing accuracy, originality, or reader value. Also return seo_score (0-100), editorial_score (0-100), checks_passed (array), warnings (array), blocking_issues (array), recommended_changes (array), duplicate_cannibalization (string), internal_links_added (array), sources_verified (array), and final_reason (one sentence). ';
     }
 
     private function build_writer_input($item) {
@@ -259,7 +276,7 @@ trait TechnoRapper_AI_Wire_AI {
         return false;
     }
 
-    private function related_site_posts($hint, $limit = 3) {
+    private function related_site_posts($hint, $limit = 5) {
         $query = array(
             'post_type' => 'post',
             'post_status' => 'publish',
@@ -776,6 +793,15 @@ trait TechnoRapper_AI_Wire_AI {
     private function force_publish_item($id, $item, $rewrite, $review, $s) {
         if (!is_array($review) || $this->review_draft_blockers($review, $s)) {
             $this->quarantine_item($id, 'Retry requires an independent review that currently passes editorial gates.', $item);
+            return;
+        }
+        $gate = $this->evaluate_pre_publish_gate($rewrite, $review, $item, $s);
+        $review['prepublish_gate'] = $gate;
+        if ($this->pre_publish_gate_holds($gate) && $this->mapped_post_status($s) === 'publish') {
+            $this->quarantine_item($id, 'Held by pre-publish gate. ' . $this->format_pre_publish_gate($gate), $item, array(
+                'rewrite_json' => wp_json_encode($rewrite),
+                'review_json' => wp_json_encode($review),
+            ));
             return;
         }
         $this->create_draft($id, $item, $rewrite, $review, $s);

@@ -1534,6 +1534,66 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('tr-ai-wire-source', $content);
     }
 
+    public function test_pre_publish_gate_holds_clickbait_and_placeholders() {
+        $gate = $this->invoke_private('evaluate_pre_publish_gate', array(
+            array(
+                'title' => "You won't believe this chip trick",
+                'lede' => 'A concise summary for the excerpt field of this story.',
+                'body_html' => '<p>TODO: insert the rest of the article here.</p><h2></h2>',
+            ),
+            $this->passing_review_for_score(90),
+            array('source_title' => 'Source title'),
+            TechnoRapper_AI_Wire::defaults(),
+        ));
+        $this->assertSame('HOLD', $gate['status']);
+        $this->assertNotEmpty($gate['blocking_issues']);
+        $this->assertStringContainsString('Status: HOLD', $this->invoke_private('format_pre_publish_gate', array($gate)));
+    }
+
+    public function test_pre_publish_gate_passes_a_named_change_article() {
+        $gate = $this->invoke_private('evaluate_pre_publish_gate', array(
+            $this->complete_rewrite_for_score(),
+            $this->passing_review_for_score(90),
+            array('source_title' => 'Apple announced the M5 chip'),
+            TechnoRapper_AI_Wire::defaults(),
+        ));
+        $this->assertNotSame('HOLD', $gate['status']);
+        $this->assertEmpty($gate['blocking_issues']);
+    }
+
+    public function test_pre_publish_gate_holds_auto_publish_on_a_live_duplicate() {
+        $first = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($first, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-dup-a',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ), $this->complete_rewrite_for_score(), $this->passing_review_for_score(90), TechnoRapper_AI_Wire::defaults()));
+        $second = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode($this->complete_rewrite_for_score()),
+            'review_json' => wp_json_encode($this->passing_review_for_score(90)),
+        ), array('id' => $second));
+        $this->invoke_private('process_item', array($second, TechnoRapper_AI_Wire::defaults()));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $second), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertStringContainsString('Held by pre-publish gate', (string) $row['error_text']);
+        $this->assertStringContainsString('UPDATE EXISTING ARTICLE', (string) $row['error_text']);
+    }
+
+    public function test_print_article_schema_does_not_inject_json_ld() {
+        ob_start();
+        $this->plugin->print_article_schema();
+        $html = ob_get_clean();
+        $this->assertSame('', $html);
+        $this->assertStringNotContainsString('application/ld+json', $html);
+    }
+
     public function test_source_image_is_hosted_on_this_site() {
         $id = $this->create_queue_item();
         $this->invoke_private('create_draft', array($id, array(
@@ -1961,6 +2021,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('punchline-only headline', $comic);
         $this->assertStringContainsString('do not require jokes', strtolower($reviewer));
         $this->assertStringContainsString('punchline-only headlines', $reviewer);
+        $this->assertStringContainsString('independent technology publication', $writer);
+        $this->assertStringContainsString('AI-generated content farm', $writer);
+        $this->assertStringContainsString('2-5 dofollow internal links', $writer);
+        $this->assertStringContainsString('Never add links merely to hit a number', $writer);
+        $this->assertStringContainsString('gate_status', $reviewer);
+        $this->assertStringContainsString('PUBLISH_WITH_WARNINGS', $reviewer);
+        $this->assertStringContainsString('Never raise the SEO score', $reviewer);
     }
 
     public function test_review_input_does_not_punish_missing_internal_links() {
