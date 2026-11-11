@@ -410,7 +410,7 @@ trait TechnoRapper_AI_Wire_SEO {
                     'anchor' => $anchor,
                     'title' => sanitize_text_field($link['title'] ?? $anchor),
                 );
-                if (count($clean) >= 3) {
+                if (count($clean) >= 5) {
                     return $clean;
                 }
             }
@@ -531,5 +531,250 @@ trait TechnoRapper_AI_Wire_SEO {
             $html .= '<h2>Frequently asked questions</h2>' . $blocks;
         }
         return $html;
+    }
+
+    private function evaluate_pre_publish_gate($rewrite, $review, $item = array(), $s = null, $exclude_post_id = 0) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $rewrite = is_array($rewrite) ? $this->prepare_rewrite_seo($rewrite) : array();
+        $review = is_array($review) ? $review : array();
+        $item = is_array($item) ? $item : array();
+        $title = trim(wp_strip_all_tags((string) ($rewrite['title'] ?? '')));
+        $lede = trim(wp_strip_all_tags((string) ($rewrite['lede'] ?? '')));
+        $body = (string) ($rewrite['body_html'] ?? '');
+        $plain = $this->plain_text($lede . ' ' . $body);
+        $meta = trim(sanitize_text_field($rewrite['meta_description'] ?? ''));
+        $slug = sanitize_title((string) ($rewrite['slug'] ?? ''));
+        $keyphrase = trim(sanitize_text_field($rewrite['focus_keyphrase'] ?? ''));
+        $blocking = array();
+        $warnings = array();
+        $passed = array();
+        $recommended = array();
+
+        if ($title === '' || $this->word_count($title) < 3) {
+            $blocking[] = 'Title is missing or too vague.';
+        } elseif (preg_match('/you won\'t believe|wait for it|this one trick|doctors hate|gone wrong|what happened next|unbelievable|mind-blowing/i', $title)) {
+            $blocking[] = 'Title is clickbait.';
+        } else {
+            $passed[] = 'Title is specific and natural.';
+        }
+        if ($meta === '' || strlen($meta) < 70) {
+            $blocking[] = 'Article is missing a meaningful excerpt/meta description.';
+        } else {
+            $passed[] = 'Excerpt/meta description is present.';
+        }
+        if ($keyphrase === '' && !empty($s['seo_require_keyphrase'])) {
+            $blocking[] = 'No single primary topic/keyphrase.';
+        } elseif ($keyphrase !== '') {
+            $passed[] = 'Primary topic is set.';
+        }
+        if ($slug === '') {
+            $blocking[] = 'Slug is missing.';
+        } else {
+            $passed[] = 'Slug is readable.';
+        }
+        if (preg_match('/\b(lorem ipsum|todo:|fixme|placeholder text|insert headline here|insert text here)\b|\{\{[^}]+\}\}|\[\s*(?:insert|todo|placeholder)[^\]]*\]/i', $title . ' ' . $plain)) {
+            $blocking[] = 'Placeholder text or generation artifacts remain.';
+        }
+        if (preg_match('/<h[1-3][^>]*>\s*(?:&nbsp;)?\s*<\/h[1-3]>/i', $body)) {
+            $blocking[] = 'Empty heading in the article.';
+        }
+        $source_title = trim(wp_strip_all_tags((string) ($item['source_title'] ?? '')));
+        if ($source_title !== '' && $this->titles_are_near_duplicates($title, $source_title)) {
+            $blocking[] = 'Title is a near-duplicate of the source headline.';
+            $recommended[] = 'Write a different search title that names the product and the change.';
+        }
+        $duplicate = $this->cannibalization_match($title, (string) ($rewrite['search_intent'] ?? ''), $exclude_post_id);
+        $duplicate_note = 'None';
+        if ($duplicate) {
+            $blocking[] = 'A near-duplicate or same-intent article already exists on this site.';
+            $duplicate_note = 'Existing article #' . (int) $duplicate->ID . ' — ' . get_the_title($duplicate) . '. Recommend UPDATE EXISTING ARTICLE.';
+            $recommended[] = 'Update the existing article instead of publishing a new URL.';
+        } else {
+            $passed[] = 'No duplicate or cannibalizing article found.';
+        }
+        $brand_bleed = preg_match('/\b(it services company|consulting company|ai-generated content farm|content farm)\b/i', $plain);
+        if ($brand_bleed) {
+            $blocking[] = 'Copy misstates the publication identity.';
+        }
+        $keyphrase_hits = 0;
+        if ($keyphrase !== '') {
+            $keyphrase_hits = substr_count(strtolower($title . ' ' . $plain), strtolower($keyphrase));
+            if ($keyphrase_hits > 12) {
+                $warnings[] = 'Focus keyphrase appears often enough to look stuffed.';
+            }
+        }
+        foreach ($this->string_list($review['blocking_issues'] ?? array()) as $issue) {
+            $blocking[] = $issue;
+        }
+        foreach ($this->string_list($review['warnings'] ?? array()) as $warning) {
+            $warnings[] = $warning;
+        }
+        foreach ($this->string_list($review['checks_passed'] ?? array()) as $check) {
+            $passed[] = $check;
+        }
+        foreach ($this->string_list($review['recommended_changes'] ?? array()) as $change) {
+            $recommended[] = $change;
+        }
+        $readability = is_array($rewrite['seo']['readability_errors'] ?? null) ? $rewrite['seo']['readability_errors'] : array();
+        foreach ($readability as $error) {
+            $warnings[] = (string) $error;
+        }
+        $internal = is_array($rewrite['internal_links'] ?? null) ? $rewrite['internal_links'] : array();
+        $internal_added = array();
+        foreach ($internal as $link) {
+            if (!empty($link['url'])) {
+                $internal_added[] = (string) ($link['anchor'] ?? $link['title'] ?? $link['url']) . ' — ' . $link['url'];
+            }
+        }
+        $sources = array();
+        foreach ((array) ($rewrite['official_links'] ?? array()) as $link) {
+            if (is_array($link) && !empty($link['url'])) {
+                $sources[] = (string) $link['url'];
+            }
+        }
+        if ($sources) {
+            $passed[] = 'Official links stay on attributed URLs.';
+        } else {
+            $sources[] = 'Inspired by source only; no extra citations invented.';
+        }
+
+        $blocking = array_values(array_unique(array_filter(array_map('strval', $blocking))));
+        $warnings = array_values(array_unique(array_filter(array_map('strval', $warnings))));
+        $passed = array_values(array_unique(array_filter(array_map('strval', $passed))));
+        $recommended = array_values(array_unique(array_filter(array_map('strval', $recommended))));
+
+        $model_status = strtoupper(str_replace(array(' ', '-'), '_', (string) ($review['gate_status'] ?? '')));
+        $status = 'PUBLISH';
+        if ($blocking || $model_status === 'HOLD') {
+            $status = 'HOLD';
+        } elseif ($warnings || $model_status === 'PUBLISH_WITH_WARNINGS') {
+            $status = 'PUBLISH WITH WARNINGS';
+        }
+        $seo_score = isset($review['seo_score']) ? (int) $review['seo_score'] : (int) ($rewrite['seo']['seo_score'] ?? 0);
+        $editorial_score = isset($review['editorial_score']) ? (int) $review['editorial_score'] : (int) ($review['score'] ?? 0);
+        $reason = trim((string) ($review['final_reason'] ?? ''));
+        if ($reason === '') {
+            if ($status === 'HOLD') {
+                $reason = 'Blocking pre-publish checks failed.';
+            } elseif ($status === 'PUBLISH WITH WARNINGS') {
+                $reason = 'No blocker; minor issues remain.';
+            } else {
+                $reason = 'Blocking checks passed.';
+            }
+        }
+        if ($duplicate_note !== 'None' && empty($review['duplicate_cannibalization'])) {
+            // keep local note
+        } elseif (!empty($review['duplicate_cannibalization'])) {
+            $duplicate_note = sanitize_text_field((string) $review['duplicate_cannibalization']);
+        }
+
+        return array(
+            'status' => $status,
+            'seo_score' => max(0, min(100, $seo_score)),
+            'editorial_score' => max(0, min(100, $editorial_score)),
+            'checks_passed' => $passed,
+            'warnings' => $warnings,
+            'blocking_issues' => $blocking,
+            'recommended_changes' => $recommended,
+            'duplicate_cannibalization' => $duplicate_note,
+            'internal_links_added' => $internal_added,
+            'sources_verified' => $sources,
+            'final_reason' => $reason,
+        );
+    }
+
+    private function store_pre_publish_gate($post_id, $rewrite, $review, $item, $s) {
+        $post_id = (int) $post_id;
+        if ($post_id <= 0) {
+            return array();
+        }
+        $gate = $this->evaluate_pre_publish_gate($rewrite, is_array($review) ? $review : array(), is_array($item) ? $item : array(), $s, $post_id);
+        update_post_meta($post_id, '_tr_ai_wire_prepublish_gate', $gate);
+        return $gate;
+    }
+
+    private function pre_publish_gate_holds($gate) {
+        return is_array($gate) && (($gate['status'] ?? '') === 'HOLD' || !empty($gate['blocking_issues']));
+    }
+
+    private function format_pre_publish_gate($gate) {
+        $gate = is_array($gate) ? $gate : array();
+        $lines = array(
+            'Status: ' . (string) ($gate['status'] ?? 'HOLD'),
+            'SEO Score: ' . (int) ($gate['seo_score'] ?? 0) . '/100',
+            'Editorial Score: ' . (int) ($gate['editorial_score'] ?? 0) . '/100',
+            'Checks Passed:',
+        );
+        foreach ($this->string_list($gate['checks_passed'] ?? array()) as $item) {
+            $lines[] = '* ' . $item;
+        }
+        $lines[] = 'Warnings:';
+        $warnings = $this->string_list($gate['warnings'] ?? array());
+        $lines[] = $warnings ? '* ' . implode("\n* ", $warnings) : '* None';
+        $lines[] = 'Blocking Issues:';
+        $blocking = $this->string_list($gate['blocking_issues'] ?? array());
+        $lines[] = $blocking ? '* ' . implode("\n* ", $blocking) : '* None';
+        $lines[] = 'Recommended Changes:';
+        $recommended = $this->string_list($gate['recommended_changes'] ?? array());
+        $lines[] = $recommended ? '* ' . implode("\n* ", $recommended) : '* None';
+        $lines[] = 'Duplicate/Cannibalization:';
+        $lines[] = '* ' . (string) ($gate['duplicate_cannibalization'] ?? 'None');
+        $lines[] = 'Internal Links Added:';
+        $internal = $this->string_list($gate['internal_links_added'] ?? array());
+        $lines[] = $internal ? '* ' . implode("\n* ", $internal) : '* None';
+        $lines[] = 'Sources Verified:';
+        $sources = $this->string_list($gate['sources_verified'] ?? array());
+        $lines[] = $sources ? '* ' . implode("\n* ", $sources) : '* None';
+        $lines[] = 'Final Reason:';
+        $lines[] = '* ' . (string) ($gate['final_reason'] ?? '');
+        return implode("\n", $lines);
+    }
+
+    private function cannibalization_match($title, $search_intent, $exclude_post_id = 0) {
+        $title = trim(wp_strip_all_tags((string) $title));
+        if ($title === '') {
+            return null;
+        }
+        $found = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => array('publish', 'future'),
+            'posts_per_page' => 20,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'ignore_sticky_posts' => true,
+            'no_found_rows' => true,
+            'suppress_filters' => true,
+        ));
+        foreach ($found as $post) {
+            if ($exclude_post_id && (int) $post->ID === (int) $exclude_post_id) {
+                continue;
+            }
+            if (!get_post_meta($post->ID, '_tr_ai_wire_queue_id', true)) {
+                continue;
+            }
+            if ($this->titles_are_near_duplicates($title, $post->post_title)) {
+                return $post;
+            }
+            $existing_intent = (string) get_post_meta($post->ID, '_tr_ai_wire_search_intent', true);
+            if ($search_intent !== '' && $existing_intent !== '' && $this->titles_are_near_duplicates($search_intent, $existing_intent)) {
+                return $post;
+            }
+        }
+        return null;
+    }
+
+    private function string_list($value) {
+        $out = array();
+        foreach ((array) $value as $item) {
+            if (is_array($item)) {
+                $item = implode(' ', $item);
+            }
+            $item = trim((string) $item);
+            if ($item !== '') {
+                $out[] = $item;
+            }
+        }
+        return $out;
     }
 }

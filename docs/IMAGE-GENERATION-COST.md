@@ -9,7 +9,7 @@ Verify current [OpenAI image pricing](https://developers.openai.com/api/docs/pri
 
 ## Article images versus social images
 
-Article featured images remain the RSS item's own photo URL (enclosure, media thumbnail, Open Graph image, or `<img src>`). The article pipeline does not copy that file into the WordPress media library; items with no image URL are skipped. The Writer's `featured_image_alt` remains a caption, not a picture.
+Article featured images still come from the RSS item's own photo (enclosure, media thumbnail, Open Graph image, or `<img src>`). The article pipeline downloads that file into the WordPress media library so the published image URL is this site’s; items with no image URL are skipped. The Writer's `featured_image_alt` remains a caption, not a picture.
 
 When Social distribution is enabled and a configured account is connected, a copy pass writes a hook, on-image headline, captions and a visual brief from the published article. Then the image layer requests a portrait illustration, overlays that post info as a 4:5 card branded with **this WordPress site’s name**, stores it as a social asset (never the article featured image), and reuses it for configured platforms. The returned image payload is saved locally; the plugin does not depend on a temporary remote image URL. Copy generation is a small Luna JSON call (~$0.001) and is billed against the Writer/Reviewer budget, not the social image budget.
 
@@ -54,7 +54,7 @@ Image generation dominates the text pipeline at higher volumes. For the configur
 
 ## Other costs (small next to the API)
 
-- **Sideload / disk:** generated JPEGs must be stored in WordPress media. ~400 KB × 350 posts/day ≈ **4 GB/month**. Hosting/CDN is usually cents compared with the API.
+- **Sideload / disk:** generated social JPEGs must be stored in WordPress media. ~400 KB × 350 posts/day ≈ **4 GB/month**. RSS featured photos are also copied into the media library (one file per article) so the published image URL is this site’s. Hosting/CDN is usually cents compared with the API.
 - **Prompt writing:** the implementation reuses the article title and excerpt (or a short body excerpt) for the image prompt; prompt tokens are included in the local per-image reserve. Negligible beside image output.
 - **Spoken Reels:** the current Writer model writes the 15–18s script in the same social copy JSON as the captions (Writer/Reviewer budget). GPT-4o Mini TTS is about **$0.004** per voiceover and is reserved from the social image budget. Reel motion is billed by Fal against the separate **$10** video budget. **Suggested model: Veo 3.1 Lite** (silent 720p, **$0.03/s**, 8s ≈ **$0.24**, ~$7/month at one Reel/day). Operators can pick Veo Fast, Veo 3.1, Kling 3.0 Standard, or Kling 3.0 Pro in Social settings; each row has an info icon and the **Price estimate** admin page. Missing Fal key, ffmpeg, or budget holds the job — it does not Ken Burns posters.
 

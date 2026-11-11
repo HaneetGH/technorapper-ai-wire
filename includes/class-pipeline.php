@@ -309,6 +309,15 @@ trait TechnoRapper_AI_Wire_Pipeline {
             ));
             return;
         }
+        $gate = $this->evaluate_pre_publish_gate($rewrite, $review, $item, $s);
+        $review['prepublish_gate'] = $gate;
+        if ($this->pre_publish_gate_holds($gate) && $this->mapped_post_status($s) === 'publish') {
+            $this->quarantine_item($id, 'Held by pre-publish gate. ' . $this->format_pre_publish_gate($gate), $item, array(
+                'rewrite_json' => wp_json_encode($rewrite),
+                'review_json' => wp_json_encode($review),
+            ));
+            return;
+        }
         $this->create_draft($id, $item, $rewrite, $review, $s);
     }
 
@@ -325,6 +334,10 @@ trait TechnoRapper_AI_Wire_Pipeline {
         }
         $rewrite = $this->prepare_rewrite_seo($rewrite);
         if ($this->review_draft_blockers($review, $s) || $this->rewrite_seo_blockers($rewrite, $s)) {
+            return;
+        }
+        $gate = $this->evaluate_pre_publish_gate($rewrite, $review, $item, $s);
+        if ($this->pre_publish_gate_holds($gate) && $this->mapped_post_status($s) === 'publish') {
             return;
         }
         $this->pipeline_publish($id, $item, $s);

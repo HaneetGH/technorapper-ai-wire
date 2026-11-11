@@ -14,12 +14,49 @@ trait TechnoRapper_AI_Wire_Publisher {
         exit;
     }
 
+    public function migrate_images_request() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to migrate images.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_migrate_images');
+        $this->enqueue_background_job('migrate_images');
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue'));
+        exit;
+    }
+
     public function maybe_backfill_home_media() {
-        if (get_option('tr_ai_wire_home_media_21') === '1') {
+        if (get_option('tr_ai_wire_hosted_images_22') === '1') {
             return;
         }
         $this->repair_home_posts(40);
-        update_option('tr_ai_wire_home_media_21', '1', false);
+        update_option('tr_ai_wire_hosted_images_22', '1', false);
+    }
+
+    public function migrate_hosted_images($limit = 400) {
+        $limit = max(1, (int) $limit);
+        $types = array('post', 'page', $this->mapped_post_type($this->settings()));
+        $posts = get_posts(array(
+            'post_type' => array_values(array_unique($types)),
+            'post_status' => array('publish', 'draft', 'pending', 'future', 'private'),
+            'posts_per_page' => $limit,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'no_found_rows' => true,
+        ));
+        $hosted = 0;
+        $count = 0;
+        $total = count($posts);
+        foreach ($posts as $post) {
+            $count++;
+            if ($this->migrate_post_images($post)) {
+                $hosted++;
+            }
+            if ($count === 1 || $count % 5 === 0 || $count === $total) {
+                $this->note_background_progress(20 + (int) (70 * $count / max(1, $total)), 'Migrating images on post ' . $count . ' of ' . $total);
+            }
+        }
+        return array('scanned' => $count, 'hosted' => $hosted);
     }
 
     public function repair_home_posts($limit = 120) {
@@ -87,6 +124,94 @@ trait TechnoRapper_AI_Wire_Publisher {
         }
         $this->clear_homepage_excluded_cache();
         $this->refresh_front_page($post_id);
+    }
+
+    private function migrate_post_images($post) {
+        $post = get_post($post);
+        if (!$post instanceof WP_Post) {
+            return false;
+        }
+        $post_id = (int) $post->ID;
+        $qid = (int) get_post_meta($post_id, '_tr_ai_wire_queue_id', true);
+        $item = $qid > 0 ? $this->get_item($qid) : array();
+        if (!is_array($item)) {
+            $item = array();
+        }
+        $rewrite = array();
+        if (!empty($item['rewrite_json'])) {
+            $decoded = json_decode($item['rewrite_json'], true);
+            if (is_array($decoded)) {
+                $rewrite = $decoded;
+            }
+        }
+        if (!$rewrite) {
+            $rewrite = array(
+                'title' => $post->post_title,
+                'featured_image_alt' => (string) get_post_meta($post_id, '_tr_ai_wire_featured_image_alt', true),
+            );
+        }
+        $had_thumb = $this->real_thumbnail_id($post_id) > 0;
+        $this->maybe_set_featured_image($post_id, $item, $rewrite);
+        $content = (string) $post->post_content;
+        $updated = $this->host_remote_images_in_content($content, $post_id, $item);
+        $updated = $this->strip_upstream_markup_keep_credit($updated, $item);
+        if ($updated !== $content) {
+            wp_update_post(array(
+                'ID' => $post_id,
+                'post_content' => $updated,
+            ));
+        }
+        return (!$had_thumb && $this->real_thumbnail_id($post_id) > 0) || $updated !== $content;
+    }
+
+    private function host_remote_images_in_content($html, $post_id, $item) {
+        $html = (string) $html;
+        if ($html === '' || stripos($html, '<img') === false) {
+            return $html;
+        }
+        $replaced = preg_replace_callback('/<img\b[^>]*>/i', function ($match) use ($post_id, $item) {
+            if (!preg_match('/\bsrc\s*=\s*(["\'])(.*?)\1/i', $match[0], $src)) {
+                return $match[0];
+            }
+            $url = html_entity_decode($src[2], ENT_QUOTES, 'UTF-8');
+            if (!$this->url_is_offsite($url)) {
+                return $match[0];
+            }
+            $alt = '';
+            if (preg_match('/\balt\s*=\s*(["\'])(.*?)\1/i', $match[0], $alt_match)) {
+                $alt = $alt_match[2];
+            }
+            $hosted = $this->host_source_image($url, $post_id, $alt, is_array($item) ? $item : array(), false);
+            if (is_wp_error($hosted) || (int) $hosted <= 0) {
+                return $match[0];
+            }
+            $local = wp_get_attachment_url((int) $hosted);
+            if (!is_string($local) || $local === '') {
+                return $match[0];
+            }
+            $tag = preg_replace('/\bsrc\s*=\s*(["\'])(.*?)\1/i', 'src="' . esc_url($local) . '"', $match[0], 1);
+            $tag = preg_replace('/\bsrcset\s*=\s*(["\'])(.*?)\1/i', '', $tag);
+            $tag = preg_replace('/\bsizes\s*=\s*(["\'])(.*?)\1/i', '', $tag);
+            return is_string($tag) ? $tag : '';
+        }, $html);
+        return is_string($replaced) ? $replaced : $html;
+    }
+
+    private function strip_upstream_markup_keep_credit($html, $item) {
+        $parts = preg_split('/(<p class="tr-ai-wire-source">)/', (string) $html, 2, PREG_SPLIT_DELIM_CAPTURE);
+        if (!is_array($parts) || count($parts) < 3) {
+            return $this->strip_upstream_markup($html, $item);
+        }
+        return $this->strip_upstream_markup($parts[0], $item, false) . $parts[1] . $parts[2];
+    }
+
+    private function url_is_offsite($url) {
+        $host = strtolower((string) wp_parse_url(esc_url_raw($url), PHP_URL_HOST));
+        $home = strtolower((string) wp_parse_url(home_url('/'), PHP_URL_HOST));
+        if ($host === '' || $home === '') {
+            return false;
+        }
+        return $host !== $home && substr($host, -strlen('.' . $home)) !== '.' . $home;
     }
 
     public function exclude_from_homepage($query) {
@@ -169,13 +294,34 @@ trait TechnoRapper_AI_Wire_Publisher {
             return;
         }
         $url = $this->source_image_url($item['source_body'] ?? '');
+        if ($url === '') {
+            $url = $this->upstream_image_url($post_id);
+        }
         if ($url === '' || !preg_match('#^https?://#i', $url)) {
             return;
         }
         $alt = sanitize_text_field($rewrite['featured_image_alt'] ?? ($rewrite['title'] ?? ''));
-        update_post_meta($post_id, '_tr_ai_wire_source_image', $url);
-        if ($alt !== '') {
+        $hosted = $this->host_source_image($url, $post_id, $alt, is_array($item) ? $item : array());
+        if (!is_wp_error($hosted) && (int) $hosted > 0) {
+            update_post_meta($post_id, '_tr_ai_wire_source_image', $url);
+            if ($alt !== '') {
+                update_post_meta($post_id, '_tr_ai_wire_featured_image_alt', $alt);
+            }
+            $local = wp_get_attachment_url((int) $hosted);
+            if (is_string($local) && preg_match('#^https?://#i', $local)) {
+                $this->store_featured_image_seo($post_id, $local);
+            }
+            return;
+        }
+        if ($this->upstream_image_url($post_id) !== '' && $alt !== '') {
             update_post_meta($post_id, '_tr_ai_wire_featured_image_alt', $alt);
+        }
+    }
+
+    private function store_featured_image_seo($post_id, $url) {
+        $url = esc_url_raw($url);
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            return;
         }
         update_post_meta($post_id, 'rank_math_facebook_image', $url);
         update_post_meta($post_id, 'rank_math_twitter_image', $url);
@@ -184,12 +330,150 @@ trait TechnoRapper_AI_Wire_Publisher {
         update_post_meta($post_id, '_aioseo_og_image', $url);
     }
 
+    private function host_source_image($url, $post_id, $alt, $item = array(), $set_thumbnail = true) {
+        $url = esc_url_raw($url);
+        $post_id = (int) $post_id;
+        if ($post_id <= 0 || $url === '' || !preg_match('#^https?://#i', $url)) {
+            return new WP_Error('tr_ai_wire_image_url', 'Source image URL is not downloadable.');
+        }
+        $existing = $this->existing_hosted_image($post_id, $url);
+        if ($existing > 0) {
+            if ($set_thumbnail) {
+                set_post_thumbnail($post_id, $existing);
+            }
+            return $existing;
+        }
+        $max_bytes = 8 * MB_IN_BYTES;
+        $headers = array(
+            'Accept' => 'image/jpeg,image/png,image/webp,image/gif,image/*;q=0.8',
+        );
+        $source = esc_url_raw((string) ($item['source_url'] ?? ''));
+        if ($source !== '') {
+            $headers['Referer'] = $source;
+        }
+        $response = wp_safe_remote_get($url, array(
+            'timeout' => 20,
+            'redirection' => 3,
+            'limit_response_size' => $max_bytes,
+            'user-agent' => $this->feed_user_agent(),
+            'headers' => $headers,
+        ));
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        $code = (int) wp_remote_retrieve_response_code($response);
+        if ($code < 200 || $code >= 300) {
+            return new WP_Error('tr_ai_wire_image_http', 'Source image download returned HTTP ' . $code . '.');
+        }
+        $bytes = (string) wp_remote_retrieve_body($response);
+        if ($bytes === '') {
+            return new WP_Error('tr_ai_wire_image_empty', 'Source image download was empty.');
+        }
+        if (strlen($bytes) >= $max_bytes) {
+            return new WP_Error('tr_ai_wire_image_size', 'Source image is larger than 8 MB.');
+        }
+        $mime = strtolower((string) wp_remote_retrieve_header($response, 'content-type'));
+        $mime_parts = explode(';', $mime);
+        $mime = trim($mime_parts[0]);
+        if (function_exists('getimagesizefromstring')) {
+            $info = @getimagesizefromstring($bytes);
+            if (is_array($info) && !empty($info['mime'])) {
+                $mime = strtolower((string) $info['mime']);
+            }
+        }
+        $allowed = array(
+            'image/jpeg' => 'jpg',
+            'image/jpg' => 'jpg',
+            'image/pjpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+        );
+        if (!isset($allowed[$mime])) {
+            return new WP_Error('tr_ai_wire_image_type', 'Source image is not a supported photo type.');
+        }
+        $ext = $allowed[$mime];
+        $mime = ($ext === 'jpg') ? 'image/jpeg' : $mime;
+        $path = (string) wp_parse_url($url, PHP_URL_PATH);
+        $base = sanitize_file_name(basename($path));
+        if ($base === '' || strpos($base, '.') === false) {
+            $base = 'tr-ai-wire-' . $post_id . '.' . $ext;
+        } else {
+            $base = sanitize_file_name(preg_replace('/\.[^.]+$/', '.' . $ext, $base));
+        }
+        $upload = wp_upload_bits($base, null, $bytes);
+        if (!empty($upload['error'])) {
+            return new WP_Error('tr_ai_wire_image_upload', sanitize_text_field((string) $upload['error']));
+        }
+        $attachment_id = wp_insert_attachment(array(
+            'post_mime_type' => $mime,
+            'post_title' => $alt !== '' ? $alt : preg_replace('/\.[^.]+$/', '', $base),
+            'post_status' => 'inherit',
+            'post_parent' => $post_id,
+            'guid' => $upload['url'],
+        ), $upload['file'], $post_id, true);
+        if (is_wp_error($attachment_id) || !(int) $attachment_id) {
+            if (!empty($upload['file']) && file_exists($upload['file'])) {
+                @unlink($upload['file']);
+            }
+            return is_wp_error($attachment_id) ? $attachment_id : new WP_Error('tr_ai_wire_image_attach', 'WordPress did not store the hosted source image.');
+        }
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        $metadata = wp_generate_attachment_metadata((int) $attachment_id, $upload['file']);
+        if (is_array($metadata)) {
+            wp_update_attachment_metadata((int) $attachment_id, $metadata);
+        }
+        if ($alt !== '') {
+            update_post_meta((int) $attachment_id, '_wp_attachment_image_alt', $alt);
+        }
+        update_post_meta((int) $attachment_id, '_tr_ai_wire_hosted_source_image', '1');
+        update_post_meta((int) $attachment_id, '_tr_ai_wire_hosted_from', $url);
+        if ($set_thumbnail) {
+            set_post_thumbnail($post_id, (int) $attachment_id);
+        }
+        return (int) $attachment_id;
+    }
+
+    private function existing_hosted_image($post_id, $url) {
+        $url = esc_url_raw($url);
+        if ($url === '') {
+            return 0;
+        }
+        $found = get_posts(array(
+            'post_type' => 'attachment',
+            'post_parent' => (int) $post_id,
+            'post_status' => 'inherit',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_key' => '_tr_ai_wire_hosted_from',
+            'meta_value' => $url,
+            'no_found_rows' => true,
+        ));
+        return !empty($found[0]) ? (int) $found[0] : 0;
+    }
+
     private function upstream_image_url($post_id) {
         $url = esc_url_raw((string) get_post_meta((int) $post_id, '_tr_ai_wire_source_image', true));
         return preg_match('#^https?://#i', $url) ? $url : '';
     }
 
+    private function hosted_image_url($post_id) {
+        $thumb = $this->real_thumbnail_id($post_id);
+        if ($thumb <= 0) {
+            return '';
+        }
+        $local = wp_get_attachment_image_url($thumb, 'full');
+        if (!is_string($local) || $local === '') {
+            $local = wp_get_attachment_url($thumb);
+        }
+        return (is_string($local) && preg_match('#^https?://#i', $local)) ? $local : '';
+    }
+
     private function display_image_url($post_id) {
+        $hosted = $this->hosted_image_url($post_id);
+        if ($hosted !== '') {
+            return $hosted;
+        }
         $url = $this->upstream_image_url($post_id);
         if ($url === '') {
             return '';
@@ -306,6 +590,14 @@ trait TechnoRapper_AI_Wire_Publisher {
         ));
     }
 
+    private function fail_item_without_hosted_image($id, $item) {
+        if ($this->source_image_url($item['source_body'] ?? '') !== '') {
+            $this->schedule_retry((int) $id, 'Could not download the source image onto this site.');
+            return;
+        }
+        $this->skip_item_without_image($id);
+    }
+
     private function item_with_source_body($id, $item) {
         $item = is_array($item) ? $item : array();
         if (trim((string) ($item['source_body'] ?? '')) !== '') {
@@ -417,12 +709,111 @@ trait TechnoRapper_AI_Wire_Publisher {
             }
         }
         $lede = sanitize_text_field($rewrite['lede'] ?? '');
-        $body = wp_kses_post($rewrite['body_html'] ?? '');
+        $body = $this->strip_upstream_markup(wp_kses_post($rewrite['body_html'] ?? ''), $item);
         $content = '<p class="tr-ai-wire-byline"><em>By ' . esc_html(self::site_brand_name()) . ' editorial desk. This is an attributed analysis of the linked source, not original reporting or an independent test.</em></p>';
         $content .= ($lede ? '<p><strong>' . esc_html($lede) . '</strong></p>' : '') . $body;
-        $content .= '<p class="tr-ai-wire-source"><strong>Source:</strong> <a href="' . esc_url($item['source_url'] ?? '') . '" rel="nofollow noopener" target="_blank">' . esc_html($item['feed_name'] ?? 'Source') . '</a></p>';
-        $content .= '<p class="tr-ai-wire-method">How we used the source: facts, quotes, and numbers below come only from that link. We added structure, search intent, and reader context. We did not independently verify the reporting.</p>';
+        $source = esc_url($item['source_url'] ?? '');
+        if ($source !== '') {
+            $content .= '<p class="tr-ai-wire-source"><strong>Inspired by:</strong> <a href="' . $source . '" rel="nofollow noopener" target="_blank">' . esc_html($item['feed_name'] ?? 'Source') . '</a></p>';
+        }
+        $content .= '<p class="tr-ai-wire-method">How we used the source: facts, quotes, and numbers in this article come only from that Inspired by link. We added structure, search intent, and reader context. We did not independently verify the reporting.</p>';
         return $content;
+    }
+
+    private function upstream_link_hosts($item) {
+        $hosts = array();
+        $urls = array(
+            (string) ($item['source_url'] ?? ''),
+            $this->source_image_url($item['source_body'] ?? ''),
+        );
+        foreach ($urls as $url) {
+            $host = strtolower((string) wp_parse_url(esc_url_raw($url), PHP_URL_HOST));
+            if ($host === '') {
+                continue;
+            }
+            $hosts[$host] = true;
+            if (strpos($host, 'www.') === 0) {
+                $hosts[substr($host, 4)] = true;
+            } else {
+                $hosts['www.' . $host] = true;
+            }
+        }
+        return array_keys($hosts);
+    }
+
+    private function url_is_upstream($url, $item) {
+        $url = trim(html_entity_decode((string) $url, ENT_QUOTES, 'UTF-8'));
+        if ($url === '' || strpos($url, '#') === 0 || strpos($url, 'mailto:') === 0) {
+            return false;
+        }
+        $normalized = esc_url_raw($url);
+        if ($normalized === '') {
+            return false;
+        }
+        $source = esc_url_raw((string) ($item['source_url'] ?? ''));
+        if ($source !== '' && $this->url_without_fragment($normalized) === $this->url_without_fragment($source)) {
+            return true;
+        }
+        $host = strtolower((string) wp_parse_url($normalized, PHP_URL_HOST));
+        if ($host === '') {
+            return false;
+        }
+        $home = strtolower((string) wp_parse_url(home_url('/'), PHP_URL_HOST));
+        if ($home !== '' && ($host === $home || substr($host, -strlen('.' . $home)) === '.' . $home)) {
+            return false;
+        }
+        foreach ($this->upstream_link_hosts($item) as $upstream) {
+            if ($host === $upstream || substr($host, -strlen('.' . $upstream)) === '.' . $upstream) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function markup_has_upstream_url($markup, $item) {
+        if (!preg_match_all('/https?:\/\/[^"\'\s>]+/i', (string) $markup, $matches)) {
+            return false;
+        }
+        foreach ($matches[0] as $url) {
+            if ($this->url_is_upstream($url, $item)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function strip_upstream_markup($html, $item, $remove_images = true) {
+        $html = (string) $html;
+        if ($html === '' || !is_array($item)) {
+            return $html;
+        }
+        $html = preg_replace_callback('/<a\b([^>]*)>(.*?)<\/a>/is', function ($match) use ($item) {
+            if ($this->url_is_upstream($this->href_from_attributes($match[1]), $item) || $this->markup_has_upstream_url($match[1], $item)) {
+                return $match[2];
+            }
+            return $match[0];
+        }, $html);
+        if ($remove_images) {
+            $html = preg_replace_callback('/<img\b[^>]*>/i', function ($match) use ($item) {
+                return $this->markup_has_upstream_url($match[0], $item) ? '' : $match[0];
+            }, $html);
+        }
+        return is_string($html) ? $html : '';
+    }
+
+    private function href_from_attributes($attributes) {
+        if (preg_match('/\bhref\s*=\s*(["\'])(.*?)\1/i', (string) $attributes, $match)) {
+            return $match[2];
+        }
+        if (preg_match('/\bhref\s*=\s*([^\s>]+)/i', (string) $attributes, $match)) {
+            return trim($match[1], '"\'');
+        }
+        return '';
+    }
+
+    private function url_without_fragment($url) {
+        $parts = explode('#', (string) $url, 2);
+        return untrailingslashit(strtolower(trim($parts[0])));
     }
 
     private function generic_category_names() {
@@ -711,12 +1102,13 @@ trait TechnoRapper_AI_Wire_Publisher {
                     return;
                 }
                 wp_delete_post($existing_id, true);
-                $this->skip_item_without_image($id);
+                $this->fail_item_without_hosted_image($id, $item);
                 return;
             }
             $this->apply_seo_meta($existing_id, $rewrite);
             update_post_meta($existing_id, '_tr_ai_wire_voice', $this->item_is_comic($item) ? 'comic' : 'straight');
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
+            $this->store_pre_publish_gate($existing_id, $rewrite, $review, $item, $s);
             $this->maybe_promote_post_status($existing_id, $s);
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => null, 'rewrite_json' => wp_json_encode($rewrite)));
@@ -778,9 +1170,10 @@ trait TechnoRapper_AI_Wire_Publisher {
         $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);
         if (!$this->post_has_featured_image((int) $post_id)) {
             wp_delete_post((int) $post_id, true);
-            $this->skip_item_without_image($id);
+            $this->fail_item_without_hosted_image($id, $item);
             return;
         }
+        $this->store_pre_publish_gate((int) $post_id, $rewrite, $review, $item, $s);
         $this->maybe_promote_post_status((int) $post_id, $s);
         $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);
         $this->update_item($id, array(
@@ -805,6 +1198,12 @@ trait TechnoRapper_AI_Wire_Publisher {
         if (get_post_status($post_id) === $wanted) {
             return;
         }
+        if ($wanted === 'publish') {
+            $gate = get_post_meta($post_id, '_tr_ai_wire_prepublish_gate', true);
+            if ($this->pre_publish_gate_holds($gate)) {
+                return;
+            }
+        }
         $result = wp_update_post(array(
             'ID' => $post_id,
             'post_status' => $wanted,
@@ -823,61 +1222,7 @@ trait TechnoRapper_AI_Wire_Publisher {
     }
 
     public function print_article_schema() {
-        if (!is_singular('post')) {
-            return;
-        }
-        $post_id = get_queried_object_id();
-        if (!$post_id || !get_post_meta($post_id, '_tr_ai_wire_queue_id', true)) {
-            return;
-        }
-        $faq = json_decode((string) get_post_meta($post_id, '_tr_ai_wire_faq', true), true);
-        $graph = array(
-            array(
-                '@type' => 'NewsArticle',
-                'headline' => get_the_title($post_id),
-                'description' => wp_strip_all_tags(get_the_excerpt($post_id)),
-                'datePublished' => get_the_date('c', $post_id),
-                'dateModified' => get_the_modified_date('c', $post_id),
-                'mainEntityOfPage' => get_permalink($post_id),
-                'author' => array(
-                    '@type' => 'Organization',
-                    'name' => self::site_brand_name() . ' editorial desk',
-                    'url' => home_url('/'),
-                ),
-                'publisher' => array(
-                    '@type' => 'Organization',
-                    'name' => self::site_brand_name(),
-                    'url' => home_url('/'),
-                ),
-            ),
-        );
-        $image = $this->display_image_url($post_id);
-        if ($image !== '') {
-            $graph[0]['image'] = array($image);
-        }
-        if (is_array($faq) && $faq) {
-            $questions = array();
-            foreach ($faq as $row) {
-                if (empty($row['question']) || empty($row['answer'])) {
-                    continue;
-                }
-                $questions[] = array(
-                    '@type' => 'Question',
-                    'name' => $row['question'],
-                    'acceptedAnswer' => array(
-                        '@type' => 'Answer',
-                        'text' => $row['answer'],
-                    ),
-                );
-            }
-            if ($questions) {
-                $graph[] = array(
-                    '@type' => 'FAQPage',
-                    'mainEntity' => $questions,
-                );
-            }
-        }
-        echo '<script type="application/ld+json">' . wp_json_encode(array('@context' => 'https://schema.org', '@graph' => $graph)) . '</script>' . "\n";
+        // Theme / Rank Math / Yoast emit NewsArticle JSON-LD. Do not inject a second graph.
     }
 
     public function track_article_view() {

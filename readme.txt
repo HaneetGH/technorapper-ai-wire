@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.60
+Stable tag: 0.2.64
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -56,6 +56,18 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.64 =
+* Auto-publish runs a pre-publish SEO and editorial gate (clickbait, placeholders, near-duplicates, brand identity). Existing score, similarity, and SEO settings still decide the rest. The plugin no longer prints a second NewsArticle JSON-LD graph.
+
+= 0.2.63 =
+* Queue and settings include Migrate older images, which copies hotlinked featured photos and in-article images from other servers into this site’s media library.
+
+= 0.2.62 =
+* Published articles keep the original feed URL only in the Inspired by credit at the end. Body links and images that pointed at the source site or its CDN are removed.
+
+= 0.2.61 =
+* RSS featured images are downloaded into the WordPress media library on publish, so article, schema, and social-preview URLs stay on this site instead of hotlinking the feed CDN.
+
 = 0.2.60 =
 * Comic posts per day (default 0) assigns a restrained dry wink to the first N articles each UTC day so you can A/B comic vs straight on the experiments page and in GA4 `voice`. The rest stay straight. Missing jokes do not block a 90 social score.
 
@@ -106,6 +118,18 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.64 =
+New posts must pass a pre-publish SEO and editorial gate. Daily cap, review score, and similarity settings are unchanged.
+
+= 0.2.63 =
+Use Migrate older images on Queue & usage to copy already-published photos off the original CDN onto this WordPress site.
+
+= 0.2.62 =
+Article bodies no longer link out to the RSS source. The original URL stays only in the Inspired by line at the end.
+
+= 0.2.61 =
+Article featured images are copied into your media library on publish so image URLs stay on your site instead of the RSS feed CDN.
 
 = 0.2.60 =
 Set Comic posts per day to mix a dry wink with straight copy, then compare them on A/B experiments. Family-friendly news first; jokes never block a complete article from social stills.
