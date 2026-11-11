@@ -2729,7 +2729,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'instagram_caption' => "Must see: Qualcomm wants AI servers.\n\nWait until the end.",
             'x_text' => 'Shocking Qualcomm data-center push',
             'on_image_bullets' => array('Gone wrong? No — bandwidth is up.', 'This will blow your mind: 2x memory.'),
-            'reel_script' => 'Wait for it. Qualcomm is chasing AI servers, not just phones.',
+            'reel_script' => 'Wait for it. Qualcomm is chasing AI servers, not just phones, and that shift is why memory bandwidth is the story.',
         ), get_post($post_id)));
         $this->assertStringNotContainsString('won’t believe', $copy['hook']);
         $this->assertStringNotContainsString('Wait for it', $copy['on_image_headline']);
@@ -2742,6 +2742,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('blow your mind', implode(' ', $copy['on_image_bullets']));
         $this->assertStringNotContainsString('Wait for it', $copy['reel_script']);
         $this->assertStringContainsString('Qualcomm is chasing AI servers', $copy['reel_script']);
+        $this->assertStringContainsString('memory bandwidth is the story', $copy['reel_script']);
     }
 
     public function test_weak_review_scores_do_not_queue_instagram_stills() {
