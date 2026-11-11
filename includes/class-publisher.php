@@ -28,8 +28,11 @@ trait TechnoRapper_AI_Wire_Publisher {
         if (get_option('tr_ai_wire_hosted_images_22') === '1') {
             return;
         }
-        $this->repair_home_posts(40);
+        // Mark done first. Sideloading dozens of photos inline (admin_init,
+        // frontend WP-Cron, or a feed tick) hits max_execution_time and WordPress
+        // shows a critical error. The Repair homepage job does this off-request.
         update_option('tr_ai_wire_hosted_images_22', '1', false);
+        $this->enqueue_background_job('repair');
     }
 
     public function migrate_hosted_images($limit = 400) {
