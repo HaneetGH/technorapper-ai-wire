@@ -170,7 +170,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                 }
                 if (job.effect === 'clear-all') {
                     var body = document.querySelector('.wrap table.widefat tbody');
-                    if (body) body.innerHTML = '<tr><td colspan="5">No items processed yet.</td></tr>';
+                    if (body) body.innerHTML = '<tr><td colspan="6">No items processed yet.</td></tr>';
                 }
                 if (job.effect === 'clear-unfinished') {
                     document.querySelectorAll('tr[data-item-id]').forEach(function (row) {
@@ -186,7 +186,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                     var row = document.querySelector('tr[data-item-id="' + job.item_id + '"]');
                     if (row && row.children[3]) {
                         row.children[3].textContent = job.item_status;
-                        var detail = row.children[4];
+                        var detail = row.children[5];
                         if (detail && job.item_error) {
                             var note = detail.querySelector('.tr-ai-wire-job-note');
                             if (!note) {

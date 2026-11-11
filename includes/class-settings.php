@@ -21,6 +21,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'enable_web_search' => 0,
             'enable_experiment' => 1,
             'experiment_id' => 'editorial-v1',
+            'comic_daily_limit' => 0,
             'draft_min_score' => 50,
             'draft_allow_revise' => 1,
             'draft_require_grounded' => 1,
@@ -193,6 +194,7 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['enable_experiment'] = empty($input['enable_experiment']) ? 0 : 1;
         $experiment_id = sanitize_key($input['experiment_id'] ?? $defaults['experiment_id']);
         $out['experiment_id'] = $experiment_id !== '' ? substr($experiment_id, 0, 64) : $defaults['experiment_id'];
+        $out['comic_daily_limit'] = min(100, max(0, absint($input['comic_daily_limit'] ?? $defaults['comic_daily_limit'])));
         $out['draft_min_score'] = min(100, max(0, absint($input['draft_min_score'] ?? $defaults['draft_min_score'])));
         $out['draft_allow_revise'] = empty($input['draft_allow_revise']) ? 0 : 1;
         $out['draft_require_grounded'] = empty($input['draft_require_grounded']) ? 0 : 1;

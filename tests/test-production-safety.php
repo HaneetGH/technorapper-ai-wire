@@ -261,9 +261,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         foreach ($expected as $table) {
             $this->assert_plugin_table_exists($table);
         }
-        $this->assertSame('9', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('10', get_option('tr_ai_wire_schema_version'));
         $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_social LIKE 'copy_json'"));
         $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_items LIKE 'source_published_at'"));
+        $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_items LIKE 'voice'"));
     }
 
     public function test_schema_upgrade_is_hooked_on_frontend_init() {
@@ -328,7 +329,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $row = $wpdb->get_row($wpdb->prepare("SELECT id, source_title FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame((string) $id, (string) $row['id']);
         $this->assertSame('Source title', $row['source_title']);
-        $this->assertSame('9', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('10', get_option('tr_ai_wire_schema_version'));
         $this->assert_plugin_table_exists($wpdb->prefix . 'tr_ai_wire_view_limits');
         $this->assert_plugin_table_exists($wpdb->prefix . 'tr_ai_wire_quarantine');
     }
@@ -492,7 +493,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         update_option('tr_ai_wire_schema_version', '4');
         $this->plugin->maybe_upgrade_schema();
-        $this->assertSame('9', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame('10', get_option('tr_ai_wire_schema_version'));
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         wp_unschedule_event(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args), TechnoRapper_AI_Wire::CRON_HOOK, $args);
     }
@@ -580,6 +581,99 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->assertStringNotContainsString('sexual content', strtolower($prompt));
         }
         $this->assertStringContainsString('family-friendly', $writer);
+        $this->assertStringNotContainsString('pinch of dry comic sense', $writer);
+        $this->assertStringContainsString('do not require jokes', strtolower($reviewer));
+        $this->assertStringNotContainsString('One dry wink is enough', $social);
+        $comic_writer = $this->invoke_private('writer_prompt', array('A', true));
+        $this->assertStringContainsString('pinch of dry comic sense', $comic_writer);
+        $comic_social = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news'), true));
+        $this->assertStringContainsString('One dry wink is enough', $comic_social);
+    }
+
+    public function test_house_style_asks_for_restrained_comic_sense() {
+        foreach (array('A', 'B') as $variant) {
+            $straight = $this->invoke_private('writer_prompt', array($variant));
+            $this->assertStringNotContainsString('pinch of dry comic sense', $straight);
+            $writer = $this->invoke_private('writer_prompt', array($variant, true));
+            $this->assertStringContainsString('pinch of dry comic sense', $writer);
+            $this->assertStringContainsString('Keep that humor restrained', $writer);
+            $this->assertStringContainsString('family-friendly', $writer);
+            $this->assertStringContainsString('light wry aside', $writer);
+        }
+        $this->assertStringNotContainsString('pinch of dry comic sense', $this->invoke_private('polish_writer_prompt', array('A')));
+        $polish = $this->invoke_private('polish_writer_prompt', array('A', true));
+        $this->assertStringContainsString('pinch of dry comic sense', $polish);
+        $reviewer = $this->invoke_private('reviewer_prompt', array(array()));
+        $this->assertStringContainsString('do not require jokes', strtolower($reviewer));
+        $this->assertStringContainsString('Do not list missing humor', $reviewer);
+        $this->assertStringContainsString('for missing jokes', $reviewer);
+        $cameras = $this->invoke_private('social_image_camera', array(1, 0));
+        $this->assertNotSame('', $cameras);
+        $straight_photo = $this->invoke_private('social_image_scroll_stop_clause');
+        $this->assertStringNotContainsString('sly photoreal visual beat', $straight_photo);
+        $prompt = $this->invoke_private('social_image_scroll_stop_clause', array(true));
+        $this->assertStringContainsString('sly photoreal visual beat', $prompt);
+        $this->assertStringContainsString('Never a drawing or a joke poster', $prompt);
+    }
+
+    public function test_comic_daily_limit_fills_then_stays_straight() {
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array('comic_daily_limit' => 1));
+        $first = $this->create_queue_item();
+        $second = $this->create_queue_item();
+        $item1 = $this->invoke_private('assign_item_voice', array($first, $this->invoke_private('get_item', array($first)), $settings));
+        $this->assertSame('comic', $item1['voice']);
+        $again = $this->invoke_private('assign_item_voice', array($first, $item1, $settings));
+        $this->assertSame('comic', $again['voice']);
+        $item2 = $this->invoke_private('assign_item_voice', array($second, $this->invoke_private('get_item', array($second)), $settings));
+        $this->assertSame('straight', $item2['voice']);
+        $this->assertSame(1, $this->invoke_private('comic_assigned_today'));
+        $off = $this->invoke_private('assign_item_voice', array(
+            $this->create_queue_item(),
+            array(),
+            array_merge(TechnoRapper_AI_Wire::defaults(), array('comic_daily_limit' => 0)),
+        ));
+        $this->assertSame('straight', $off['voice']);
+        $this->assertSame(0, (int) $this->plugin->sanitize_settings(array())['comic_daily_limit']);
+        $this->assertSame(3, (int) $this->plugin->sanitize_settings(array('comic_daily_limit' => 3))['comic_daily_limit']);
+        $this->assertSame(100, (int) $this->plugin->sanitize_settings(array('comic_daily_limit' => 999))['comic_daily_limit']);
+    }
+
+    public function test_existing_rewrite_is_not_relabeled_comic() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'rewrite_json' => wp_json_encode($this->complete_rewrite_for_score()),
+        ), array('id' => $id));
+        $item = $this->invoke_private('get_item', array($id));
+        $assigned = $this->invoke_private('assign_item_voice', array($id, $item, array_merge(TechnoRapper_AI_Wire::defaults(), array('comic_daily_limit' => 10))));
+        $this->assertSame('straight', $assigned['voice']);
+    }
+
+    public function test_create_draft_stores_comic_voice_meta() {
+        $id = $this->create_queue_item();
+        $item = array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-comic',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'Apple announced the M5 chip on March 4, 2026, with shipping in April at $999. The chip raises memory bandwidth and adds an on-device model for photos. Developers can use the new API in the beta released the same day. Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+            'voice' => 'comic',
+        );
+        $this->invoke_private('create_draft', array($id, $item, array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        ), array('verdict' => 'pass'), $this->draft_settings()));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assertSame('comic', get_post_meta($posts[0]->ID, '_tr_ai_wire_voice', true));
     }
 
     public function test_flagged_prompt_retries_once_with_a_shorter_source() {
@@ -787,6 +881,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $settings = TechnoRapper_AI_Wire::defaults();
         $this->assertSame('manual', $settings['cron_frequency']);
         $this->assertSame(0, $settings['max_posts_per_day']);
+        $this->assertSame(0, $settings['comic_daily_limit']);
         $this->assertSame(1, $settings['auto_publish']);
         $this->assertSame(1, $settings['pin_to_homepage']);
         $this->assertSame('post', $settings['map_post_type']);
@@ -970,6 +1065,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotEmpty($this->invoke_private('policy_local_hits', array('This is f*cking news')));
         $this->assertSame(array(), $this->invoke_private('policy_local_hits', array('The assistant class assignment passed on the shell.')));
         $this->assertStringContainsString('family-friendly', $this->invoke_private('writer_prompt', array('A')));
+        $this->assertStringNotContainsString('pinch of dry comic sense', $this->invoke_private('writer_prompt', array('A')));
+        $this->assertStringContainsString('pinch of dry comic sense', $this->invoke_private('writer_prompt', array('A', true)));
         $guard = $this->invoke_private('policy_guard_text', array('A grounded phone-chip update.', 'social'));
         $this->assertTrue($guard);
     }
@@ -1641,6 +1738,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Do not park a 90-checklist article at 85-89', $reviewer);
         $this->assertStringContainsString('Instagram and X stills require 90', $reviewer);
         $this->assertStringContainsString('Do not deduct below 85', $reviewer);
+        $this->assertStringContainsString('for missing jokes', $reviewer);
         $this->assertStringContainsString('fact_flags must be an empty array', $reviewer);
         $this->assertStringContainsString('If a human editor would publish it, score 85', $reviewer);
         $this->assertStringContainsString('do not park a publishable article at 78-84', strtolower($reviewer));
@@ -1651,6 +1749,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Never use News or Technology', $writer);
         $this->assertStringContainsString('Site categories', $writer);
         $this->assertStringContainsString('Do not wait for a human', $writer);
+        $this->assertStringNotContainsString('pinch of dry comic sense', $writer);
+        $comic = $this->invoke_private('writer_prompt', array('A', true));
+        $this->assertStringContainsString('pinch of dry comic sense', $comic);
+        $this->assertStringContainsString('light wry aside', $comic);
+        $this->assertStringContainsString('punchline-only headline', $comic);
+        $this->assertStringContainsString('do not require jokes', strtolower($reviewer));
+        $this->assertStringContainsString('punchline-only headlines', $reviewer);
     }
 
     public function test_review_input_does_not_punish_missing_internal_links() {
@@ -1751,6 +1856,31 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             array('source_title' => 'Apple announced the M5 chip'),
         ));
         $this->assertSame(90, (int) $review['score']);
+    }
+
+    public function test_missing_humor_nit_does_not_block_a_90_lift() {
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(87, array(
+                'issues' => array('Could use a wry aside in the lede'),
+            )),
+            $this->complete_rewrite_for_score(),
+            array('source_title' => 'Apple announced the M5 chip'),
+        ));
+        $this->assertSame(90, (int) $review['score']);
+        $this->assertFalse($this->invoke_private('review_has_social_blocking_defect', array(
+            $this->passing_review_for_score(87, array(
+                'issues' => array('Missing a joke in Why it matters'),
+            )),
+            $this->complete_rewrite_for_score(),
+            array('source_title' => 'Apple announced the M5 chip'),
+        )));
+        $this->assertTrue($this->invoke_private('review_has_social_blocking_defect', array(
+            $this->passing_review_for_score(86, array(
+                'issues' => array('Generic headline restates the source headline'),
+            )),
+            $this->complete_rewrite_for_score('Apple announced the M5 chip'),
+            array('source_title' => 'Apple announced the M5 chip'),
+        )));
     }
 
     public function test_clustered_pass_does_not_spend_a_polish_call() {
@@ -4962,6 +5092,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('Onboard social publishing', $main);
         $this->assertStringNotContainsString('name="social[x_api_key]"', $main);
         $this->assertStringContainsString('Social settings', $main);
+        $this->assertStringContainsString('Comic posts per day', $main);
+        ob_start();
+        $this->plugin->experiments_page();
+        $experiments = ob_get_clean();
+        $this->assertStringContainsString('Comic vs straight', $experiments);
+        $this->assertStringContainsString('voice', $experiments);
         ob_start();
         $this->plugin->social_settings_page();
         $html = ob_get_clean();
@@ -5746,6 +5882,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('No children', $prompt);
         $this->assertStringContainsString('stop a thumb mid-scroll', $prompt);
         $this->assertStringContainsString('make someone tap', $prompt);
+        $this->assertStringNotContainsString('sly photoreal visual beat', $prompt);
+        $this->assertStringNotContainsString('one sly visual beat', $prompt);
+        $this->assertStringNotContainsString('standup', $prompt);
+        update_post_meta($post_id, '_tr_ai_wire_voice', 'comic');
+        $comic_prompt = $this->invoke_private('social_image_prompt', array(get_post($post_id), array(
+            'on_image_headline' => '6,300 tech jobs gone',
+            'visual_brief' => 'Photoreal office workers carrying boxes at dusk',
+        )));
+        $this->assertStringContainsString('sly photoreal visual beat', $comic_prompt);
+        $this->assertStringContainsString('one sly visual beat', $comic_prompt);
     }
 
     public function test_unsafe_visual_brief_is_dropped_before_the_image_api() {
@@ -5788,6 +5934,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('generic clickbait', $desk);
         $this->assertStringContainsString('wire dump', $desk);
         $this->assertStringContainsString('no nudity', strtolower($desk));
+        $this->assertStringNotContainsString('pinch of dry comic sense', $desk);
+        $comic_desk = $this->invoke_private('social_copy_system_prompt', array('TechnoRapper', true));
+        $this->assertStringContainsString('pinch of dry comic sense', $comic_desk);
+        $this->assertStringContainsString('Never a meme page', $comic_desk);
         $user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news')));
         $this->assertStringContainsString('reader stake', $user);
         $this->assertStringContainsString('saves, and sends', $user);
@@ -5795,6 +5945,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('save or send ask', $user);
         $this->assertStringContainsString('named hook in the first', $user);
         $this->assertStringContainsString('fully clothed', $user);
+        $this->assertStringNotContainsString('One dry wink is enough', $user);
+        $comic_user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news'), true));
+        $this->assertStringContainsString('One dry wink is enough', $comic_user);
+        $this->assertStringContainsString('sly photoreal visual beat', $comic_user);
+        $this->assertStringContainsString('do not turn the Reel into a bit', $comic_user);
         $this->assertNull($this->invoke_private('sanitize_social_idea_item', array(array(
             'title' => 'Nude recap cover',
             'description' => 'A naked model as the hero of the graphic.',

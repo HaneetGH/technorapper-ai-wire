@@ -151,11 +151,12 @@ trait TechnoRapper_AI_Wire_Pipeline {
     }
 
     private function pipeline_generate($id, $item, $s) {
+        $item = $this->assign_item_voice($id, $item, $s);
         $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
         if (!is_array($rewrite) || !$this->has_usable_rewrite($rewrite)) {
             $rewrite = $this->ai_json(
                 $s['writer_model'],
-                $this->writer_prompt($item['variant'] ?? 'A'),
+                $this->writer_prompt($item['variant'] ?? 'A', $this->item_is_comic($item)),
                 $this->build_writer_input($item),
                 $s,
                 false
@@ -249,7 +250,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
         }
         $polished = $this->ai_json(
             $s['writer_model'],
-            $this->polish_writer_prompt($item['variant'] ?? 'A'),
+            $this->polish_writer_prompt($item['variant'] ?? 'A', $this->item_is_comic($item)),
             $this->build_polish_input($item, $rewrite, $review),
             $s,
             false
