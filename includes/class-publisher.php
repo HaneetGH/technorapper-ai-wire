@@ -14,12 +14,49 @@ trait TechnoRapper_AI_Wire_Publisher {
         exit;
     }
 
+    public function migrate_images_request() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to migrate images.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_migrate_images');
+        $this->enqueue_background_job('migrate_images');
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue'));
+        exit;
+    }
+
     public function maybe_backfill_home_media() {
         if (get_option('tr_ai_wire_hosted_images_22') === '1') {
             return;
         }
         $this->repair_home_posts(40);
         update_option('tr_ai_wire_hosted_images_22', '1', false);
+    }
+
+    public function migrate_hosted_images($limit = 400) {
+        $limit = max(1, (int) $limit);
+        $types = array('post', 'page', $this->mapped_post_type($this->settings()));
+        $posts = get_posts(array(
+            'post_type' => array_values(array_unique($types)),
+            'post_status' => array('publish', 'draft', 'pending', 'future', 'private'),
+            'posts_per_page' => $limit,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'no_found_rows' => true,
+        ));
+        $hosted = 0;
+        $count = 0;
+        $total = count($posts);
+        foreach ($posts as $post) {
+            $count++;
+            if ($this->migrate_post_images($post)) {
+                $hosted++;
+            }
+            if ($count === 1 || $count % 5 === 0 || $count === $total) {
+                $this->note_background_progress(20 + (int) (70 * $count / max(1, $total)), 'Migrating images on post ' . $count . ' of ' . $total);
+            }
+        }
+        return array('scanned' => $count, 'hosted' => $hosted);
     }
 
     public function repair_home_posts($limit = 120) {
@@ -87,6 +124,94 @@ trait TechnoRapper_AI_Wire_Publisher {
         }
         $this->clear_homepage_excluded_cache();
         $this->refresh_front_page($post_id);
+    }
+
+    private function migrate_post_images($post) {
+        $post = get_post($post);
+        if (!$post instanceof WP_Post) {
+            return false;
+        }
+        $post_id = (int) $post->ID;
+        $qid = (int) get_post_meta($post_id, '_tr_ai_wire_queue_id', true);
+        $item = $qid > 0 ? $this->get_item($qid) : array();
+        if (!is_array($item)) {
+            $item = array();
+        }
+        $rewrite = array();
+        if (!empty($item['rewrite_json'])) {
+            $decoded = json_decode($item['rewrite_json'], true);
+            if (is_array($decoded)) {
+                $rewrite = $decoded;
+            }
+        }
+        if (!$rewrite) {
+            $rewrite = array(
+                'title' => $post->post_title,
+                'featured_image_alt' => (string) get_post_meta($post_id, '_tr_ai_wire_featured_image_alt', true),
+            );
+        }
+        $had_thumb = $this->real_thumbnail_id($post_id) > 0;
+        $this->maybe_set_featured_image($post_id, $item, $rewrite);
+        $content = (string) $post->post_content;
+        $updated = $this->host_remote_images_in_content($content, $post_id, $item);
+        $updated = $this->strip_upstream_markup_keep_credit($updated, $item);
+        if ($updated !== $content) {
+            wp_update_post(array(
+                'ID' => $post_id,
+                'post_content' => $updated,
+            ));
+        }
+        return (!$had_thumb && $this->real_thumbnail_id($post_id) > 0) || $updated !== $content;
+    }
+
+    private function host_remote_images_in_content($html, $post_id, $item) {
+        $html = (string) $html;
+        if ($html === '' || stripos($html, '<img') === false) {
+            return $html;
+        }
+        $replaced = preg_replace_callback('/<img\b[^>]*>/i', function ($match) use ($post_id, $item) {
+            if (!preg_match('/\bsrc\s*=\s*(["\'])(.*?)\1/i', $match[0], $src)) {
+                return $match[0];
+            }
+            $url = html_entity_decode($src[2], ENT_QUOTES, 'UTF-8');
+            if (!$this->url_is_offsite($url)) {
+                return $match[0];
+            }
+            $alt = '';
+            if (preg_match('/\balt\s*=\s*(["\'])(.*?)\1/i', $match[0], $alt_match)) {
+                $alt = $alt_match[2];
+            }
+            $hosted = $this->host_source_image($url, $post_id, $alt, is_array($item) ? $item : array(), false);
+            if (is_wp_error($hosted) || (int) $hosted <= 0) {
+                return $match[0];
+            }
+            $local = wp_get_attachment_url((int) $hosted);
+            if (!is_string($local) || $local === '') {
+                return $match[0];
+            }
+            $tag = preg_replace('/\bsrc\s*=\s*(["\'])(.*?)\1/i', 'src="' . esc_url($local) . '"', $match[0], 1);
+            $tag = preg_replace('/\bsrcset\s*=\s*(["\'])(.*?)\1/i', '', $tag);
+            $tag = preg_replace('/\bsizes\s*=\s*(["\'])(.*?)\1/i', '', $tag);
+            return is_string($tag) ? $tag : '';
+        }, $html);
+        return is_string($replaced) ? $replaced : $html;
+    }
+
+    private function strip_upstream_markup_keep_credit($html, $item) {
+        $parts = preg_split('/(<p class="tr-ai-wire-source">)/', (string) $html, 2, PREG_SPLIT_DELIM_CAPTURE);
+        if (!is_array($parts) || count($parts) < 3) {
+            return $this->strip_upstream_markup($html, $item);
+        }
+        return $this->strip_upstream_markup($parts[0], $item, false) . $parts[1] . $parts[2];
+    }
+
+    private function url_is_offsite($url) {
+        $host = strtolower((string) wp_parse_url(esc_url_raw($url), PHP_URL_HOST));
+        $home = strtolower((string) wp_parse_url(home_url('/'), PHP_URL_HOST));
+        if ($host === '' || $home === '') {
+            return false;
+        }
+        return $host !== $home && substr($host, -strlen('.' . $home)) !== '.' . $home;
     }
 
     public function exclude_from_homepage($query) {
@@ -205,11 +330,18 @@ trait TechnoRapper_AI_Wire_Publisher {
         update_post_meta($post_id, '_aioseo_og_image', $url);
     }
 
-    private function host_source_image($url, $post_id, $alt, $item = array()) {
+    private function host_source_image($url, $post_id, $alt, $item = array(), $set_thumbnail = true) {
         $url = esc_url_raw($url);
         $post_id = (int) $post_id;
         if ($post_id <= 0 || $url === '' || !preg_match('#^https?://#i', $url)) {
             return new WP_Error('tr_ai_wire_image_url', 'Source image URL is not downloadable.');
+        }
+        $existing = $this->existing_hosted_image($post_id, $url);
+        if ($existing > 0) {
+            if ($set_thumbnail) {
+                set_post_thumbnail($post_id, $existing);
+            }
+            return $existing;
         }
         $max_bytes = 8 * MB_IN_BYTES;
         $headers = array(
@@ -295,8 +427,29 @@ trait TechnoRapper_AI_Wire_Publisher {
             update_post_meta((int) $attachment_id, '_wp_attachment_image_alt', $alt);
         }
         update_post_meta((int) $attachment_id, '_tr_ai_wire_hosted_source_image', '1');
-        set_post_thumbnail($post_id, (int) $attachment_id);
+        update_post_meta((int) $attachment_id, '_tr_ai_wire_hosted_from', $url);
+        if ($set_thumbnail) {
+            set_post_thumbnail($post_id, (int) $attachment_id);
+        }
         return (int) $attachment_id;
+    }
+
+    private function existing_hosted_image($post_id, $url) {
+        $url = esc_url_raw($url);
+        if ($url === '') {
+            return 0;
+        }
+        $found = get_posts(array(
+            'post_type' => 'attachment',
+            'post_parent' => (int) $post_id,
+            'post_status' => 'inherit',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_key' => '_tr_ai_wire_hosted_from',
+            'meta_value' => $url,
+            'no_found_rows' => true,
+        ));
+        return !empty($found[0]) ? (int) $found[0] : 0;
     }
 
     private function upstream_image_url($post_id) {
@@ -629,7 +782,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         return false;
     }
 
-    private function strip_upstream_markup($html, $item) {
+    private function strip_upstream_markup($html, $item, $remove_images = true) {
         $html = (string) $html;
         if ($html === '' || !is_array($item)) {
             return $html;
@@ -640,9 +793,11 @@ trait TechnoRapper_AI_Wire_Publisher {
             }
             return $match[0];
         }, $html);
-        $html = preg_replace_callback('/<img\b[^>]*>/i', function ($match) use ($item) {
-            return $this->markup_has_upstream_url($match[0], $item) ? '' : $match[0];
-        }, $html);
+        if ($remove_images) {
+            $html = preg_replace_callback('/<img\b[^>]*>/i', function ($match) use ($item) {
+                return $this->markup_has_upstream_url($match[0], $item) ? '' : $match[0];
+            }, $html);
+        }
         return is_string($html) ? $html : '';
     }
 

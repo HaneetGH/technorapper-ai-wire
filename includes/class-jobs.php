@@ -38,6 +38,10 @@ trait TechnoRapper_AI_Wire_Jobs {
             check_ajax_referer('tr_ai_wire_repair_home');
             wp_send_json_success($this->public_job($this->enqueue_background_job('repair')));
         }
+        if ($job_action === 'tr_ai_wire_migrate_images') {
+            check_ajax_referer('tr_ai_wire_migrate_images');
+            wp_send_json_success($this->public_job($this->enqueue_background_job('migrate_images')));
+        }
         if ($job_action === 'tr_ai_wire_stop_run') {
             check_ajax_referer('tr_ai_wire_stop_run');
             $this->stop_running_jobs();
@@ -116,6 +120,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                 'tr_ai_wire_run_social_queue',
                 'tr_ai_wire_retry_social_item',
                 'tr_ai_wire_repair_home',
+                'tr_ai_wire_migrate_images',
                 'tr_ai_wire_stop_run',
                 'tr_ai_wire_delete_item',
                 'tr_ai_wire_clean_queue',
@@ -345,6 +350,12 @@ trait TechnoRapper_AI_Wire_Jobs {
                 $this->note_background_progress(25, 'Repairing homepage posts');
                 $this->repair_home_posts();
                 $this->finish_background_job('Homepage posts repaired.', 'done');
+            } elseif ($job['kind'] === 'migrate_images') {
+                $this->note_background_progress(15, 'Migrating older images onto this site');
+                $result = $this->migrate_hosted_images();
+                $scanned = (int) ($result['scanned'] ?? 0);
+                $hosted = (int) ($result['hosted'] ?? 0);
+                $this->finish_background_job('Migrated images on ' . $hosted . ' of ' . $scanned . ' post' . ($scanned === 1 ? '' : 's') . '.', 'done');
             } else {
                 $this->finish_background_job('Unknown background task.', 'error');
             }

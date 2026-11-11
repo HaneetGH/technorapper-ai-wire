@@ -149,6 +149,12 @@ trait TechnoRapper_AI_Wire_Admin {
                 <p class="description">Re-assign desks and featured images on already published AI Wire posts so they can appear on the home board, not only at their own URL. This stays on the page and shows a progress bar.</p>
                 <?php submit_button('Repair existing posts for homepage', 'secondary'); ?>
             </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
+                <input type="hidden" name="action" value="tr_ai_wire_migrate_images">
+                <?php wp_nonce_field('tr_ai_wire_migrate_images'); ?>
+                <p class="description">Download featured photos and in-article images that still live on other servers into this site’s media library. Older posts stop hotlinking the original CDN. The Inspired by source link at the end stays. This stays on the page and shows a progress bar.</p>
+                <?php submit_button('Migrate older images to this site', 'secondary'); ?>
+            </form>
         </div>
         <?php
     }
@@ -707,6 +713,11 @@ trait TechnoRapper_AI_Wire_Admin {
                 <input type="hidden" name="action" value="tr_ai_wire_repair_home">
                 <?php wp_nonce_field('tr_ai_wire_repair_home'); ?>
                 <?php submit_button('Repair homepage posts', 'secondary', 'submit', false); ?>
+            </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <input type="hidden" name="action" value="tr_ai_wire_migrate_images">
+                <?php wp_nonce_field('tr_ai_wire_migrate_images'); ?>
+                <?php submit_button('Migrate older images', 'secondary', 'submit', false); ?>
             </form>
         </div>
         <?php $last_run = get_option(self::LAST_RUN_OPTION, array()); if (is_array($last_run) && !empty($last_run['at'])) : ?>

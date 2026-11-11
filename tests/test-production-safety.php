@@ -1503,6 +1503,37 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);
     }
 
+    public function test_migrate_older_images_hosts_remote_featured_and_body() {
+        $id = $this->create_queue_item();
+        $post_id = self::factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Old hotlinked article',
+            'post_content' => '<p>Read <a href="https://example.com/story">the original</a>. <img src="https://cdn.example.com/photo.jpg" alt="chip"></p><p class="tr-ai-wire-source"><strong>Source:</strong> <a href="https://example.com/story" rel="nofollow noopener" target="_blank">Example Feed</a></p>',
+            'meta_input' => array(
+                '_tr_ai_wire_queue_id' => $id,
+                '_tr_ai_wire_source_image' => 'https://cdn.example.com/photo.jpg',
+            ),
+        ));
+        $this->invoke_private('update_item', array($id, array(
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'Old hotlinked article',
+                'featured_image_alt' => 'chip photo',
+            )),
+        )));
+        $this->assertSame(0, $this->invoke_private('real_thumbnail_id', array($post_id)));
+        $result = $this->plugin->migrate_hosted_images(20);
+        $this->assertSame(1, (int) $result['scanned']);
+        $this->assertSame(1, (int) $result['hosted']);
+        $this->assert_featured_image_is_hosted($post_id, 'https://cdn.example.com/photo.jpg');
+        $content = (string) get_post($post_id)->post_content;
+        $this->assertStringContainsString('/wp-content/uploads/', $content);
+        $this->assertStringNotContainsString('<img src="https://cdn.example.com/photo.jpg"', $content);
+        $this->assertStringNotContainsString('<a href="https://example.com/story">the original</a>', $content);
+        $this->assertStringContainsString('the original', $content);
+        $this->assertSame(1, substr_count($content, 'https://example.com/story'));
+        $this->assertStringContainsString('tr-ai-wire-source', $content);
+    }
+
     public function test_source_image_is_hosted_on_this_site() {
         $id = $this->create_queue_item();
         $this->invoke_private('create_draft', array($id, array(
@@ -5267,6 +5298,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('name="social[x_api_key]"', $main);
         $this->assertStringContainsString('Social settings', $main);
         $this->assertStringContainsString('Comic posts per day', $main);
+        $this->assertStringContainsString('Migrate older images to this site', $main);
+        $this->assertStringContainsString('tr_ai_wire_migrate_images', $main);
         ob_start();
         $this->plugin->experiments_page();
         $experiments = ob_get_clean();
