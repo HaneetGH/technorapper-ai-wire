@@ -863,6 +863,7 @@ trait TechnoRapper_AI_Wire_Social {
         $this->requeue_instagram_prepublish_quota_failures();
         $rows = $this->social_queued_rows_for_worker($limit);
         $active = self::connected_social_platforms($credentials, $settings);
+        $released_posts = array();
         foreach ((array) $rows as $row) {
             if (empty($this->settings()['social_distribution_enabled']) || !$active) {
                 break;
@@ -870,7 +871,10 @@ trait TechnoRapper_AI_Wire_Social {
             if (!in_array((string) ($row['platform'] ?? ''), $active, true)) {
                 continue;
             }
-            if ($this->social_published_today() >= $limit && !$this->social_post_published_today((int) $row['post_id']) && !$this->social_item_is_manual_repost($row)) {
+            if (isset($released_posts[(int) ($row['post_id'] ?? 0)])) {
+                continue;
+            }
+            if ($this->social_published_today() >= $limit && !$this->social_post_published_today((int) $row['post_id']) && !$this->social_item_is_manual_repost($row) && !$this->social_row_is_forced_pack($row)) {
                 $tomorrow = strtotime('tomorrow 00:20:00 UTC');
                 if (!wp_next_scheduled(self::SOCIAL_CRON_HOOK)) {
                     wp_schedule_single_event($tomorrow, self::SOCIAL_CRON_HOOK);
@@ -893,8 +897,16 @@ trait TechnoRapper_AI_Wire_Social {
                 continue;
             }
             $pack = array($row);
-            if ($this->social_row_is_pack($row, $settings) && !$this->social_item_is_manual_repost($row)) {
+            $explicit = $this->social_row_explicit_pack($row);
+            if (($explicit !== '' || $this->social_row_is_pack($row, $settings)) && !$this->social_item_is_manual_repost($row)) {
                 $pack = $this->claim_instagram_pack($row, $limit, $settings);
+            }
+            if ($explicit !== '' && count($pack) < 2) {
+                $this->release_social_rows_to_queue($pack);
+                foreach ($pack as $held) {
+                    $released_posts[(int) ($held['post_id'] ?? 0)] = true;
+                }
+                continue;
             }
             if (count($pack) > 1) {
                 if ($row['platform'] === 'x') {
@@ -957,7 +969,7 @@ trait TechnoRapper_AI_Wire_Social {
 
         $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'");
         $finishable = $this->social_finishable_queued_count();
-        if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0)) {
+        if ($remaining > 0 && !$this->social_queue_waiting_for_pack_mate() && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0 || $this->social_queued_forced_pack_count() > 0)) {
             $delay = $finishable > 0 ? 5 : 60;
             if ($instagram_spacing_wait > 0) {
                 $delay = max($delay, $instagram_spacing_wait);
@@ -992,8 +1004,9 @@ trait TechnoRapper_AI_Wire_Social {
         if ($platform_sql === '') {
             return array();
         }
+        $forced_first = "(EXISTS (SELECT 1 FROM {$wpdb->postmeta} f WHERE f.post_id = {$wpdb->prefix}tr_ai_wire_social.post_id AND f.meta_key = '_tr_ai_wire_social_force_pack' AND f.meta_value IN ('carousel', 'collage'))) DESC, created_at ASC";
         if ($this->social_published_today() < $limit) {
-            return $wpdb->get_results("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'{$platform_sql} ORDER BY created_at ASC LIMIT 25", ARRAY_A);
+            return $wpdb->get_results("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'{$platform_sql} ORDER BY {$forced_first} LIMIT 25", ARRAY_A);
         }
         $queued_platform_sql = $this->social_active_platform_sql('q');
         return $wpdb->get_results(
@@ -1011,8 +1024,14 @@ trait TechnoRapper_AI_Wire_Social {
                           AND m.meta_key = CONCAT('_tr_ai_wire_social_repost_', q.id)
                           AND m.meta_value = '1'
                     )
+                    OR EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} f
+                        WHERE f.post_id = q.post_id
+                          AND f.meta_key = '_tr_ai_wire_social_force_pack'
+                          AND f.meta_value IN ('carousel', 'collage')
+                    )
                )
-             ORDER BY q.created_at ASC
+             ORDER BY (EXISTS (SELECT 1 FROM {$wpdb->postmeta} f WHERE f.post_id = q.post_id AND f.meta_key = '_tr_ai_wire_social_force_pack' AND f.meta_value IN ('carousel', 'collage'))) DESC, q.created_at ASC
              LIMIT 25",
             ARRAY_A
         );
@@ -1076,6 +1095,23 @@ trait TechnoRapper_AI_Wire_Social {
         check_admin_referer('tr_ai_wire_run_social_queue');
         $this->enqueue_background_job('social');
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social'));
+        exit;
+    }
+
+    public function generate_social_pack_request() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to generate a social carousel or collage.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_generate_social_pack');
+        $kind = sanitize_key((string) ($_POST['pack_kind'] ?? ''));
+        if ($kind !== 'collage') {
+            $kind = 'carousel';
+        }
+        $this->enqueue_background_job('social_pack', array('pack_kind' => $kind));
+        wp_safe_redirect(add_query_arg(array(
+            'page' => 'tr-ai-wire-social',
+            'social_pack' => $kind,
+        ), admin_url('admin.php')));
         exit;
     }
 
@@ -1224,22 +1260,47 @@ trait TechnoRapper_AI_Wire_Social {
     private function claim_instagram_pack($lead, $limit, $settings) {
         global $wpdb;
         $table = $this->social_table();
-        $wanted = $this->social_slide_count($settings);
+        $lead_format = $this->social_row_explicit_pack($lead);
+        $wanted = $lead_format !== '' ? $this->social_pack_slide_count($settings) : $this->social_slide_count($settings);
+        $forced = $this->social_row_is_forced_pack($lead);
         $pack = array($lead);
         $seen = array((int) $lead['post_id'] => true);
         $slots_left = max(0, $limit - $this->social_published_today());
         $new_in_pack = ($this->social_post_published_today((int) $lead['post_id']) || $this->social_item_is_manual_repost($lead)) ? 0 : 1;
-        $candidates = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued' AND platform = %s AND id != %d ORDER BY created_at ASC LIMIT 25",
-            (string) $lead['platform'],
-            (int) $lead['id']
-        ), ARRAY_A);
+        if ($lead_format !== '') {
+            $modes = $lead_format === 'collage' ? array('collage') : array('pack', 'carousel');
+            $placeholders = implode(', ', array_fill(0, count($modes), '%s'));
+            $candidates = $wpdb->get_results($wpdb->prepare(
+                "SELECT s.* FROM {$wpdb->prefix}tr_ai_wire_social s
+                 INNER JOIN {$wpdb->postmeta} m
+                    ON m.post_id = s.post_id
+                   AND m.meta_key = '_tr_ai_wire_social_mode'
+                   AND m.meta_value IN ({$placeholders})
+                 WHERE s.status = 'queued' AND s.platform = %s AND s.id != %d
+                 ORDER BY s.created_at ASC
+                 LIMIT 25",
+                ...array_merge($modes, array((string) $lead['platform'], (int) $lead['id']))
+            ), ARRAY_A);
+        } else {
+            $candidates = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued' AND platform = %s AND id != %d ORDER BY created_at ASC LIMIT 25",
+                (string) $lead['platform'],
+                (int) $lead['id']
+            ), ARRAY_A);
+        }
         foreach ((array) $candidates as $candidate) {
             if (count($pack) >= $wanted) {
                 break;
             }
             $post_id = (int) $candidate['post_id'];
-            if (isset($seen[$post_id]) || $this->social_item_is_manual_repost($candidate) || !$this->social_row_is_pack($candidate, $settings)) {
+            if (isset($seen[$post_id]) || $this->social_item_is_manual_repost($candidate)) {
+                continue;
+            }
+            if ($lead_format !== '') {
+                if ($this->social_row_explicit_pack($candidate) !== $lead_format) {
+                    continue;
+                }
+            } elseif (!$this->social_row_is_pack($candidate, $settings)) {
                 continue;
             }
             $post = get_post($post_id);
@@ -1247,7 +1308,7 @@ trait TechnoRapper_AI_Wire_Social {
                 continue;
             }
             $is_new = !$this->social_post_published_today($post_id);
-            if ($is_new && $new_in_pack >= $slots_left) {
+            if (!$forced && $is_new && $new_in_pack >= $slots_left) {
                 continue;
             }
             $claimed = $wpdb->query($wpdb->prepare(
@@ -2689,6 +2750,217 @@ trait TechnoRapper_AI_Wire_Social {
             return true;
         }
         return $this->social_next_pack_kind($settings) !== '';
+    }
+
+    private function social_still_platforms() {
+        $platforms = array();
+        foreach (self::connected_social_platforms() as $platform) {
+            if ($platform === 'x' || $platform === 'instagram') {
+                $platforms[] = $platform;
+            }
+        }
+        return $platforms;
+    }
+
+    private function social_row_explicit_pack($row) {
+        $mode = sanitize_key((string) get_post_meta((int) ($row['post_id'] ?? 0), '_tr_ai_wire_social_mode', true));
+        if ($mode === 'collage') {
+            return 'collage';
+        }
+        if ($mode === 'pack' || $mode === 'carousel') {
+            return 'carousel';
+        }
+        return '';
+    }
+
+    private function social_row_is_forced_pack($row) {
+        $value = sanitize_key((string) get_post_meta((int) ($row['post_id'] ?? 0), '_tr_ai_wire_social_force_pack', true));
+        return $value === 'carousel' || $value === 'collage';
+    }
+
+    private function release_social_rows_to_queue($rows) {
+        global $wpdb;
+        $table = $this->social_table();
+        $now = current_time('mysql', true);
+        foreach ((array) $rows as $row) {
+            $id = (int) ($row['id'] ?? 0);
+            if ($id < 1) {
+                continue;
+            }
+            $wpdb->update($table, array(
+                'status' => 'queued',
+                'updated_at' => $now,
+            ), array(
+                'id' => $id,
+                'status' => 'processing',
+            ));
+        }
+    }
+
+    private function social_queue_waiting_for_pack_mate() {
+        global $wpdb;
+        $rows = $wpdb->get_results("SELECT DISTINCT post_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued' LIMIT 40", ARRAY_A);
+        if (!$rows) {
+            return false;
+        }
+        $counts = array('carousel' => array(), 'collage' => array());
+        foreach ($rows as $row) {
+            $format = $this->social_row_explicit_pack($row);
+            if ($format === '') {
+                return false;
+            }
+            $counts[$format][(int) $row['post_id']] = true;
+        }
+        foreach ($counts as $posts) {
+            if (count($posts) >= 2) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function social_queued_forced_pack_count() {
+        global $wpdb;
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social q
+             INNER JOIN {$wpdb->postmeta} m
+                ON m.post_id = q.post_id
+               AND m.meta_key = '_tr_ai_wire_social_force_pack'
+               AND m.meta_value IN ('carousel', 'collage')
+             WHERE q.status = 'queued'"
+        );
+    }
+
+    private function force_generate_social_pack($kind) {
+        $kind = $kind === 'collage' ? 'collage' : 'carousel';
+        if (!$this->social_distribution_ready() || !$this->social_still_platforms()) {
+            return new WP_Error('tr_ai_wire_social_pack', 'Turn on X or Instagram under Social settings before generating a ' . $kind . '. YouTube only receives Reels.');
+        }
+        $ids = $this->social_force_pack_candidates($this->social_pack_slide_count($this->settings()), $kind);
+        if (count($ids) < 2) {
+            $pending = $this->social_explicit_pack_pending_count($kind);
+            if ($pending >= 2) {
+                return new WP_Error('tr_ai_wire_social_pack', 'A ' . $kind . ' of ' . (string) $pending . ' articles is already queued. Use Process queued social posts now to publish it.');
+            }
+            $ready = count($ids);
+            $ready_label = $ready === 1 ? 'is 1' : ('are ' . (string) $ready);
+            return new WP_Error('tr_ai_wire_social_pack', 'A ' . $kind . ' needs at least 2 published articles that have not already been posted. There ' . $ready_label . ' ready right now.');
+        }
+        $batch = array();
+        foreach ($this->social_batch_ids() as $id) {
+            if (!in_array((int) $id, $ids, true)) {
+                $batch[] = (int) $id;
+            }
+        }
+        $this->social_batch_save($batch);
+        foreach ($ids as $post_id) {
+            $this->enqueue_social_article((int) $post_id, $kind);
+            update_post_meta((int) $post_id, '_tr_ai_wire_social_force_pack', $kind);
+        }
+        $this->social_mix_add($kind, 1);
+        $this->kick_social_queue(5);
+        return count($ids);
+    }
+
+    private function social_force_pack_candidates($limit, $kind) {
+        $limit = max(2, (int) $limit);
+        $kind = $kind === 'collage' ? 'collage' : 'carousel';
+        $ids = array();
+        $consider = function ($post_id) use (&$ids, $limit, $kind) {
+            $post_id = (int) $post_id;
+            if ($post_id < 1 || count($ids) >= $limit || in_array($post_id, $ids, true)) {
+                return;
+            }
+            if ($this->social_force_pack_candidate_ok($post_id, $kind)) {
+                $ids[] = $post_id;
+            }
+        };
+        foreach ($this->social_batch_ids() as $id) {
+            $consider($id);
+        }
+        if (count($ids) >= $limit) {
+            return $ids;
+        }
+        global $wpdb;
+        $queued = $wpdb->get_col("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued' GROUP BY post_id ORDER BY MIN(created_at) ASC LIMIT 40");
+        foreach ((array) $queued as $id) {
+            $consider($id);
+        }
+        if (count($ids) >= $limit) {
+            return $ids;
+        }
+        $recent = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 40,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'fields' => 'ids',
+            'no_found_rows' => true,
+        ));
+        foreach ((array) $recent as $id) {
+            $consider($id);
+        }
+        return $ids;
+    }
+
+    private function social_force_pack_candidate_ok($post_id, $kind) {
+        $post_id = (int) $post_id;
+        $post = get_post($post_id);
+        if (!$post || $post->post_status !== 'publish' || $post->post_type !== 'post') {
+            return false;
+        }
+        if (!get_post_meta($post_id, '_tr_ai_wire_queue_id', true)) {
+            return false;
+        }
+        $mode = sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        if ($mode === 'reel') {
+            return false;
+        }
+        if (!$this->social_article_clears_quality_gate($post_id)) {
+            return false;
+        }
+        $kind = $kind === 'collage' ? 'collage' : 'carousel';
+        $already = ($kind === 'collage' && $mode === 'collage') || ($kind === 'carousel' && ($mode === 'pack' || $mode === 'carousel'));
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, post_id, status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d",
+            $post_id
+        ), ARRAY_A);
+        $queued = 0;
+        foreach ((array) $rows as $row) {
+            $status = sanitize_key((string) ($row['status'] ?? ''));
+            if (in_array($status, array('published', 'processing', 'needs_review'), true)) {
+                return false;
+            }
+            if ($status === 'queued') {
+                $queued++;
+                if ($this->social_item_is_manual_repost($row)) {
+                    return false;
+                }
+            }
+        }
+        if ($already && $queued > 0) {
+            return false;
+        }
+        return true;
+    }
+
+    private function social_explicit_pack_pending_count($kind) {
+        $kind = $kind === 'collage' ? 'collage' : 'carousel';
+        $modes = $kind === 'collage' ? array('collage') : array('pack', 'carousel');
+        global $wpdb;
+        $placeholders = implode(', ', array_fill(0, count($modes), '%s'));
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(DISTINCT s.post_id) FROM {$wpdb->prefix}tr_ai_wire_social s
+             INNER JOIN {$wpdb->postmeta} m
+                ON m.post_id = s.post_id
+               AND m.meta_key = '_tr_ai_wire_social_mode'
+               AND m.meta_value IN ({$placeholders})
+             WHERE s.status = 'queued'",
+            ...$modes
+        ));
     }
 
     private function store_social_jpeg($post, $bytes, $headline, $copy, $variant, $suffix = '', $layout = null) {
@@ -4199,7 +4471,15 @@ trait TechnoRapper_AI_Wire_Social {
             'updated_at' => current_time('mysql', true),
         ), array('id' => $id));
         if ($status === 'published' && $row) {
-            delete_post_meta((int) $row['post_id'], '_tr_ai_wire_social_repost_' . $id);
+            $post_id = (int) $row['post_id'];
+            delete_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id);
+            $open = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND status IN ('queued', 'processing')",
+                $post_id
+            ));
+            if ($open < 1) {
+                delete_post_meta($post_id, '_tr_ai_wire_social_force_pack');
+            }
         }
     }
 
@@ -4481,6 +4761,10 @@ trait TechnoRapper_AI_Wire_Social {
             </style>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <?php if (isset($_GET['social_ran'])) : ?><div class="notice notice-success is-dismissible"><p><?php echo ((int) $_GET['social_ran'] > 0) ? 'Processed queued social posts. Refresh in a minute if a graphic is still generating.' : 'No queued social post could be processed now. If items are still waiting, check the daily limit, image budget, and WP-Cron.'; ?></p></div><?php endif; ?>
+            <?php if (isset($_GET['social_pack'])) : ?><div class="notice notice-info is-dismissible"><p><?php
+            $pack_kind = sanitize_key((string) $_GET['social_pack']) === 'collage' ? 'collage' : 'carousel';
+            echo esc_html('Generating a ' . $pack_kind . ' now. Stay on this page — the progress bar tracks the graphics and the post.');
+            ?></p></div><?php endif; ?>
             <?php if (isset($_GET['social_backfill'])) : ?><div class="notice notice-success is-dismissible"><p><?php
             $backfill = (int) $_GET['social_backfill'];
             $backfill_platform = sanitize_key((string) ($_GET['social_backfill_platform'] ?? 'x'));
@@ -4529,7 +4813,20 @@ trait TechnoRapper_AI_Wire_Social {
             if ($holding > 0 && $wanted > 1 && $holding < $wanted) {
                 echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' for the next pack of ' . esc_html((string) $wanted);
             }
-            ?>. Change the counts under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Process now can ship a leftover pack of 2 or more articles before a carousel is full. A single leftover stays held for the next pack. Collages stay off until Collage posts per day is at least 1.</p>
+            ?>. Change the counts under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Automatic carousels and collages wait until 4, 5, or 6 articles are held and a daily slot is left. Reels fill first, then carousels, then collages. Collage posts per day defaults to 0, so a collage does not start on its own. One leftover article stays held for the next pack.</p>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 8px 8px 0;display:inline-block;">
+                <input type="hidden" name="action" value="tr_ai_wire_generate_social_pack">
+                <input type="hidden" name="pack_kind" value="carousel">
+                <?php wp_nonce_field('tr_ai_wire_generate_social_pack'); ?>
+                <?php submit_button('Generate carousel now', 'primary', 'submit', false); ?>
+            </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;display:inline-block;">
+                <input type="hidden" name="action" value="tr_ai_wire_generate_social_pack">
+                <input type="hidden" name="pack_kind" value="collage">
+                <?php wp_nonce_field('tr_ai_wire_generate_social_pack'); ?>
+                <?php submit_button('Generate collage now', 'primary', 'submit', false); ?>
+            </form>
+            <p class="description">These skip the daily mix and that wait. Each button packs at least 2 stories that have not already been posted: held articles first, then queued stories, then recent articles with no social post. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. Instagram still waits out the 3-hour gap after the last Instagram post.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);

@@ -4249,6 +4249,267 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array('carousel' => 0, 'collage' => 1, 'single' => 0, 'reel' => 0), $this->invoke_private('social_mix_today'));
     }
 
+    public function test_generate_carousel_now_packs_queued_singles_when_the_mix_is_off() {
+        $this->onboard_social(array('instagram'));
+        $ids = array();
+        for ($i = 1; $i <= 2; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Single waiting ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 300 + $i);
+            $this->fire_social_publish($post_id);
+            $ids[] = $post_id;
+        }
+        global $wpdb;
+        $this->assertSame(2, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'"));
+        $this->assertSame('single', (string) get_post_meta($ids[0], '_tr_ai_wire_social_mode', true));
+        $queued = $this->invoke_private('force_generate_social_pack', array('carousel'));
+        $this->assertSame(2, $queued);
+        foreach ($ids as $post_id) {
+            $this->assertSame('pack', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+            $this->assertSame('carousel', (string) get_post_meta($post_id, '_tr_ai_wire_social_force_pack', true));
+        }
+        $this->assertSame(2, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued' AND platform = 'instagram'"));
+        $this->assertSame(1, $this->invoke_private('social_mix_today')['carousel']);
+    }
+
+    public function test_generate_collage_now_ships_a_held_batch_while_carousel_quota_remains() {
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+            'social_slide_count' => 5,
+            'social_daily_limit' => 10,
+        )), false);
+        $ids = array();
+        for ($i = 1; $i <= 3; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Held for collage ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 320 + $i);
+            $this->fire_social_publish($post_id);
+            $ids[] = $post_id;
+        }
+        global $wpdb;
+        $this->assertCount(3, $this->invoke_private('social_batch_ids'));
+        $this->assertSame(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+        $queued = $this->invoke_private('force_generate_social_pack', array('collage'));
+        $this->assertSame(3, $queued);
+        $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $this->assertSame(6, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'"));
+        foreach ($ids as $post_id) {
+            $this->assertSame('collage', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+            $platforms = $wpdb->get_col($wpdb->prepare("SELECT platform FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d ORDER BY platform ASC", $post_id));
+            $this->assertSame(array('instagram', 'x'), $platforms);
+        }
+        $this->assertSame(1, $this->invoke_private('social_mix_today')['collage']);
+        $again = $this->invoke_private('force_generate_social_pack', array('collage'));
+        $this->assertTrue(is_wp_error($again));
+        $this->assertStringContainsString('already queued', $again->get_error_message());
+    }
+
+    public function test_generate_pack_refuses_one_article_and_leaves_it_held() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_carousel_daily_limit' => 3,
+            'social_collage_daily_limit' => 1,
+            'social_single_daily_limit' => 0,
+            'social_slide_count' => 5,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Only one story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 340);
+        $this->fire_social_publish($post_id);
+        $result = $this->invoke_private('force_generate_social_pack', array('carousel'));
+        $this->assertTrue(is_wp_error($result));
+        $this->assertStringContainsString('at least 2', $result->get_error_message());
+        $this->assertSame(array($post_id), $this->invoke_private('social_batch_ids'));
+        global $wpdb;
+        $this->assertSame(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+    }
+
+    public function test_generate_pack_does_not_reuse_an_article_already_posted() {
+        $this->onboard_social(array('instagram'));
+        $posted = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Already live',
+        ));
+        update_post_meta($posted, '_tr_ai_wire_queue_id', 350);
+        $fresh = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Not posted yet',
+        ));
+        update_post_meta($fresh, '_tr_ai_wire_queue_id', 351);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $posted,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $result = $this->invoke_private('force_generate_social_pack', array('carousel'));
+        $this->assertTrue(is_wp_error($result));
+        $this->assertSame('', (string) get_post_meta($fresh, '_tr_ai_wire_social_mode', true));
+        $this->assertSame(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+    }
+
+    public function test_forced_pack_claims_same_format_siblings_when_mix_slide_count_is_one() {
+        $this->onboard_social(array('instagram'));
+        $settings = get_option(TechnoRapper_AI_Wire::OPTION, array());
+        $this->assertSame(1, $this->invoke_private('social_slide_count', array($settings)));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $rows = array();
+        foreach (array('collage', 'collage', 'pack', 'pack') as $index => $mode) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Packed ' . $mode . ' ' . (string) $index,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_social_mode', $mode);
+            update_post_meta($post_id, '_tr_ai_wire_social_force_pack', $mode === 'collage' ? 'collage' : 'carousel');
+            $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+                'post_id' => $post_id,
+                'platform' => 'instagram',
+                'status' => 'queued',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ));
+            $rows[] = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $post_id), ARRAY_A);
+        }
+        $collage = $this->invoke_private('claim_instagram_pack', array($rows[0], 10, $settings));
+        $this->assertCount(2, $collage);
+        $formats = array();
+        foreach ($collage as $row) {
+            $formats[] = (string) get_post_meta((int) $row['post_id'], '_tr_ai_wire_social_mode', true);
+        }
+        $this->assertSame(array('collage', 'collage'), $formats);
+    }
+
+    public function test_a_lone_forced_carousel_stays_queued_instead_of_posting_as_a_still() {
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Lonely carousel story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 360);
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'pack');
+        update_post_meta($post_id, '_tr_ai_wire_social_force_pack', 'carousel');
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $called = false;
+        add_filter('pre_http_request', function () use (&$called) {
+            $called = true;
+            return new WP_Error('should-not-run', 'A one-article carousel must not call out.');
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $this->assertFalse($called);
+        $this->assertSame('queued', (string) $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $post_id)));
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
+    }
+
+    public function test_forced_collage_publishes_one_grid_when_the_daily_mix_is_singles_only() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render a collage.');
+        }
+        $this->onboard_social(array('instagram'));
+        $settings = get_option(TechnoRapper_AI_Wire::OPTION, array());
+        $this->assertSame(1, $this->invoke_private('social_slide_count', array($settings)));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $post_ids = array();
+        foreach (array('Grid story one', 'Grid story two') as $index => $headline) {
+            $attachment_id = $this->create_social_jpeg_attachment();
+            if ($attachment_id < 1) {
+                $this->markTestSkipped('GD and uploads are required to render a collage.');
+            }
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => $headline,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 370 + $index);
+            update_post_meta($post_id, '_tr_ai_wire_social_mode', 'collage');
+            update_post_meta($post_id, '_tr_ai_wire_social_force_pack', 'collage');
+            update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+            update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+                'hook' => $headline,
+                'on_image_headline' => $headline,
+                'x' => $headline,
+                'instagram' => $headline,
+                'instagram_alt' => $headline,
+                'cta' => 'Read the full stories',
+                'hashtags' => array('tech'),
+            )));
+            $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+                'post_id' => $post_id,
+                'platform' => 'instagram',
+                'status' => 'queued',
+                'image_attachment_id' => $attachment_id,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ));
+            $post_ids[] = $post_id;
+        }
+        $carousel_parents = 0;
+        $single_images = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$carousel_parents, &$single_images) {
+            $url = (string) $url;
+            if (strpos($url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Collage should reuse cached copy and graphics.');
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos($url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-collage-media'));
+            }
+            if (strpos($url, '/media') !== false) {
+                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
+                if (($body['media_type'] ?? '') === 'CAROUSEL') {
+                    $carousel_parents++;
+                }
+                if (!empty($body['image_url']) && empty($body['is_carousel_item'])) {
+                    $single_images++;
+                }
+                return $this->mock_http_ok(array('id' => 'ig-collage-container'));
+            }
+            if (strpos($url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos($url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/collage/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $rows = $wpdb->get_results("SELECT post_id, status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' ORDER BY post_id ASC", ARRAY_A);
+        $this->assertCount(2, $rows);
+        foreach ($rows as $row) {
+            $this->assertSame('published', $row['status']);
+            $this->assertSame('ig-collage-media', $row['remote_id']);
+        }
+        $this->assertSame(0, $carousel_parents);
+        $this->assertSame(1, $single_images);
+        $this->assertSame('', (string) get_post_meta($post_ids[0], '_tr_ai_wire_social_force_pack', true));
+    }
+
     public function test_x_keys_and_tokens_sign_oauth1_requests() {
         $credentials = array(
             'x_api_key' => 'api-key',
@@ -6041,6 +6302,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('name="regenerate_image"', $html);
         $this->assertStringContainsString('Process queued social posts now', $html);
         $this->assertStringContainsString('tr_ai_wire_run_social_queue', $html);
+        $this->assertStringContainsString('Generate carousel now', $html);
+        $this->assertStringContainsString('Generate collage now', $html);
+        $this->assertStringContainsString('name="pack_kind" value="carousel"', $html);
+        $this->assertStringContainsString('name="pack_kind" value="collage"', $html);
         $this->assertStringNotContainsString('Regenerate graphic and post again', $html);
     }
 

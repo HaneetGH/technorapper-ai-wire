@@ -24,6 +24,16 @@ trait TechnoRapper_AI_Wire_Jobs {
             check_ajax_referer('tr_ai_wire_run_social_queue');
             wp_send_json_success($this->public_job($this->enqueue_background_job('social')));
         }
+        if ($job_action === 'tr_ai_wire_generate_social_pack') {
+            check_ajax_referer('tr_ai_wire_generate_social_pack');
+            $pack_kind = sanitize_key(wp_unslash($_POST['pack_kind'] ?? ''));
+            if ($pack_kind !== 'collage') {
+                $pack_kind = 'carousel';
+            }
+            wp_send_json_success($this->public_job($this->enqueue_background_job('social_pack', array(
+                'pack_kind' => $pack_kind,
+            ))));
+        }
         if ($job_action === 'tr_ai_wire_retry_social_item') {
             check_ajax_referer('tr_ai_wire_retry_social_item_' . $item_id);
             if (empty($_POST['confirmed_not_published'])) {
@@ -118,6 +128,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                 'tr_ai_wire_run_now',
                 'tr_ai_wire_retry_item',
                 'tr_ai_wire_run_social_queue',
+                'tr_ai_wire_generate_social_pack',
                 'tr_ai_wire_retry_social_item',
                 'tr_ai_wire_repair_home',
                 'tr_ai_wire_migrate_images',
@@ -335,6 +346,31 @@ trait TechnoRapper_AI_Wire_Jobs {
             } elseif ($job['kind'] === 'social') {
                 $processed = $this->drain_social_queue(15);
                 $this->finish_background_job('Social queue processed ' . (int) $processed . ' item' . ((int) $processed === 1 ? '' : 's') . '.', 'done');
+            } elseif ($job['kind'] === 'social_pack') {
+                $kind = (($job['pack_kind'] ?? '') === 'collage') ? 'collage' : 'carousel';
+                $this->note_background_progress(12, 'Choosing articles for a ' . $kind);
+                $queued = $this->force_generate_social_pack($kind);
+                if (is_wp_error($queued)) {
+                    $this->finish_background_job($queued->get_error_message(), 'error');
+                } else {
+                    $processed = 0;
+                    $max = 8;
+                    for ($i = 0; $i < $max; $i++) {
+                        $this->note_background_progress(30 + (int) (60 * (($i + 1) / $max)), 'Publishing the ' . $kind);
+                        $before = $this->social_queued_count();
+                        if ($before < 1) {
+                            break;
+                        }
+                        $this->process_social_queue();
+                        $after = $this->social_queued_count();
+                        if ($after < $before) {
+                            $processed++;
+                            continue;
+                        }
+                        break;
+                    }
+                    $this->finish_background_job('Queued a ' . (int) $queued . '-article ' . $kind . '. Processed ' . (int) $processed . ' social post' . ((int) $processed === 1 ? '' : 's') . '.', 'done');
+                }
             } elseif ($job['kind'] === 'social_retry') {
                 $this->note_background_progress(20, 'Requeueing social post');
                 $ok = $this->requeue_social_item((int) $job['item_id'], !empty($job['regenerate']));
@@ -379,6 +415,7 @@ trait TechnoRapper_AI_Wire_Jobs {
             'kind' => sanitize_key($kind),
             'item_id' => absint($args['item_id'] ?? 0),
             'regenerate' => !empty($args['regenerate']),
+            'pack_kind' => sanitize_key((string) ($args['pack_kind'] ?? '')),
             'status' => 'queued',
             'percent' => 0,
             'message' => 'Queued. The page stays put while a background worker runs this.',
