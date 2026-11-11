@@ -175,7 +175,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 - Configure a provider-side project budget/rate limit as a second independent control.
 - Cost estimates depend on the model rates configured in the source. Verify current provider pricing and update the rate table before changing model IDs or pricing.
 - The optional web-search review adds search-tool and token charges.
-- RSS-derived featured-image URLs remain the article-image source. Social posts use a separate generated branded image (and, for Reels/Shorts, a spoken MP4). OpenAI image estimates are in [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). X credits, Instagram quota, YouTube quota, and Fal are in [What it costs to run](docs/PLATFORM-COSTS.md).
+- RSS featured images are downloaded into this site’s media library on publish, so the article image URL is hosted here. Social posts use a separate generated branded image (and, for Reels/Shorts, a spoken MP4). OpenAI image estimates are in [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md). X credits, Instagram quota, YouTube quota, and Fal are in [What it costs to run](docs/PLATFORM-COSTS.md).
 - If the API call or review fails, the item is held in the queue; inspect errors before retrying. Budget-held items are retried by later runs when budget becomes available.
 
 ## A/B experiments and analytics
@@ -241,7 +241,7 @@ Before production, configure test accounts and verify token scopes, app access, 
 ## Known limitations and operational caveats
 
 - The reviewer is an AI quality gate, not a fact-checking guarantee. Web corroboration can help but cannot certify accuracy.
-- Article featured images still use the RSS item's own photo URL (enclosure, media thumbnail, or `<img src>`); items with no such URL are skipped by the article pipeline. The separate social-distribution path creates a generated branded image after publish when a network is on and credentials are configured, and a spoken MP4 when Reels per day is above 0. See [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md), [What it costs to run](docs/PLATFORM-COSTS.md), and [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
+- Article featured images still come from the RSS item's own photo (enclosure, media thumbnail, or `<img src>`), but that file is copied into the WordPress media library so the published URL is this site’s. Items with no such URL are skipped by the article pipeline. A download failure is retried rather than hotlinked. The separate social-distribution path creates a generated branded image after publish when a network is on and credentials are configured, and a spoken MP4 when Reels per day is above 0. See [Image generation cost estimate](docs/IMAGE-GENERATION-COST.md), [What it costs to run](docs/PLATFORM-COSTS.md), and [Social Distribution Architecture](docs/SOCIAL-DISTRIBUTION-ARCHITECTURE.md). Auto-publish can be turned off. Existing Feedzy jobs/posts are not migrated.
 - WP-Cron is traffic-triggered unless backed by a host system cron.
 - Feed caching can delay discovery. Each run inspects up to 10 recent items per configured feed.
 - Plugin usage limits are local estimates, not account-wide API hard limits.

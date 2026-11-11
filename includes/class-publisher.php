@@ -15,11 +15,11 @@ trait TechnoRapper_AI_Wire_Publisher {
     }
 
     public function maybe_backfill_home_media() {
-        if (get_option('tr_ai_wire_home_media_21') === '1') {
+        if (get_option('tr_ai_wire_hosted_images_22') === '1') {
             return;
         }
         $this->repair_home_posts(40);
-        update_option('tr_ai_wire_home_media_21', '1', false);
+        update_option('tr_ai_wire_hosted_images_22', '1', false);
     }
 
     public function repair_home_posts($limit = 120) {
@@ -169,13 +169,34 @@ trait TechnoRapper_AI_Wire_Publisher {
             return;
         }
         $url = $this->source_image_url($item['source_body'] ?? '');
+        if ($url === '') {
+            $url = $this->upstream_image_url($post_id);
+        }
         if ($url === '' || !preg_match('#^https?://#i', $url)) {
             return;
         }
         $alt = sanitize_text_field($rewrite['featured_image_alt'] ?? ($rewrite['title'] ?? ''));
-        update_post_meta($post_id, '_tr_ai_wire_source_image', $url);
-        if ($alt !== '') {
+        $hosted = $this->host_source_image($url, $post_id, $alt, is_array($item) ? $item : array());
+        if (!is_wp_error($hosted) && (int) $hosted > 0) {
+            update_post_meta($post_id, '_tr_ai_wire_source_image', $url);
+            if ($alt !== '') {
+                update_post_meta($post_id, '_tr_ai_wire_featured_image_alt', $alt);
+            }
+            $local = wp_get_attachment_url((int) $hosted);
+            if (is_string($local) && preg_match('#^https?://#i', $local)) {
+                $this->store_featured_image_seo($post_id, $local);
+            }
+            return;
+        }
+        if ($this->upstream_image_url($post_id) !== '' && $alt !== '') {
             update_post_meta($post_id, '_tr_ai_wire_featured_image_alt', $alt);
+        }
+    }
+
+    private function store_featured_image_seo($post_id, $url) {
+        $url = esc_url_raw($url);
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            return;
         }
         update_post_meta($post_id, 'rank_math_facebook_image', $url);
         update_post_meta($post_id, 'rank_math_twitter_image', $url);
@@ -184,12 +205,122 @@ trait TechnoRapper_AI_Wire_Publisher {
         update_post_meta($post_id, '_aioseo_og_image', $url);
     }
 
+    private function host_source_image($url, $post_id, $alt, $item = array()) {
+        $url = esc_url_raw($url);
+        $post_id = (int) $post_id;
+        if ($post_id <= 0 || $url === '' || !preg_match('#^https?://#i', $url)) {
+            return new WP_Error('tr_ai_wire_image_url', 'Source image URL is not downloadable.');
+        }
+        $max_bytes = 8 * MB_IN_BYTES;
+        $headers = array(
+            'Accept' => 'image/jpeg,image/png,image/webp,image/gif,image/*;q=0.8',
+        );
+        $source = esc_url_raw((string) ($item['source_url'] ?? ''));
+        if ($source !== '') {
+            $headers['Referer'] = $source;
+        }
+        $response = wp_safe_remote_get($url, array(
+            'timeout' => 20,
+            'redirection' => 3,
+            'limit_response_size' => $max_bytes,
+            'user-agent' => $this->feed_user_agent(),
+            'headers' => $headers,
+        ));
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        $code = (int) wp_remote_retrieve_response_code($response);
+        if ($code < 200 || $code >= 300) {
+            return new WP_Error('tr_ai_wire_image_http', 'Source image download returned HTTP ' . $code . '.');
+        }
+        $bytes = (string) wp_remote_retrieve_body($response);
+        if ($bytes === '') {
+            return new WP_Error('tr_ai_wire_image_empty', 'Source image download was empty.');
+        }
+        if (strlen($bytes) >= $max_bytes) {
+            return new WP_Error('tr_ai_wire_image_size', 'Source image is larger than 8 MB.');
+        }
+        $mime = strtolower((string) wp_remote_retrieve_header($response, 'content-type'));
+        $mime_parts = explode(';', $mime);
+        $mime = trim($mime_parts[0]);
+        if (function_exists('getimagesizefromstring')) {
+            $info = @getimagesizefromstring($bytes);
+            if (is_array($info) && !empty($info['mime'])) {
+                $mime = strtolower((string) $info['mime']);
+            }
+        }
+        $allowed = array(
+            'image/jpeg' => 'jpg',
+            'image/jpg' => 'jpg',
+            'image/pjpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+        );
+        if (!isset($allowed[$mime])) {
+            return new WP_Error('tr_ai_wire_image_type', 'Source image is not a supported photo type.');
+        }
+        $ext = $allowed[$mime];
+        $mime = ($ext === 'jpg') ? 'image/jpeg' : $mime;
+        $path = (string) wp_parse_url($url, PHP_URL_PATH);
+        $base = sanitize_file_name(basename($path));
+        if ($base === '' || strpos($base, '.') === false) {
+            $base = 'tr-ai-wire-' . $post_id . '.' . $ext;
+        } else {
+            $base = sanitize_file_name(preg_replace('/\.[^.]+$/', '.' . $ext, $base));
+        }
+        $upload = wp_upload_bits($base, null, $bytes);
+        if (!empty($upload['error'])) {
+            return new WP_Error('tr_ai_wire_image_upload', sanitize_text_field((string) $upload['error']));
+        }
+        $attachment_id = wp_insert_attachment(array(
+            'post_mime_type' => $mime,
+            'post_title' => $alt !== '' ? $alt : preg_replace('/\.[^.]+$/', '', $base),
+            'post_status' => 'inherit',
+            'post_parent' => $post_id,
+            'guid' => $upload['url'],
+        ), $upload['file'], $post_id, true);
+        if (is_wp_error($attachment_id) || !(int) $attachment_id) {
+            if (!empty($upload['file']) && file_exists($upload['file'])) {
+                @unlink($upload['file']);
+            }
+            return is_wp_error($attachment_id) ? $attachment_id : new WP_Error('tr_ai_wire_image_attach', 'WordPress did not store the hosted source image.');
+        }
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        $metadata = wp_generate_attachment_metadata((int) $attachment_id, $upload['file']);
+        if (is_array($metadata)) {
+            wp_update_attachment_metadata((int) $attachment_id, $metadata);
+        }
+        if ($alt !== '') {
+            update_post_meta((int) $attachment_id, '_wp_attachment_image_alt', $alt);
+        }
+        update_post_meta((int) $attachment_id, '_tr_ai_wire_hosted_source_image', '1');
+        set_post_thumbnail($post_id, (int) $attachment_id);
+        return (int) $attachment_id;
+    }
+
     private function upstream_image_url($post_id) {
         $url = esc_url_raw((string) get_post_meta((int) $post_id, '_tr_ai_wire_source_image', true));
         return preg_match('#^https?://#i', $url) ? $url : '';
     }
 
+    private function hosted_image_url($post_id) {
+        $thumb = $this->real_thumbnail_id($post_id);
+        if ($thumb <= 0) {
+            return '';
+        }
+        $local = wp_get_attachment_image_url($thumb, 'full');
+        if (!is_string($local) || $local === '') {
+            $local = wp_get_attachment_url($thumb);
+        }
+        return (is_string($local) && preg_match('#^https?://#i', $local)) ? $local : '';
+    }
+
     private function display_image_url($post_id) {
+        $hosted = $this->hosted_image_url($post_id);
+        if ($hosted !== '') {
+            return $hosted;
+        }
         $url = $this->upstream_image_url($post_id);
         if ($url === '') {
             return '';
@@ -304,6 +435,14 @@ trait TechnoRapper_AI_Wire_Publisher {
         $this->quarantine_item((int) $id, $reason, null, array(
             'wp_post_id' => null,
         ));
+    }
+
+    private function fail_item_without_hosted_image($id, $item) {
+        if ($this->source_image_url($item['source_body'] ?? '') !== '') {
+            $this->schedule_retry((int) $id, 'Could not download the source image onto this site.');
+            return;
+        }
+        $this->skip_item_without_image($id);
     }
 
     private function item_with_source_body($id, $item) {
@@ -711,7 +850,7 @@ trait TechnoRapper_AI_Wire_Publisher {
                     return;
                 }
                 wp_delete_post($existing_id, true);
-                $this->skip_item_without_image($id);
+                $this->fail_item_without_hosted_image($id, $item);
                 return;
             }
             $this->apply_seo_meta($existing_id, $rewrite);
@@ -778,7 +917,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);
         if (!$this->post_has_featured_image((int) $post_id)) {
             wp_delete_post((int) $post_id, true);
-            $this->skip_item_without_image($id);
+            $this->fail_item_without_hosted_image($id, $item);
             return;
         }
         $this->maybe_promote_post_status((int) $post_id, $s);

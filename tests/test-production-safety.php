@@ -19,6 +19,75 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         unset($_SERVER['REMOTE_ADDR']);
         add_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10, 2);
+        add_filter('pre_http_request', array($this, 'stub_source_image_http'), 1, 3);
+    }
+
+    public function stub_source_image_http($preempt, $args, $url) {
+        if ($preempt) {
+            return $preempt;
+        }
+        if (strpos((string) $url, 'cdn.example.com/photo') === false) {
+            return $preempt;
+        }
+        $jpeg = $this->fixture_jpeg_bytes();
+        if ($jpeg === '') {
+            return $preempt;
+        }
+        return array(
+            'headers' => array(
+                'content-type' => 'image/jpeg',
+            ),
+            'body' => $jpeg,
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'cookies' => array(),
+            'filename' => null,
+        );
+    }
+
+    private function fixture_jpeg_bytes() {
+        $bytes = $this->tiny_jpeg_bytes();
+        if (is_string($bytes) && $bytes !== '') {
+            return $bytes;
+        }
+        if (!defined('DIR_TESTDATA')) {
+            return '';
+        }
+        foreach (array('/images/test-image.jpg', '/images/canola.jpg') as $rel) {
+            $path = DIR_TESTDATA . $rel;
+            if (is_readable($path)) {
+                $data = file_get_contents($path);
+                if (is_string($data) && $data !== '') {
+                    return $data;
+                }
+            }
+        }
+        return '';
+    }
+
+    private function assert_featured_image_is_hosted($post_id, $source_url = 'https://cdn.example.com/photo.jpg') {
+        $post_id = (int) $post_id;
+        $thumb = (int) get_post_thumbnail_id($post_id);
+        $this->assertGreaterThan(0, $thumb);
+        $hosted = wp_get_attachment_url($thumb);
+        $this->assertNotFalse($hosted);
+        $this->assertStringContainsString('/wp-content/uploads/', $hosted);
+        $this->assertStringNotContainsString('cdn.example.com', $hosted);
+        $this->assertSame($hosted, $this->invoke_private('display_image_url', array($post_id)));
+        $thumb_url = get_the_post_thumbnail_url($post_id);
+        $this->assertNotFalse($thumb_url);
+        $this->assertStringContainsString('/wp-content/uploads/', $thumb_url);
+        $this->assertStringNotContainsString('cdn.example.com', $thumb_url);
+        $html = get_the_post_thumbnail($post_id);
+        $this->assertStringContainsString('/wp-content/uploads/', $html);
+        $this->assertStringNotContainsString('cdn.example.com', $html);
+        $this->assertSame($hosted, get_post_meta($post_id, 'rank_math_facebook_image', true));
+        $this->assertSame($hosted, get_post_meta($post_id, 'rank_math_twitter_image', true));
+        $this->assertSame($hosted, get_post_meta($post_id, '_yoast_wpseo_opengraph-image', true));
+        $this->assertSame($hosted, get_post_meta($post_id, '_yoast_wpseo_twitter-image', true));
+        $this->assertSame($hosted, get_post_meta($post_id, '_aioseo_og_image', true));
+        $this->assertSame($source_url, get_post_meta($post_id, '_tr_ai_wire_source_image', true));
+        $this->assertSame('1', (string) get_post_meta($thumb, '_tr_ai_wire_hosted_source_image', true));
+        $this->assertSame($post_id, (int) get_post($thumb)->post_parent);
     }
 
     public function allow_moderation_in_tests($result, $text) {
@@ -1328,11 +1397,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains((int) $android->term_id, $cats);
         $this->assertNotContains((int) get_option('default_category'), $cats);
         $this->assertTrue(has_post_thumbnail((int) $posts[0]->ID));
-        $this->assertSame('https://cdn.example.com/photo.jpg', get_post_meta((int) $posts[0]->ID, '_tr_ai_wire_source_image', true));
-        $this->assertLessThan(0, (int) get_post_thumbnail_id((int) $posts[0]->ID));
-        $this->assertStringContainsString('https://cdn.example.com/photo.jpg', get_the_post_thumbnail((int) $posts[0]->ID));
-        $this->assertSame('https://cdn.example.com/photo.jpg', get_the_post_thumbnail_url((int) $posts[0]->ID));
-        $this->assertCount(0, get_children(array(
+        $this->assert_featured_image_is_hosted((int) $posts[0]->ID);
+        $this->assertCount(1, get_children(array(
             'post_parent' => (int) $posts[0]->ID,
             'post_type' => 'attachment',
             'numberposts' => 5,
@@ -1431,11 +1497,75 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1, $this->plugin->repair_home_posts(20));
         $this->assertContains((int) $apple->term_id, wp_get_post_categories($post_id));
         $this->assertTrue(has_post_thumbnail($post_id));
-        $this->assertSame('https://cdn.example.com/photo.jpg', get_post_meta($post_id, '_tr_ai_wire_source_image', true));
-        $this->assertLessThan(0, (int) get_post_thumbnail_id($post_id));
+        $this->assert_featured_image_is_hosted($post_id);
         $this->assertTrue(is_sticky($post_id));
         $this->assertSame('1', get_post_meta($post_id, '_tr_ai_wire_show_on_home', true));
         $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);
+    }
+
+    public function test_source_image_is_hosted_on_this_site() {
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-hosted-image',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ), array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'featured_image_alt' => 'Hosted chip photo',
+        ), array('verdict' => 'pass'), $this->draft_settings()));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assert_featured_image_is_hosted((int) $posts[0]->ID);
+        $this->assertSame('Hosted chip photo', get_post_meta((int) get_post_thumbnail_id((int) $posts[0]->ID), '_wp_attachment_image_alt', true));
+        $this->assertStringNotContainsString('cdn.example.com', get_the_post_thumbnail((int) $posts[0]->ID));
+    }
+
+    public function test_source_image_download_failure_retries() {
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            if (strpos((string) $url, 'cdn.example.com/photo') !== false) {
+                return new WP_Error('http_request_failed', 'cdn timeout');
+            }
+            return $preempt;
+        }, 0, 3);
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-image-fail',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ), array(
+            'title' => 'Bluetooth HDT could make wireless gadgets faster',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'category' => 'News',
+            'tags' => array(),
+        ), array('verdict' => 'pass'), TechnoRapper_AI_Wire::defaults()));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('retry_wait', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertStringContainsString('source image', strtolower((string) $row['error_text']));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => -1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(0, $posts);
     }
 
     public function test_item_without_source_image_is_skipped() {
