@@ -2260,14 +2260,7 @@ trait TechnoRapper_AI_Wire_Social {
         $single = min(10, max(0, (int) ($settings['social_single_daily_limit'] ?? 0)));
         $reel = min(10, max(0, (int) ($settings['social_reel_daily_limit'] ?? 0)));
         if (empty($settings['social_mix_saved'])) {
-            if ($format === 'single') {
-                $carousel = 0;
-                $collage = 0;
-                $reel = 0;
-                if ($single < 1) {
-                    $single = 2;
-                }
-            } elseif ($format === 'carousel') {
+            if ($format === 'carousel') {
                 if ($carousel < 1) {
                     $carousel = 3;
                 }
@@ -2286,6 +2279,12 @@ trait TechnoRapper_AI_Wire_Social {
                 if ($reel < 1) {
                     $reel = min(10, max(1, (int) ($settings['social_daily_limit'] ?? 10)));
                 }
+            }
+            // format=single is the stored default. Keep the numeric mix (carousel 3,
+            // single 2, collage 0) instead of throwing pack quotas away. That zeroing
+            // made every site post only singles until Social settings were saved.
+            if ($single < 1 && $carousel < 1 && $collage < 1 && $reel < 1) {
+                $single = 2;
             }
         }
         return array(
@@ -2605,18 +2604,15 @@ trait TechnoRapper_AI_Wire_Social {
         $settings = $this->settings();
         $wanted = $this->social_slide_count($settings);
         $left = $this->social_mix_remaining($settings);
-        if (!$force && count($ids) < $wanted) {
-            return false;
-        }
         $pack_kind = $this->social_next_pack_kind($settings);
-        $as_pack = $pack_kind !== '';
-        if (!$as_pack && !($allow_singles && $left['single'] > 0)) {
-            if (!$force) {
-                return false;
-            }
-            if (!$allow_singles) {
-                return false;
-            }
+        $count = count($ids);
+        // A carousel/collage needs at least two articles. Process now may ship a
+        // short pack (2+) before the configured slide count, but a single leftover
+        // stays held while pack quota remains — otherwise Instagram publishes it
+        // as a still and the mix looks like "singles only".
+        $as_pack = $pack_kind !== '' && $count >= 2 && ($force || $count >= $wanted);
+        if (!$as_pack && !($allow_singles && $left['single'] > 0 && $pack_kind === '')) {
+            return false;
         }
         $this->social_batch_save(array());
         $mode = $as_pack ? $pack_kind : 'single';
@@ -4514,7 +4510,7 @@ trait TechnoRapper_AI_Wire_Social {
             if ($holding > 0 && $wanted > 1 && $holding < $wanted) {
                 echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' for the next pack of ' . esc_html((string) $wanted);
             }
-            ?>. Change the counts under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Process now ships whatever is waiting even if a carousel is not full.</p>
+            ?>. Change the counts under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Process now can ship a leftover pack of 2 or more articles before a carousel is full. A single leftover stays held for the next pack. Collages stay off until Collage posts per day is at least 1.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);

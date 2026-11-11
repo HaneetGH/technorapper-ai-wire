@@ -141,6 +141,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'social_x_enabled' => in_array('x', $platforms, true) ? 1 : 0,
             'social_instagram_enabled' => in_array('instagram', $platforms, true) ? 1 : 0,
             'social_youtube_enabled' => in_array('youtube', $platforms, true) ? 1 : 0,
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 10,
         )), false);
         update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, $credentials, false);
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
@@ -3096,7 +3100,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     }
 
     public function test_social_queue_starts_only_after_publish_when_enabled() {
-        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array('social_distribution_enabled' => 1)), false);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 10,
+        )), false);
         update_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array(
             'x_user_access_token' => 'x-token',
             'instagram_user_access_token' => '',
@@ -3619,7 +3629,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $this->assertSame('single', $rejected['social_post_format']);
         $this->assertSame(5, $rejected['social_slide_count']);
-        $this->assertSame(1, $this->invoke_private('social_slide_count', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(5, $this->invoke_private('social_slide_count', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertSame(4, $this->invoke_private('social_slide_count', array($clean)));
         $this->assertArrayNotHasKey('social_pack_wait_minutes', $clean);
         $mix = $this->plugin->sanitize_settings(array(
@@ -3655,7 +3665,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(10, $clamped['social_carousel_daily_limit']);
         $this->assertSame(10, $clamped['social_collage_daily_limit']);
         $this->assertSame(10, $clamped['social_single_daily_limit']);
-        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 2, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(array('carousel' => 3, 'collage' => 0, 'single' => 2, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertSame(array('carousel' => 3, 'collage' => 1, 'single' => 4, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array($counts)));
         $reel_mix = $this->plugin->sanitize_settings(array(
             'social_mix_saved' => 1,
@@ -3919,6 +3929,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->onboard_social(array('instagram'));
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
             'social_post_format' => 'carousel',
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
             'social_slide_count' => 3,
             'social_daily_limit' => 10,
             'social_news_formats' => array('editorial_poster', 'weekly_recap'),
@@ -4031,6 +4043,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->onboard_social(array('x', 'instagram'));
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
             'social_post_format' => 'carousel',
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
             'social_slide_count' => 5,
             'social_daily_limit' => 10,
         )), false);
@@ -4078,6 +4092,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->onboard_social(array('instagram'));
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
             'social_post_format' => 'carousel',
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
             'social_slide_count' => 5,
         )), false);
         $post_ids = array();
@@ -4103,6 +4119,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->onboard_social(array('x', 'instagram'));
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
             'social_post_format' => 'carousel',
+            'social_mix_saved' => 1,
             'social_slide_count' => 5,
             'social_carousel_daily_limit' => 1,
             'social_single_daily_limit' => 3,
@@ -4155,6 +4172,60 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = " . (int) $post_id));
     }
 
+    public function test_default_mix_holds_articles_for_carousel_instead_of_posting_singles() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_instagram_enabled' => 1,
+            'social_x_enabled' => 0,
+            'social_youtube_enabled' => 0,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'First carousel story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 201);
+        $this->fire_social_publish($post_id);
+        $this->assertSame(array($post_id), $this->invoke_private('social_batch_ids'));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        global $wpdb;
+        $this->assertSame(0, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+        $this->assertFalse($this->invoke_private('flush_social_batch', array(true, true)));
+        $this->assertSame(array($post_id), $this->invoke_private('social_batch_ids'));
+    }
+
+    public function test_unsaved_mix_still_honors_collage_quota() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_distribution_enabled' => 1,
+            'social_instagram_enabled' => 1,
+            'social_x_enabled' => 0,
+            'social_youtube_enabled' => 0,
+            'social_mix_saved' => 0,
+            'social_post_format' => 'single',
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 1,
+            'social_single_daily_limit' => 2,
+            'social_slide_count' => 4,
+        )), false);
+        $this->assertSame('collage', $this->invoke_private('social_next_pack_kind', array(get_option(TechnoRapper_AI_Wire::OPTION, array()))));
+        $ids = array();
+        for ($i = 1; $i <= 4; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Collage story ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 210 + $i);
+            $this->fire_social_publish($post_id);
+            $ids[] = $post_id;
+        }
+        $this->assertSame(array(), $this->invoke_private('social_batch_ids'));
+        $this->assertSame('collage', (string) get_post_meta($ids[0], '_tr_ai_wire_social_mode', true));
+        global $wpdb;
+        $this->assertSame(4, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' AND status = 'queued'"));
+        $this->assertSame(array('carousel' => 0, 'collage' => 1, 'single' => 0, 'reel' => 0), $this->invoke_private('social_mix_today'));
+    }
+
     public function test_x_keys_and_tokens_sign_oauth1_requests() {
         $credentials = array(
             'x_api_key' => 'api-key',
@@ -4183,6 +4254,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->onboard_social(array('x'));
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
             'social_post_format' => 'carousel',
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
             'social_slide_count' => 5,
             'social_daily_limit' => 10,
         )), false);
@@ -4547,6 +4620,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->onboard_social(array('instagram'));
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
             'social_post_format' => 'reel',
+            'social_mix_saved' => 0,
             'social_slide_count' => 5,
             'social_carousel_daily_limit' => 2,
         )), false);
