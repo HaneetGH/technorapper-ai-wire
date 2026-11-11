@@ -344,9 +344,15 @@ trait TechnoRapper_AI_Wire_Jobs {
                     'item_error' => is_array($row) ? (string) ($row['error_text'] ?? '') : '',
                 ));
             } elseif ($job['kind'] === 'social') {
+                if (function_exists('set_time_limit')) {
+                    set_time_limit(600);
+                }
                 $processed = $this->drain_social_queue(15);
                 $this->finish_background_job('Social queue processed ' . (int) $processed . ' item' . ((int) $processed === 1 ? '' : 's') . '.', 'done');
             } elseif ($job['kind'] === 'social_pack') {
+                if (function_exists('set_time_limit')) {
+                    set_time_limit(600);
+                }
                 $kind = (($job['pack_kind'] ?? '') === 'collage') ? 'collage' : 'carousel';
                 $this->note_background_progress(12, 'Choosing articles for a ' . $kind);
                 $queued = $this->force_generate_social_pack($kind);

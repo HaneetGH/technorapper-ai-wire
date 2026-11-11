@@ -881,7 +881,7 @@ trait TechnoRapper_AI_Wire_Social {
                 }
                 continue;
             }
-            if ((string) ($row['platform'] ?? '') === 'instagram' && !$this->social_item_is_manual_repost($row)) {
+            if ((string) ($row['platform'] ?? '') === 'instagram' && !$this->social_item_is_manual_repost($row) && !$this->social_row_skips_instagram_spacing($row)) {
                 $wait = $this->instagram_spacing_wait_seconds();
                 if ($wait > 0) {
                     $instagram_spacing_wait = max($instagram_spacing_wait, $wait);
@@ -909,6 +909,9 @@ trait TechnoRapper_AI_Wire_Social {
                 continue;
             }
             if (count($pack) > 1) {
+                if (function_exists('set_time_limit')) {
+                    set_time_limit(600);
+                }
                 if ($row['platform'] === 'x') {
                     $this->finish_instagram_pack($pack, $this->publish_x_pack($pack, $credentials, $settings));
                 } elseif ($row['platform'] === 'instagram') {
@@ -976,6 +979,13 @@ trait TechnoRapper_AI_Wire_Social {
             }
             $this->kick_social_queue($delay);
         }
+    }
+
+    private function social_row_skips_instagram_spacing($row) {
+        if ($this->social_row_is_forced_pack($row)) {
+            return true;
+        }
+        return $this->social_row_explicit_pack($row) !== '';
     }
 
     private function instagram_stills_spacing_seconds() {
@@ -1117,7 +1127,7 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function drain_social_queue($max = 15) {
         if (function_exists('set_time_limit')) {
-            set_time_limit(180);
+            set_time_limit(600);
         }
         $this->flush_social_batch(true, true);
         $processed = 0;
@@ -2947,6 +2957,27 @@ trait TechnoRapper_AI_Wire_Social {
         return true;
     }
 
+    private function maybe_start_stuck_pack_job() {
+        if (!$this->social_distribution_ready()) {
+            return '';
+        }
+        $carousel = $this->social_explicit_pack_pending_count('carousel');
+        $collage = $this->social_explicit_pack_pending_count('collage');
+        if ($carousel < 2 && $collage < 2) {
+            return '';
+        }
+        $kind = $carousel >= 2 ? 'carousel' : 'collage';
+        $current = get_option(self::JOB_OPTION, array());
+        $busy = is_array($current)
+            && in_array((string) ($current['status'] ?? ''), array('queued', 'running'), true)
+            && (time() - (int) ($current['updated_at'] ?? 0)) < 180;
+        if (!$busy) {
+            $this->kick_social_queue(5);
+            $this->enqueue_background_job('social');
+        }
+        return $kind;
+    }
+
     private function social_explicit_pack_pending_count($kind) {
         $kind = $kind === 'collage' ? 'collage' : 'carousel';
         $modes = $kind === 'collage' ? array('collage') : array('pack', 'carousel');
@@ -4714,6 +4745,10 @@ trait TechnoRapper_AI_Wire_Social {
             echo '<p class="tr-ai-wire-social-caption">' . esc_html(wp_trim_words($caption, 36, '…')) . '</p>';
         }
         $status_copy = $this->social_status_copy($status);
+        $pack_format = ($status === 'queued') ? $this->social_row_explicit_pack($row) : '';
+        if ($pack_format !== '') {
+            $status_copy = 'Queued in a ' . $pack_format . '. The worker generates these graphics and posts them together. This does not wait out the gap between single Instagram posts.';
+        }
         if ($status_copy !== '') {
             echo '<p class="description">' . esc_html($status_copy) . '</p>';
         }
@@ -4738,6 +4773,7 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $rows = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY created_at DESC LIMIT 100", ARRAY_A);
         $settings = $this->settings();
+        $stuck_pack = $this->maybe_start_stuck_pack_job();
         $image_usage = (float) get_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'), 0);
         ?>
         <div class="wrap">
@@ -4759,6 +4795,7 @@ trait TechnoRapper_AI_Wire_Social {
                 .tr-ai-wire-social-status.is-needs_review{background:#f0c33c;}
                 .tr-ai-wire-social-status.is-processing{background:#c5d9ed;}
             </style>
+            <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. Single Instagram posts still wait 3 hours between each other.'); ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <?php if (isset($_GET['social_ran'])) : ?><div class="notice notice-success is-dismissible"><p><?php echo ((int) $_GET['social_ran'] > 0) ? 'Processed queued social posts. Refresh in a minute if a graphic is still generating.' : 'No queued social post could be processed now. If items are still waiting, check the daily limit, image budget, and WP-Cron.'; ?></p></div><?php endif; ?>
             <?php if (isset($_GET['social_pack'])) : ?><div class="notice notice-info is-dismissible"><p><?php
@@ -4826,7 +4863,7 @@ trait TechnoRapper_AI_Wire_Social {
                 <?php wp_nonce_field('tr_ai_wire_generate_social_pack'); ?>
                 <?php submit_button('Generate collage now', 'primary', 'submit', false); ?>
             </form>
-            <p class="description">These skip the daily mix and that wait. Each button packs at least 2 stories that have not already been posted: held articles first, then queued stories, then recent articles with no social post. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. Instagram still waits out the 3-hour gap after the last Instagram post.</p>
+            <p class="description">These skip the daily mix and that wait. Each button packs at least 2 stories that have not already been posted: held articles first, then queued stories, then recent articles with no social post. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. Single Instagram posts still wait 3 hours after the last Instagram post.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);

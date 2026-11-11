@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.67
+Stable tag: 0.2.68
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.68 =
+* A queued carousel or collage no longer sits on “Graphic not generated yet” for the 3-hour gap between single Instagram posts. Opening the Social queue starts the worker, which builds the graphics and posts that carousel or collage. Single stills still wait 3 hours.
 
 = 0.2.67 =
 * Social queue has Generate carousel now and Generate collage now. Each builds one post from at least two articles that have not already gone out, without waiting for the daily mix or for 4–6 stories to pile up. A one-article pack stays queued until a second article is available.
@@ -129,6 +132,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.68 =
+Open the Social queue if a carousel is sitting there with no graphics. The worker generates them and posts the carousel. Single Instagram posts still wait 3 hours.
 
 = 0.2.67 =
 Use Generate carousel now or Generate collage now on the Social queue when those formats are not posting on their own.
