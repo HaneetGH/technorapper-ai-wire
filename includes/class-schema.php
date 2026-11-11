@@ -38,6 +38,7 @@ trait TechnoRapper_AI_Wire_Schema {
             source_key char(64) NOT NULL,
             experiment_id varchar(64) NOT NULL DEFAULT 'editorial-v1',
             variant varchar(8) NOT NULL DEFAULT 'A',
+            voice varchar(16) NOT NULL DEFAULT '',
             feed_url text NOT NULL,
             feed_name varchar(190) NOT NULL DEFAULT '',
             source_guid text NOT NULL,

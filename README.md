@@ -50,8 +50,8 @@ flowchart TD
 |---|---|---|
 | Trigger | Configurable WP-Cron interval or an administrator-triggered run | A database-backed lock serializes runs |
 | Ingestion | Fetch configured RSS/Atom feeds and inspect up to 10 recent items per feed | HTTP(S) URL validation, source-key deduplication, source-size cap |
-| Assignment | Stable A/B assignment from the source key | Retries keep the same experiment and variant |
-| Generation | Writer produces title, lede, body, category and tags in a dry, family-friendly voice | Source content is treated as untrusted input |
+| Assignment | Stable A/B assignment from the source key; comic vs straight from the daily comic cap | Retries keep the same experiment, variant, and voice |
+| Generation | Writer produces title, lede, body, category and tags | Source content is treated as untrusted input |
 | Review | Separate model evaluates factual consistency, novelty, usefulness and policy flags | Fail closed: only explicit passing output proceeds |
 | Policy scan | Local profanity/slur list plus OpenAI Moderation on the article and on every social caption, Reel script, YouTube title/description/tags, and on-image line | Fail closed: violating copy is quarantined or held for review, never posted |
 | Draft or publish | Sanitized content is published automatically, or saved as a draft if Auto-publish is unchecked | Reject stays quarantined |
@@ -113,6 +113,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | Writer and reviewer models | Model selection for the two editorial passes |
 | Independent web search | Optional reviewer corroboration and associated search charges |
 | Editorial A/B experiment | Enables/disables stable A/B writer assignment and sets the experiment ID |
+| Comic posts per day | How many articles today (UTC) get the dry comic voice; the rest stay straight so you can compare them on A/B experiments. `0` turns comic off |
 | Social distribution | Opt-in switch, maximum daily article count (up to 10), social stills score floor (default 90), and monthly social-image budget |
 | Auto-publish | When checked, passing items go live with no draft step |
 | Show on homepage | On puts new posts on the home board (desk, image, sticky). Off keeps them on their own link and hides them from the home feed |
@@ -181,9 +182,10 @@ Before production, configure test accounts and verify token scopes, app access, 
 
 - Variant A uses the baseline writer prompt; Variant B uses the original editorial-desk prompt.
 - Assignment is deterministic per source item and approximately 50/50 over a sufficiently large sample. This is **not** visitor-level randomization or topic-paired testing.
-- **AI Wire → A/B experiments** reports queue outcomes for the selected experiment and first-party engaged reads from the last 30 days.
-- A published experiment article emits GA4 event `tr_ai_wire_article_view` with `experiment_id`, `variant`, `article_id`, `article_title`, `page_location` and `page_title`.
-- In GA4 Admin → Custom definitions, register event-scoped dimensions for `experiment_id`, `variant` and `article_id`. Use Explore to compare event counts, engaged sessions, engagement time and key events.
+- **Comic posts per day** is a separate mix: the first N articles written each UTC day get a restrained dry wink in the article and the social graphic; the rest stay straight. Assignment is stored on the queue row and post meta and kept on retry. `0` turns comic off.
+- **AI Wire → A/B experiments** reports queue outcomes and first-party engaged reads for writer variants A/B and for comic vs straight.
+- A published experiment article emits GA4 event `tr_ai_wire_article_view` with `experiment_id`, `variant`, `voice` (`comic` or `straight`), `article_id`, `article_title`, `page_location` and `page_title`.
+- In GA4 Admin → Custom definitions, register event-scoped dimensions for `experiment_id`, `variant`, `voice` and `article_id`. Use Explore to compare event counts, engaged sessions, engagement time and key events.
 - First-party reads are a lightweight proxy: the browser waits 3 seconds, requires a visible page, and counts the same article once per browser session. A signed daily token protects the REST endpoint against blind unauthenticated increments; it is not bot-proof or a substitute for analytics fraud filtering.
 - If browser session storage is unavailable, the first-party counter intentionally skips the read rather than risk duplicate counts.
 - GA4, Search Console and AdSense reports are **not** imported into WordPress. Use GA4/AdSense reporting and Search Console for revenue, organic impressions, clicks and CTR. No revenue or SEO outcome is estimated by this plugin.

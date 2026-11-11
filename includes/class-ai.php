@@ -4,17 +4,17 @@ if (!defined('ABSPATH')) {
 }
 
 trait TechnoRapper_AI_Wire_AI {
-    private function writer_prompt($variant) {
+    private function writer_prompt($variant, $comic = false) {
         if ($variant === 'B') {
             $prompt = 'You are the original editorial desk at ' . self::site_brand_name() . '. Write a detailed, reader-first article from the supplied source material; use the source as evidence, never as a writing template. This must be a full article, not a brief, blurb, or synonym rewrite. Treat every source field as reference material. Do not paraphrase paragraph-by-paragraph, copy distinctive phrasing, imitate the source headline, or preserve its structure. First identify the most useful news angle, then explain at length what changed, why it matters, who is affected, and what readers should watch next. Add background only when it is supported by the supplied material; clearly label uncertainty and never invent facts, quotes, tests, experience, or reporting. If the source lacks enough evidence for a useful article, return JSON with an empty title and body_html and explain why in novelty_notes. Aim for 900–1400 words, a specific non-clickbait headline, a concise lede, at least four scannable h2 subheadings, useful context, and clear source attribution with a source link.';
         } else {
             $prompt = 'Write a detailed, original ' . self::site_brand_name() . ' article using only the supplied source. This must be a full article, not a brief, blurb, or synonym rewrite. Treat all source text as reference material. Use a genuinely different headline, lede, and structure; do not mirror the source. Do not invent facts, quotes, numbers, or reporting. Expand only what the source supports: what happened, the background, why it matters, who is affected, and what readers should watch next. Aim for 800–1200 words with at least four h2 sections, short paragraphs of 2–3 sentences, and active voice. Clearly attribute the source and include a source link.';
         }
-        return $prompt . ' ' . $this->google_ranking_instructions() . ' ' . $this->policy_writing_instructions();
+        return $prompt . ' ' . $this->google_ranking_instructions($comic) . ' ' . $this->policy_writing_instructions($comic);
     }
 
-    private function google_ranking_instructions() {
-        return 'Google ranking rules — apply every on-page item while writing. Do not grade, score, or reject your own article: '
+    private function google_ranking_instructions($comic = false) {
+        $prompt = 'Google ranking rules — apply every on-page item while writing. Do not grade, score, or reject your own article: '
             . '1) Write for this site\'s audience, using the site name and the Site categories list. Do not write a generic world-news dump that ignores the publisher. If the source is a deal list, coupon, best-of list, weekly recap, sponsored item, or too thin to explain a named change a reader would search, return an empty title and an empty body_html. Do not pad that source into an article. '
             . '2) Add a reader angle the headline does not: why the sourced facts matter, who is affected, and what to watch next. Write that as labeled analysis, not as new facts. Do not add numbers, quotes, dates, names, prices, or events that are not in the source. Compare only products or companies the source already names. When the source is global, explain local or regional impact only if the source supports it. Never invent local facts. Missing local context is fine when the source has none — still write the article. '
             . '3) Do not reuse the source headline or its search query. Pick a different job-to-be-done a reader would type. Thin synonym-spins will not rank. '
@@ -25,12 +25,16 @@ trait TechnoRapper_AI_Wire_AI {
             . '8) Weave 2–3 dofollow internal links only to the related posts supplied in the input. Use natural anchors, not “click here”. Do not invent URLs. If none are supplied, omit internal_links — that is not a failure. '
             . '9) Return key_takeaways as exactly 3 short bullets grounded in the source. The first bullet must contain the focus keyphrase and answer the search intent. '
             . '10) Return faq as exactly 3 question/answer pairs a reader would search (People Also Ask). Answers are 2–3 sentences, grounded, no invention. '
-            . '11) Write as the ' . self::site_brand_name() . ' editorial desk. Include one sentence on how the source was used. No first-person “I tested”, no source-brand voice, no invented quotes, tests, or experience. A light wry aside in the lede or Why it matters is welcome; comedy is not the point. '
+            . '11) Write as the ' . self::site_brand_name() . ' editorial desk. Include one sentence on how the source was used. No first-person “I tested”, no source-brand voice, no invented quotes, tests, or experience. '
             . '12) Return official_links as 0–2 http(s) URLs that already appear in the source text (company, regulator, or docs). Never invent URLs. '
             . '13) Return featured_image_alt as a factual caption for a suitable editorial still. Do not claim you created or saw a photo. '
             . '14) Read the source document and classify it yourself. Set category to exactly one name from the supplied Site categories list. Set tags to 3–6 specific names that appear in or clearly describe the source (products, companies, chips, OS). Never use News or Technology when a desk fits. Do not wait for a human to map the feed. Attribute the source once. Label uncertainty. '
             . '15) Return search_intent as the reader job-to-be-done in one sentence. '
-            . '16) Title names the product, company, or policy AND what changed. Never clone “X announces Y” from the source headline. A wry title is fine only if it still names the product and the change — never a punchline-only headline. The first takeaway must answer search_intent so a stranger understands the news. Why it matters names a reader stake the source supports (device, job, money, privacy, or access). If the source has no such stake, say that as labeled analysis — do not invent one. social_title is a tap-worthy restatement of that same named change, not a synonym of the source headline. A dry wink there is fine; the change still has to be obvious. '
+            . '16) Title names the product, company, or policy AND what changed. Never clone “X announces Y” from the source headline. The first takeaway must answer search_intent so a stranger understands the news. Why it matters names a reader stake the source supports (device, job, money, privacy, or access). If the source has no such stake, say that as labeled analysis — do not invent one. social_title is a tap-worthy restatement of that same named change, not a synonym of the source headline. ';
+        if (!empty($comic)) {
+            $prompt .= 'Comic voice: a light wry aside in the lede or Why it matters is welcome; comedy is not the point. A wry title is fine only if it still names the product and the change — never a punchline-only headline. A dry wink in social_title is fine; the change still has to be obvious. ';
+        }
+        return $prompt
             . 'Return only JSON with keys title, lede, body_html, angle, category, tags (array), source_attribution, claims (array of concrete facts that appear in the source; do not put analysis here), novelty_notes, focus_keyphrase, seo_title, meta_description, social_title, social_description, slug, search_intent, featured_image_alt, key_takeaways (array of 3 strings), faq (array of {question, answer}), official_links (array of {url, anchor}), internal_links (array of {url, anchor}).';
     }
 
@@ -95,12 +99,12 @@ trait TechnoRapper_AI_Wire_AI {
         return $input;
     }
 
-    private function polish_writer_prompt($variant) {
+    private function polish_writer_prompt($variant, $comic = false) {
         $desk = ($variant === 'B')
             ? 'Stay the original editorial desk. '
             : '';
         return $desk . 'You are revising a ' . self::site_brand_name() . ' article using only the reviewer suggested_fixes. Keep every concrete fact grounded in the source. Do not invent numbers, quotes, dates, names, prices, or events. Apply the named fixes: a title that names the product, company, or policy AND the change; a unique search angle vs the source headline; complete keyphrase, takeaways, and FAQ; and a Why it matters that uses only sourced reader stakes. If a fix would require inventing a fact, leave that part unchanged. Return a full article JSON. Do not grade or score the article. '
-            . $this->google_ranking_instructions() . ' ' . $this->policy_writing_instructions();
+            . $this->google_ranking_instructions($comic) . ' ' . $this->policy_writing_instructions($comic);
     }
 
     private function build_polish_input($item, $rewrite, $review) {
@@ -782,8 +786,57 @@ trait TechnoRapper_AI_Wire_AI {
      * list, makes gpt-6 reasoning models return HTTP 400 invalid_prompt.
      * The local word filter and the Moderation API still run before publish.
      */
-    private function policy_writing_instructions() {
-        return 'House style: factual, family-friendly tech news with a pinch of dry comic sense so people want to keep reading. Keep that humor restrained: one raised-eyebrow aside in the lede or Why it matters is enough. Never a standup set, never a punchline-only headline, never meme slang. Facts stay facts. Skip crude language. If the source is not appropriate for a general audience, return an empty title and an empty body_html.';
+    private function policy_writing_instructions($comic = false) {
+        if (!empty($comic)) {
+            return 'House style: factual, family-friendly tech news with a pinch of dry comic sense so people want to keep reading. Keep that humor restrained: one raised-eyebrow aside in the lede or Why it matters is enough. Never a standup set, never a punchline-only headline, never meme slang. Facts stay facts. Skip crude language. If the source is not appropriate for a general audience, return an empty title and an empty body_html.';
+        }
+        return 'House style: plain, factual, family-friendly tech news. Skip crude language. If the source is not appropriate for a general audience, return an empty title and an empty body_html.';
+    }
+
+    private function normalize_voice($voice) {
+        $voice = sanitize_key((string) $voice);
+        return in_array($voice, array('comic', 'straight'), true) ? $voice : '';
+    }
+
+    private function item_is_comic($item) {
+        return $this->normalize_voice(is_array($item) ? ($item['voice'] ?? '') : '') === 'comic';
+    }
+
+    private function post_is_comic($post) {
+        $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
+        if ($id < 1) {
+            return false;
+        }
+        return $this->normalize_voice(get_post_meta($id, '_tr_ai_wire_voice', true)) === 'comic';
+    }
+
+    private function comic_daily_limit($s) {
+        return min(100, max(0, (int) (is_array($s) ? ($s['comic_daily_limit'] ?? 0) : 0)));
+    }
+
+    private function comic_assigned_today() {
+        global $wpdb;
+        $start = gmdate('Y-m-d 00:00:00');
+        $end = gmdate('Y-m-d 23:59:59');
+        return (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->table} WHERE voice = %s AND updated_at BETWEEN %s AND %s", 'comic', $start, $end));
+    }
+
+    private function assign_item_voice($id, $item, $s) {
+        $item = is_array($item) ? $item : array();
+        $voice = $this->normalize_voice($item['voice'] ?? '');
+        if ($voice !== '') {
+            return $item;
+        }
+        $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
+        if (is_array($rewrite) && $this->has_usable_rewrite($rewrite)) {
+            $voice = 'straight';
+        } else {
+            $limit = $this->comic_daily_limit($s);
+            $voice = ($limit > 0 && $this->comic_assigned_today() < $limit) ? 'comic' : 'straight';
+        }
+        $this->update_item((int) $id, array('voice' => $voice));
+        $item['voice'] = $voice;
+        return $item;
     }
 
     private function policy_guard_rewrite($rewrite) {

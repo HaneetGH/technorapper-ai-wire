@@ -57,7 +57,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.2.60 =
-* Articles and social graphics get a pinch of dry comic sense, kept restrained: one raised-eyebrow aside, never a punchline headline or a meme page. Photographs stay photoreal with a sly visual beat. Missing jokes do not block a 90 social score.
+* Comic posts per day (default 0) assigns a restrained dry wink to the first N articles each UTC day so you can A/B comic vs straight on the experiments page and in GA4 `voice`. The rest stay straight. Missing jokes do not block a 90 social score.
 
 = 0.2.59 =
 * Social copy follows Instagram distribution rules: named hooks, payoff in the caption, save/send asks, and no generic bait (“wait for it”, “you won’t believe”). Poison phrases are stripped before publish. Reels send is_ai_generated. Default mix prefers carousels (3) over single stills (2).
@@ -108,7 +108,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.2.60 =
-Writer, captions, and social photos now use a restrained dry wink. Family-friendly news first; jokes never block a complete article from social stills.
+Set Comic posts per day to mix a dry wink with straight copy, then compare them on A/B experiments. Family-friendly news first; jokes never block a complete article from social stills.
 
 = 0.2.59 =
 Captions now use named hooks and save/send asks, strip generic Instagram bait, and Reels disclose AI. New installs prefer 3 carousels and 2 singles.

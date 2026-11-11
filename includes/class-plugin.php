@@ -57,7 +57,7 @@ final class TechnoRapper_AI_Wire {
     const JOB_LOCK_OPTION = 'tr_ai_wire_background_job_lock';
     const JOB_HOOK = 'tr_ai_wire_background_job';
     const PROCESSING_LOCK_TTL = 2700;
-    const SCHEMA_VERSION = '9';
+    const SCHEMA_VERSION = '10';
     const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
     const QUARANTINE_TABLE_SUFFIX = 'tr_ai_wire_quarantine';
 

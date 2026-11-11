@@ -715,6 +715,7 @@ trait TechnoRapper_AI_Wire_Publisher {
                 return;
             }
             $this->apply_seo_meta($existing_id, $rewrite);
+            update_post_meta($existing_id, '_tr_ai_wire_voice', $this->item_is_comic($item) ? 'comic' : 'straight');
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->maybe_promote_post_status($existing_id, $s);
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
@@ -753,6 +754,7 @@ trait TechnoRapper_AI_Wire_Publisher {
                 '_tr_ai_wire_source_url' => esc_url_raw($item['source_url']),
                 '_tr_ai_wire_experiment_id' => sanitize_key($item['experiment_id'] ?? 'editorial-v1'),
                 '_tr_ai_wire_variant' => in_array(($item['variant'] ?? 'A'), array('A', 'B'), true) ? $item['variant'] : 'A',
+                '_tr_ai_wire_voice' => $this->item_is_comic($item) ? 'comic' : 'straight',
                 '_tr_ai_wire_source_guid' => sanitize_text_field($item['source_guid']),
                 '_tr_ai_wire_queue_id' => (int) $id,
                 '_tr_ai_wire_tenant_id' => $this->tenant_id_for_url($item['feed_url'] ?? ''),
@@ -894,6 +896,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         $payload = array(
             'experiment_id' => sanitize_key($experiment_id),
             'variant' => $variant,
+            'voice' => $this->post_is_comic($post_id) ? 'comic' : 'straight',
             'article_id' => (string) $post_id,
             'article_title' => get_the_title($post_id),
             'view_token' => hash_hmac('sha256', $post_id . '|' . gmdate('Y-m-d'), wp_salt('auth')),
