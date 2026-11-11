@@ -1697,22 +1697,22 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_copy_system_prompt($brand) {
         return 'You are the social editor and growth lead for ' . $brand . ', with a newsroom desk and ten years of Instagram, X, and YouTube Shorts distribution. '
-            . 'Repackage an already-published article. Do not write a new article. Use only supplied article fields plus the site context. '
+            . 'Repackage an already-published article as this desk’s take. Do not write a new article. Do not sound like a wire dump or a screenshot of another outlet. Use only supplied article fields plus the site context. '
             . 'Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake countdown deals or fake scarcity. '
-            . 'Clickbait is allowed and preferred when it is true: the job is stop the scroll and get the tap. '
+            . 'Stop the scroll with a specific name, number, or mechanism from the article — not generic clickbait. Instagram hides empty teases and repeated news-aggregator cards. '
             . 'Safe for a news brand: no nudity, and keep the wording suitable for a general audience. Return JSON only.';
     }
 
     private function social_copy_user_prompt($brand, $profile, $snapshot) {
-        $user = 'Write the package a growth editor would actually post to get views. Clickbait is on. Lead with a specific name, number, or twist; a reader stake (phone, job, money, privacy, or status); a curiosity gap the caption pays off; saveable bullets. Short. No throat-clearing. '
-            . 'You MAY use: you won’t believe, wait for it, must see, gone wrong, shocking, this changes everything, this will blow your mind — if the article supports it. Open a loop the post then pays off. '
-            . 'Keep the bait suitable for a general news audience. Never invent the twist. '
+        $user = 'Write the package a growth editor would actually post to get views, saves, and sends. Lead with a specific name, number, or mechanism from the article; a reader stake (phone, job, money, privacy, or status); then pay the curiosity off in the next lines with saveable bullets. Short. No throat-clearing. '
+            . 'Never use: you won’t believe, wait for it, wait until the end, must see, gone wrong, shocking, this changes everything, this will blow your mind. Those lines look like bait and Instagram withholds them. Open a loop only if the caption pays it off in the next sentence. '
+            . 'Write original wording, not a restated press blurb. Keep it suitable for a general news audience. Never invent the twist. '
             . 'on_image_headline: 4–9 words, scroll-stopping, a number only if it is in the article, short enough for 2–3 lines of huge type. on_image_subhead: one supporting line that makes them tap, max 10 words. '
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
             . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
-            . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line, 2–4 short lines that pay off the curiosity, then tell them the full story is in the bio. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
-            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway without opening the article. Three beats: hook in the first sentence; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
+            . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
+            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
             . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
             . 'youtube_description: two short lines that finish the lesson; do not include the URL or #Shorts (we append both). No hashtag dump. '
@@ -1843,6 +1843,7 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function sanitize_social_bullet_text($value) {
+        $value = $this->strip_social_poison_phrases($value);
         $value = preg_replace('/\s+/', ' ', wp_strip_all_tags((string) $value));
         $value = trim((string) $value);
         if ($value === '') {
@@ -1936,15 +1937,45 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function clip_social_text($value, $max) {
+        $value = $this->strip_social_poison_phrases($value);
         $value = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags((string) $value)));
         return $this->limit_social_chars($value, $max);
     }
 
     private function clip_social_block($value, $max) {
+        $value = $this->strip_social_poison_phrases($value);
         $value = trim(wp_strip_all_tags((string) $value));
         $value = preg_replace("/[ \t]+/", ' ', $value);
         $value = preg_replace("/\n{3,}/", "\n\n", $value);
         return $this->limit_social_chars($value, $max);
+    }
+
+    /**
+     * Instagram withholds generic bait. Strip it even if a model still emits it.
+     */
+    private function strip_social_poison_phrases($text) {
+        $text = (string) $text;
+        if ($text === '') {
+            return '';
+        }
+        $patterns = array(
+            '/\byou won[\'’]?t believe\b[,!.:]*/iu',
+            '/\bwait for it\b[,!.:]*/iu',
+            '/\bwait (?:until|till) the end\b[,!.:]*/iu',
+            '/\bmust see\b[,!.:]*/iu',
+            '/\bgone wrong\b[,!.:]*/iu',
+            '/\bthis changes everything\b[,!.:]*/iu',
+            '/\bthis will blow your mind\b[,!.:]*/iu',
+            '/\bblow(?:s|ing)? your mind\b[,!.:]*/iu',
+            '/\bshocking(?:ly)?\b[,!.:]*/iu',
+        );
+        $out = preg_replace($patterns, '', $text);
+        if (!is_string($out)) {
+            $out = $text;
+        }
+        $out = preg_replace('/[ \t]{2,}/', ' ', $out);
+        $out = preg_replace("/\n{3,}/", "\n\n", $out);
+        return is_string($out) ? trim($out) : trim($text);
     }
 
     private function limit_social_chars($value, $max) {
@@ -2216,11 +2247,11 @@ trait TechnoRapper_AI_Wire_Social {
                 $collage = 0;
                 $reel = 0;
                 if ($single < 1) {
-                    $single = 3;
+                    $single = 2;
                 }
             } elseif ($format === 'carousel') {
                 if ($carousel < 1) {
-                    $carousel = 2;
+                    $carousel = 3;
                 }
                 $collage = 0;
                 $reel = 0;
@@ -3807,6 +3838,8 @@ trait TechnoRapper_AI_Wire_Social {
             'video_url' => $video_url,
             'caption' => $caption,
             'share_to_feed' => 'true',
+            // Photoreal AI video + TTS must be disclosed. Stills do not send this flag.
+            'is_ai_generated' => 'true',
             'access_token' => $credentials['instagram_user_access_token'],
         ));
         if (is_wp_error($container) || empty($container['id'])) {
