@@ -57,7 +57,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.2.65 =
-* Hosted-image backfill no longer runs inside admin page loads, so wp-admin / AI Wire does not hang after update.
+* Hosted-image backfill no longer runs inside a page request (wp-admin or frontend WP-Cron). That timeout was causing WordPress’s “There has been a critical error on this website” screen. Repair homepage still does the work in the background.
 
 = 0.2.64 =
 * Auto-publish runs a pre-publish SEO and editorial gate (clickbait, placeholders, near-duplicates, brand identity). Existing score, similarity, and SEO settings still decide the rest. The plugin no longer prints a second NewsArticle JSON-LD graph.
@@ -123,7 +123,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.2.65 =
-Fixes wp-admin hanging after update. Image backfill now runs in the background.
+Fixes the WordPress critical-error / dashboard hang after update. Image backfill now runs in the background.
 
 = 0.2.64 =
 New posts must pass a pre-publish SEO and editorial gate. Daily cap, review score, and similarity settings are unchanged.
