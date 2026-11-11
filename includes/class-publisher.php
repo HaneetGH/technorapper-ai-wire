@@ -556,12 +556,109 @@ trait TechnoRapper_AI_Wire_Publisher {
             }
         }
         $lede = sanitize_text_field($rewrite['lede'] ?? '');
-        $body = wp_kses_post($rewrite['body_html'] ?? '');
+        $body = $this->strip_upstream_markup(wp_kses_post($rewrite['body_html'] ?? ''), $item);
         $content = '<p class="tr-ai-wire-byline"><em>By ' . esc_html(self::site_brand_name()) . ' editorial desk. This is an attributed analysis of the linked source, not original reporting or an independent test.</em></p>';
         $content .= ($lede ? '<p><strong>' . esc_html($lede) . '</strong></p>' : '') . $body;
-        $content .= '<p class="tr-ai-wire-source"><strong>Source:</strong> <a href="' . esc_url($item['source_url'] ?? '') . '" rel="nofollow noopener" target="_blank">' . esc_html($item['feed_name'] ?? 'Source') . '</a></p>';
-        $content .= '<p class="tr-ai-wire-method">How we used the source: facts, quotes, and numbers below come only from that link. We added structure, search intent, and reader context. We did not independently verify the reporting.</p>';
+        $source = esc_url($item['source_url'] ?? '');
+        if ($source !== '') {
+            $content .= '<p class="tr-ai-wire-source"><strong>Inspired by:</strong> <a href="' . $source . '" rel="nofollow noopener" target="_blank">' . esc_html($item['feed_name'] ?? 'Source') . '</a></p>';
+        }
+        $content .= '<p class="tr-ai-wire-method">How we used the source: facts, quotes, and numbers in this article come only from that Inspired by link. We added structure, search intent, and reader context. We did not independently verify the reporting.</p>';
         return $content;
+    }
+
+    private function upstream_link_hosts($item) {
+        $hosts = array();
+        $urls = array(
+            (string) ($item['source_url'] ?? ''),
+            $this->source_image_url($item['source_body'] ?? ''),
+        );
+        foreach ($urls as $url) {
+            $host = strtolower((string) wp_parse_url(esc_url_raw($url), PHP_URL_HOST));
+            if ($host === '') {
+                continue;
+            }
+            $hosts[$host] = true;
+            if (strpos($host, 'www.') === 0) {
+                $hosts[substr($host, 4)] = true;
+            } else {
+                $hosts['www.' . $host] = true;
+            }
+        }
+        return array_keys($hosts);
+    }
+
+    private function url_is_upstream($url, $item) {
+        $url = trim(html_entity_decode((string) $url, ENT_QUOTES, 'UTF-8'));
+        if ($url === '' || strpos($url, '#') === 0 || strpos($url, 'mailto:') === 0) {
+            return false;
+        }
+        $normalized = esc_url_raw($url);
+        if ($normalized === '') {
+            return false;
+        }
+        $source = esc_url_raw((string) ($item['source_url'] ?? ''));
+        if ($source !== '' && $this->url_without_fragment($normalized) === $this->url_without_fragment($source)) {
+            return true;
+        }
+        $host = strtolower((string) wp_parse_url($normalized, PHP_URL_HOST));
+        if ($host === '') {
+            return false;
+        }
+        $home = strtolower((string) wp_parse_url(home_url('/'), PHP_URL_HOST));
+        if ($home !== '' && ($host === $home || substr($host, -strlen('.' . $home)) === '.' . $home)) {
+            return false;
+        }
+        foreach ($this->upstream_link_hosts($item) as $upstream) {
+            if ($host === $upstream || substr($host, -strlen('.' . $upstream)) === '.' . $upstream) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function markup_has_upstream_url($markup, $item) {
+        if (!preg_match_all('/https?:\/\/[^"\'\s>]+/i', (string) $markup, $matches)) {
+            return false;
+        }
+        foreach ($matches[0] as $url) {
+            if ($this->url_is_upstream($url, $item)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function strip_upstream_markup($html, $item) {
+        $html = (string) $html;
+        if ($html === '' || !is_array($item)) {
+            return $html;
+        }
+        $html = preg_replace_callback('/<a\b([^>]*)>(.*?)<\/a>/is', function ($match) use ($item) {
+            if ($this->url_is_upstream($this->href_from_attributes($match[1]), $item) || $this->markup_has_upstream_url($match[1], $item)) {
+                return $match[2];
+            }
+            return $match[0];
+        }, $html);
+        $html = preg_replace_callback('/<img\b[^>]*>/i', function ($match) use ($item) {
+            return $this->markup_has_upstream_url($match[0], $item) ? '' : $match[0];
+        }, $html);
+        return is_string($html) ? $html : '';
+    }
+
+    private function href_from_attributes($attributes) {
+        if (preg_match('/\bhref\s*=\s*(["\'])(.*?)\1/i', (string) $attributes, $match)) {
+            return $match[2];
+        }
+        if (preg_match('/\bhref\s*=\s*([^\s>]+)/i', (string) $attributes, $match)) {
+            return trim($match[1], '"\'');
+        }
+        return '';
+    }
+
+    private function url_without_fragment($url) {
+        $parts = explode('#', (string) $url, 2);
+        return untrailingslashit(strtolower(trim($parts[0])));
     }
 
     private function generic_category_names() {

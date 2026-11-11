@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.61
+Stable tag: 0.2.62
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.62 =
+* Published articles keep the original feed URL only in the Inspired by credit at the end. Body links and images that pointed at the source site or its CDN are removed.
 
 = 0.2.61 =
 * RSS featured images are downloaded into the WordPress media library on publish, so article, schema, and social-preview URLs stay on this site instead of hotlinking the feed CDN.
@@ -109,6 +112,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.62 =
+Article bodies no longer link out to the RSS source. The original URL stays only in the Inspired by line at the end.
 
 = 0.2.61 =
 Article featured images are copied into your media library on publish so image URLs stay on your site instead of the RSS feed CDN.

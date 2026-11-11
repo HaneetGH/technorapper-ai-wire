@@ -1531,6 +1531,48 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('cdn.example.com', get_the_post_thumbnail((int) $posts[0]->ID));
     }
 
+    public function test_body_keeps_upstream_link_only_in_inspired_by() {
+        $related = self::factory()->post->create_and_get(array(
+            'post_status' => 'publish',
+            'post_title' => 'Older chipset explainer',
+            'post_name' => 'older-chipset-explainer',
+        ));
+        $id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-inspired',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ), array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Read <a href="https://example.com/story">the original</a> and <a href="https://www.example.com/other">more from them</a>. <img src="https://cdn.example.com/photo.jpg" alt="chip"> Official: <a href="https://www.apple.com/newsroom">Apple</a> and <a href="' . esc_url(get_permalink($related)) . '">our explainer</a>.</p>',
+        ), array('verdict' => 'pass'), $this->draft_settings()));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $content = (string) $posts[0]->post_content;
+        $this->assertStringContainsString('Inspired by:', $content);
+        $this->assertStringContainsString('class="tr-ai-wire-source"', $content);
+        $this->assertSame(1, substr_count($content, 'https://example.com/story'));
+        $this->assertMatchesRegularExpression('/<p class="tr-ai-wire-source">.*<a href="https:\/\/example\.com\/story"/s', $content);
+        $before = explode('tr-ai-wire-source', $content, 2);
+        $this->assertStringNotContainsString('href="https://example.com', $before[0]);
+        $this->assertStringNotContainsString('href="https://www.example.com', $before[0]);
+        $this->assertStringNotContainsString('cdn.example.com/photo.jpg', $content);
+        $this->assertStringContainsString('the original', $content);
+        $this->assertStringContainsString('https://www.apple.com/newsroom', $content);
+        $this->assertStringContainsString(get_permalink($related), $content);
+        $this->assertStringNotContainsString('<a href="https://example.com/story">the original</a>', $content);
+    }
+
     public function test_source_image_download_failure_retries() {
         add_filter('pre_http_request', function ($preempt, $args, $url) {
             if (strpos((string) $url, 'cdn.example.com/photo') !== false) {
@@ -1874,6 +1916,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('do not park a publishable article at 78-84', strtolower($reviewer));
         $this->assertStringContainsString('Title names the product, company, or policy AND what changed', $writer);
         $this->assertStringContainsString('Never clone', $writer);
+        $this->assertStringContainsString('Inspired by', $writer);
+        $this->assertStringContainsString('Never link to the source article', $writer);
         $this->assertStringContainsString('labeled analysis', strtolower($writer));
         $this->assertStringContainsString('that is not a failure', $writer);
         $this->assertStringContainsString('Never use News or Technology', $writer);
