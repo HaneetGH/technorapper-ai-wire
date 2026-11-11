@@ -1,1 +1,5 @@
 .phpunit.result.cache
+standalone/config.php
+standalone/data/articles/*.json
+standalone/data/articles/*.html
+!standalone/data/articles/.gitkeep

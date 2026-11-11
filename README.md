@@ -4,6 +4,8 @@ Open-source WordPress plugin (**GPLv2 or later**) that turns **your** RSS/Atom f
 
 It is not tied to one newsroom. Site name, desks, and the social poster brand mark come from the WordPress site that installed the plugin. You bring the feeds, OpenAI key, and social apps. See [Contributing](CONTRIBUTING.md) and [What it costs to run](docs/PLATFORM-COSTS.md).
 
+WordPress is the first install, not the only one. The `engine/` directory is a CMS-agnostic publish contract: after an article is approved, the same JSON can go to WordPress, a signed webhook (Ghost, Webflow, a custom app, or the `standalone/` reader), or a static HTML export. People with no CMS run `standalone/` as the public site. New social networks are not part of this path.
+
 Each item passes a writer and a separate editorial review. Thin blurbs, deal lists, coupons, best-of lists, and recaps are held. The reviewer also has to mark the story solid enough that readers would look for it. Items that clear those checks are **published automatically**. Uncheck **Auto-publish** if you want WordPress drafts instead.
 
 > AI review is a quality gate, not a guarantee of factual accuracy or legal clearance. Rejected items stay quarantined.
@@ -275,9 +277,26 @@ flowchart LR
 
 **Important:** CI now boots WordPress and tests selected database/API/queue paths, but it is not a substitute for a staging rollout. It does not reproduce your live hosting stack, reverse proxy/Cloudflare behavior, real feed providers, real OpenAI account limits, system-cron reliability, concurrent traffic under load, or browser analytics configuration. Complete the staging acceptance checklist and observe a controlled canary before calling a release production-validated.
 
+## Other CMS and no CMS
+
+Do not fork this repository to add Ghost or a custom site. The Writer, Reviewer, and queue stay here. Destinations consume `engine/` JSON.
+
+1. **WordPress plugin** (this zip) — people who already have WordPress. Optional **Webhook URL** and **Static export** on the AI Wire settings screen send the approved article after it is live.
+2. **Webhook** — POST the article JSON to any HTTPS endpoint. Header `X-AI-Wire-Signature: sha256=…` uses the shared secret. Point this at Ghost, Webflow, a custom CMS, or `standalone/public/ingest.php`.
+3. **Static export** — JSON + HTML in `wp-content/uploads/tr-ai-wire-export/` for GitHub Pages, S3, or copying into `standalone/data/articles/`.
+4. **Standalone reader** — people with no CMS. Copy `standalone/config.example.php` to `standalone/config.php`, set `ingest_secret`, then:
+
+```bash
+bash standalone/bin/serve.sh
+```
+
+Open http://127.0.0.1:8080. The engine tests (`php engine/tests/run.php`) do not boot WordPress.
+
+The editorial pipeline still runs inside WordPress on this release. The standalone app is the public host for operators who do not want a CMS theme. Extracting Writer/Reviewer out of WordPress is the next slice in this same repo.
+
 ## Plugin layout
 
-`technorapper-ai-wire.php` is the bootstrap (plugin header, loads, hooks). Behavior lives in `includes/`:
+`technorapper-ai-wire.php` is the bootstrap (plugin header, loads, hooks). Behavior lives in `includes/`. `engine/` has no WordPress functions and is what other hosts consume. `standalone/` is a public reader; it is not packed into the WordPress zip.
 
 | File | Responsibility |
 |---|---|
@@ -297,6 +316,10 @@ flowchart LR
 | `class-youtube-oauth.php` | Google Sign-in (OAuth) for YouTube uploads; API keys cannot upload |
 | `class-instagram-oauth.php` | Optional Meta Unified Login for Instagram |
 | `class-scores.php` | Score graph |
+| `class-jobs.php` | Background admin jobs and progress |
+| `class-cms.php` | After WordPress publish: webhook + static export via `engine/` |
+| `engine/` | Approved-article JSON, webhook, static HTML store |
+| `standalone/` | No-CMS public reader + `/ingest.php` |
 
 ## Development checks
 
@@ -304,6 +327,7 @@ Run syntax checks and WordPress integration tests locally (after installing the 
 
 ```bash
 find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+php engine/tests/run.php
 ```
 
 The repository's GitHub Actions workflow runs the same check across the PHP matrix. Merging to `main` tags `v{plugin Version}` when that tag is new, which builds the ZIP. Download the ZIP and checksum from the GitHub Release page, verify the checksum, then install the ZIP on staging. Keep secrets out of fixtures and logs, and test schema changes against a copy of production data before release.

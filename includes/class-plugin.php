@@ -19,8 +19,9 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Social_Reel;
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
+    use TechnoRapper_AI_Wire_Cms;
 
-    const VERSION = '0.2.59';
+    const VERSION = '0.2.60';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -101,6 +102,7 @@ final class TechnoRapper_AI_Wire {
         add_action('rest_api_init', array($this, 'register_tracking_route'));
         add_action(self::CRON_HOOK, array($this, 'process_feeds'));
         add_action('transition_post_status', array($this, 'queue_social_for_post'), 10, 3);
+        add_action('transition_post_status', array($this, 'fanout_cms_destinations_for_post'), 20, 3);
         add_action(self::SOCIAL_CRON_HOOK, array($this, 'process_social_queue'));
         add_action(self::SOCIAL_CONTEXT_CRON_HOOK, array($this, 'process_site_context'));
         add_action('init', array($this, 'maybe_requeue_instagram_quota_field_failures'), 12);

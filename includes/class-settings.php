@@ -64,6 +64,9 @@ trait TechnoRapper_AI_Wire_Settings {
             'map_date' => 'now',
             'map_content' => 'rewrite',
             'tenants' => array(),
+            'cms_webhook_url' => '',
+            'cms_webhook_secret' => '',
+            'cms_static_export' => 0,
         );
     }
 
@@ -239,7 +242,38 @@ trait TechnoRapper_AI_Wire_Settings {
             $out['tenants'] = !empty($current['tenants']) && is_array($current['tenants']) ? $current['tenants'] : $this->tenants_from_feed_lines($current['feeds'] ?? '', $out);
             $out['feeds'] = $this->feeds_from_tenants($out['tenants']);
         }
+        $out = array_merge($out, $this->sanitize_cms_settings_from_input($input, $current));
         return $out;
+    }
+
+    private function sanitize_cms_settings_from_input($input, $current) {
+        $input = is_array($input) ? $input : array();
+        $current = is_array($current) ? $current : array();
+        $has_cms = array_key_exists('cms_webhook_url', $input)
+            || array_key_exists('cms_webhook_secret', $input)
+            || array_key_exists('cms_static_export', $input);
+        if (!$has_cms) {
+            return array(
+                'cms_webhook_url' => (string) ($current['cms_webhook_url'] ?? ''),
+                'cms_webhook_secret' => (string) ($current['cms_webhook_secret'] ?? ''),
+                'cms_static_export' => empty($current['cms_static_export']) ? 0 : 1,
+            );
+        }
+        $url = esc_url_raw(trim((string) wp_unslash($input['cms_webhook_url'] ?? '')), array('http', 'https'));
+        if (!$url || !wp_http_validate_url($url)) {
+            $url = '';
+        }
+        $secret = trim((string) wp_unslash($input['cms_webhook_secret'] ?? ''));
+        if ($secret === '') {
+            $secret = (string) ($current['cms_webhook_secret'] ?? '');
+        } else {
+            $secret = substr(sanitize_text_field($secret), 0, 128);
+        }
+        return array(
+            'cms_webhook_url' => $url,
+            'cms_webhook_secret' => $secret,
+            'cms_static_export' => empty($input['cms_static_export']) ? 0 : 1,
+        );
     }
 
     private function sanitize_social_settings_from_input($input, $current, $defaults) {
