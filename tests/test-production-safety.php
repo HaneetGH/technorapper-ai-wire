@@ -3291,6 +3291,133 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $publish_calls);
     }
 
+    public function test_carousel_pack_posts_during_the_instagram_still_gap() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render carousel slides.');
+        }
+        $this->onboard_social(array('instagram'));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $already = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Recent still',
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $already,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'remote_id' => 'ig-older-still',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $this->assertGreaterThan(0, $this->invoke_private('instagram_spacing_wait_seconds'));
+        $post_ids = array();
+        foreach (array('Carousel story one', 'Carousel story two') as $index => $headline) {
+            $attachment_id = $this->create_social_jpeg_attachment();
+            if ($attachment_id < 1) {
+                $this->markTestSkipped('GD and uploads are required to render carousel slides.');
+            }
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => $headline,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 980 + $index);
+            update_post_meta($post_id, '_tr_ai_wire_social_mode', 'pack');
+            update_post_meta($post_id, '_tr_ai_wire_social_force_pack', 'carousel');
+            update_post_meta($post_id, '_tr_ai_wire_social_image_id', $attachment_id);
+            update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+                'hook' => $headline,
+                'on_image_headline' => $headline,
+                'x' => $headline,
+                'instagram' => $headline,
+                'instagram_alt' => $headline,
+                'cta' => 'Read the full stories',
+                'hashtags' => array('tech'),
+            )));
+            $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+                'post_id' => $post_id,
+                'platform' => 'instagram',
+                'status' => 'queued',
+                'image_attachment_id' => $attachment_id,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ));
+            $post_ids[] = $post_id;
+        }
+        $carousel_parents = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$carousel_parents) {
+            $url = (string) $url;
+            if (strpos($url, 'api.openai.com') !== false) {
+                return new WP_Error('blocked', 'Carousel should reuse cached copy and graphics.');
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos($url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-carousel-now'));
+            }
+            if (strpos($url, '/media') !== false) {
+                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
+                if (($body['media_type'] ?? '') === 'CAROUSEL') {
+                    $carousel_parents++;
+                }
+                return $this->mock_http_ok(array('id' => 'ig-carousel-container'));
+            }
+            if (strpos($url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos($url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/carousel-now/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $id_list = implode(',', array_map('intval', $post_ids));
+        $rows = $wpdb->get_results("SELECT status, remote_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id IN ({$id_list}) AND platform = 'instagram' ORDER BY post_id ASC", ARRAY_A);
+        $this->assertCount(2, $rows);
+        foreach ($rows as $row) {
+            $this->assertSame('published', $row['status']);
+            $this->assertSame('ig-carousel-now', $row['remote_id']);
+        }
+        $this->assertSame(1, $carousel_parents);
+        $this->assertSame('published', (string) $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $already)));
+    }
+
+    public function test_social_queue_page_starts_a_stuck_carousel() {
+        $this->onboard_social(array('instagram'));
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        for ($i = 1; $i <= 2; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Stuck carousel ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_social_mode', 'pack');
+            $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+                'post_id' => $post_id,
+                'platform' => 'instagram',
+                'status' => 'queued',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ));
+        }
+        wp_schedule_single_event(time() + 10800, TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('generating them and posting it now', $html);
+        $this->assertStringContainsString('Queued in a carousel', $html);
+        $this->assertStringContainsString('Graphic not generated yet', $html);
+        $job = get_option(TechnoRapper_AI_Wire::JOB_OPTION, array());
+        $this->assertSame('social', (string) ($job['kind'] ?? ''));
+        $this->assertTrue(in_array((string) ($job['status'] ?? ''), array('queued', 'running'), true));
+    }
+
     public function test_zero_social_image_budget_blocks_generation() {
         $this->onboard_social(array('x'));
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Budget test'));
