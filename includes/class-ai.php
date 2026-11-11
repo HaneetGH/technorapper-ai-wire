@@ -30,18 +30,19 @@ trait TechnoRapper_AI_Wire_AI {
             . '13) Return featured_image_alt as a factual caption for a suitable editorial still. Do not claim you created or saw a photo. '
             . '14) Read the source document and classify it yourself. Set category to exactly one name from the supplied Site categories list. Set tags to 3–6 specific names that appear in or clearly describe the source (products, companies, chips, OS). Never use News or Technology when a desk fits. Do not wait for a human to map the feed. Attribute the source once. Label uncertainty. '
             . '15) Return search_intent as the reader job-to-be-done in one sentence. '
+            . '16) Title names the product, company, or policy AND what changed. Never clone “X announces Y” from the source headline. The first takeaway must answer search_intent so a stranger understands the news. Why it matters names a reader stake the source supports (device, job, money, privacy, or access). If the source has no such stake, say that as labeled analysis — do not invent one. social_title is a tap-worthy restatement of that same named change, not a synonym of the source headline. '
             . 'Return only JSON with keys title, lede, body_html, angle, category, tags (array), source_attribution, claims (array of concrete facts that appear in the source; do not put analysis here), novelty_notes, focus_keyphrase, seo_title, meta_description, social_title, social_description, slug, search_intent, featured_image_alt, key_takeaways (array of 3 strings), faq (array of {question, answer}), official_links (array of {url, anchor}), internal_links (array of {url, anchor}).';
     }
 
     private function reviewer_prompt($s) {
         $prompt = 'You are an independent editorial reviewer for ' . self::site_brand_name() . '. You did not write this article and you must not improve or rewrite it as if you were the author. Check each concrete factual claim against the supplied source. Fail closed on facts: if you are uncertain whether a concrete claim is supported, do not pass. Assess factual grounding, hallucinations, policy compliance, grammar, attribution, unsupported claims, source-branding bleed, usefulness, originality of writing, groundedness, depth (it should be a detailed article, not a short brief), and Google-ranking quality: unique search angle vs the source headline, focus keyphrase in title/lede/one H2/slug/first takeaway, Key takeaways (3), FAQ (3 People Also Ask), internal links only when same-site URLs were supplied, reader context the source supports, and an editorial-desk voice (not the source brand). Never invent fixes. Invented facts, quotes, tests, experience, URLs, or attributions are reject-level. Also reject copy a family-friendly newsroom would not publish, and list those problems in policy_flags. The article must not present source reporting as original investigation. '
-            . 'The site publishes at a score of 85. Use this scale and do not park a publishable article at 78-84: '
-            . '93-100 grounded original detailed article with keyphrase, takeaways, FAQ, empty fact_flags, and no policy flags; '
-            . '85-92 the same article a human editor would publish, including small style nits, readability nits, or 1-2 missing nice-to-haves; '
+            . 'The site publishes at 85. Instagram and X stills require 90. Use this scale and do not park a publishable article at 78-84: '
+            . '90-100 complete original detailed article: unique angle vs the source headline, title names the product/company/policy AND the change, keyphrase, takeaways, FAQ, empty fact_flags, no policy flags, story_value substance solid or major and reader_demand medium or high. Score 90-96 when this checklist is met. 97-100 is rare (major story plus exceptional originality). '
+            . '85-89 a human editor would publish to the website, but a named remaining defect keeps it off social: generic or source-mirrored headline, missing ranking item, thin Why it matters, or a restated press blurb. You MUST name that defect in issues and suggested_fixes. '
             . '70-84 usable only after a human rewrites a concrete problem (thin section, unclear attribution, or a real unsupported concrete claim); '
             . '50-69 thin or close paraphrase; '
             . '0-49 reject-level (fabrication, synonym-spin, empty, policy). '
-            . 'Do not deduct below 85 for missing internal links when none were supplied, for missing local context when the source has none, or for labeled analysis (why it matters, who is affected, what to watch next) that adds no new number, quote, date, name, price, or event. Never invent a low score to appear strict. If a human editor would publish it, score 85 or higher with verdict pass. '
+            . 'Do not park a 90-checklist article at 85-89. If issues and suggested_fixes are empty, or only readability/style nits, and the 90 checklist is met, the score MUST be 90 or higher. Do not deduct below 85 for missing internal links when none were supplied, for missing local context when the source has none, or for labeled analysis (why it matters, who is affected, what to watch next) that adds no new number, quote, date, name, price, or event. Never invent a low score to appear strict. If a human editor would publish it, score 85 or higher with verdict pass. '
             . 'fact_flags must be an empty array when every concrete claim appears in the source. Do not flag single-source reporting, lack of independent verification, hedging, readability, or labeled analysis. A non-empty fact_flags array blocks publication, so list only a claim that contradicts the source or is not in the source. Put style and structure notes in issues. '
             . 'Return JSON with score (0-100), verdict (pass/revise/reject), issues (array), fact_flags (array), policy_flags (array), pragmatism {is_new, is_useful, is_grounded, similarity_risk (low/medium/high), notes}, story_value {publish (boolean), substance (thin/solid/major), reader_demand (low/medium/high), adds_value (boolean), reason}, suggested_fixes (array), safe_to_publish (boolean). is_new means the writing is original versus the source, not that the news event is unpublished. Use verdict pass when the score is 85 or higher and fact_flags is empty. Use verdict revise only for a 70-84 article a human must edit. Use reject for fabrication, policy problems, synonym-spin, missing unique angle, or empty/unusable copy. Set safe_to_publish true when the article is grounded, fact_flags is empty, and there are no policy flags. '
             . 'story_value is a separate publish gate from the score. A clean 85 does not publish a thin story, a list, or a topic readers would not search. Set publish true only when the source describes a concrete development readers would look up: a named product, company, or policy, plus what changed, and there is enough source to explain it. substance is thin when the source cannot explain what changed. reader_demand is low for a deal list, coupon, best-of list, weekly recap, sponsored item, or a minor aside with no named change. adds_value is false when the post would only repeat a press blurb or a list. Set publish false in those cases.';
@@ -79,7 +80,7 @@ trait TechnoRapper_AI_Wire_AI {
     }
 
     private function build_review_input($item, $rewrite) {
-        $input = "SOURCE TITLE: {$item['source_title']}\nSOURCE URL: {$item['source_url']}\nSOURCE TEXT:\n{$item['source_body']}\n\nPROPOSED ARTICLE JSON:\n" . wp_json_encode($rewrite);
+        $input = "SOURCE TITLE: {$item['source_title']}\nSOURCE URL: {$item['source_url']}\nSOURCE TEXT:\n{$item['source_body']}\n\nPROPOSED ARTICLE JSON:\n" . wp_json_encode($this->public_rewrite_payload($rewrite));
         $related = $this->related_site_posts($rewrite['title'] ?? ($item['source_title'] ?? ''));
         if ($related) {
             $lines = array();
@@ -90,8 +91,168 @@ trait TechnoRapper_AI_Wire_AI {
         } else {
             $input .= "\n\nAllowed internal URLs on this site: none supplied. Do not lower the score for missing internal links.";
         }
-        $input .= "\n\nYou are not the author. Do not rewrite the article. Publish gate: 85. If every concrete claim is in the source, return fact_flags as []. Labeled analysis is not a fact flag. If a human editor would publish this, score 85 or higher with verdict pass. Also return story_value. A high score does not publish a thin story, a deal or best-of list, or a topic readers would not search.";
+        $input .= "\n\nYou are not the author. Do not rewrite the article. Publish gate: 85. Social stills gate: 90. If every concrete claim is in the source, return fact_flags as []. Labeled analysis is not a fact flag. If a human editor would publish this, score 85 or higher with verdict pass. If the 90 checklist is met, score 90 or higher — do not park it at 85-89. Also return story_value. A high score does not publish a thin story, a deal or best-of list, or a topic readers would not search.";
         return $input;
+    }
+
+    private function polish_writer_prompt($variant) {
+        $desk = ($variant === 'B')
+            ? 'Stay the original editorial desk. '
+            : '';
+        return $desk . 'You are revising a ' . self::site_brand_name() . ' article using only the reviewer suggested_fixes. Keep every concrete fact grounded in the source. Do not invent numbers, quotes, dates, names, prices, or events. Apply the named fixes: a title that names the product, company, or policy AND the change; a unique search angle vs the source headline; complete keyphrase, takeaways, and FAQ; and a Why it matters that uses only sourced reader stakes. If a fix would require inventing a fact, leave that part unchanged. Return a full article JSON. Do not grade or score the article. '
+            . $this->google_ranking_instructions() . ' ' . $this->policy_writing_instructions();
+    }
+
+    private function build_polish_input($item, $rewrite, $review) {
+        $fixes = $review['suggested_fixes'] ?? array();
+        $issues = $review['issues'] ?? array();
+        $input = $this->build_writer_input($item);
+        $input .= "\n\nCurrent article JSON:\n" . wp_json_encode($this->public_rewrite_payload($rewrite));
+        $input .= "\n\nReviewer issues:\n" . wp_json_encode($issues);
+        $input .= "\n\nSuggested fixes to apply (do not invent facts to satisfy them):\n" . wp_json_encode($fixes);
+        return $input;
+    }
+
+    private function public_rewrite_payload($rewrite) {
+        $out = is_array($rewrite) ? $rewrite : array();
+        unset($out['_tr_score_polish'], $out['seo']);
+        return $out;
+    }
+
+    /**
+     * Reviewers cluster complete articles at 85 because the publish gate is 85.
+     * Lift 85-89 to 90 only when the social checklist is already met.
+     */
+    private function normalize_review_score($review, $rewrite = array(), $item = array()) {
+        if (!is_array($review)) {
+            return $review;
+        }
+        $score = isset($review['score']) ? (int) $review['score'] : 0;
+        if ($score < 85 || $score >= 90) {
+            return $review;
+        }
+        if (strtolower(trim((string) ($review['verdict'] ?? ''))) !== 'pass') {
+            return $review;
+        }
+        if ($this->review_has_social_blocking_defect($review, $rewrite, $item)) {
+            return $review;
+        }
+        $review['score'] = 90;
+        if (!isset($review['pragmatism']) || !is_array($review['pragmatism'])) {
+            $review['pragmatism'] = array();
+        }
+        $notes = trim((string) ($review['pragmatism']['notes'] ?? ''));
+        $lift = 'Score raised from clustering below 90; the 90 checklist was already met.';
+        $review['pragmatism']['notes'] = $notes === '' ? $lift : $notes . ' ' . $lift;
+        return $review;
+    }
+
+    private function review_has_social_blocking_defect($review, $rewrite = array(), $item = array()) {
+        if (!is_array($review)) {
+            return true;
+        }
+        if (!$this->flag_list_is_empty($review['fact_flags'] ?? null) || !$this->flag_list_is_empty($review['policy_flags'] ?? null)) {
+            return true;
+        }
+        if ($this->story_value_model_reason($review['story_value'] ?? null) !== '') {
+            return true;
+        }
+        if ($this->rewrite_missing_ranking_items($rewrite)) {
+            return true;
+        }
+        $title = trim(wp_strip_all_tags((string) ($rewrite['title'] ?? '')));
+        $source = trim(wp_strip_all_tags((string) ($item['source_title'] ?? '')));
+        if ($this->titles_are_near_duplicates($title, $source)) {
+            return true;
+        }
+        $notes = $this->review_notes_text($review);
+        if ($notes === '') {
+            return false;
+        }
+        if (preg_match('/missing (?:a )?(?:keyphrase|takeaway|faq|h2)|source headline|mirrored|synonym-?spin|generic headline|thin section|paraphrase|unsupported|press blurb|restated|clone/', $notes)) {
+            return true;
+        }
+        if (preg_match('/readability|transition word|sentence length|passive voice|style nit|nice-to-have|comma splice|hyphen/', $notes)) {
+            return false;
+        }
+        return true;
+    }
+
+    private function rewrite_missing_ranking_items($rewrite) {
+        if (!is_array($rewrite)) {
+            return true;
+        }
+        if (trim((string) ($rewrite['focus_keyphrase'] ?? '')) === '') {
+            return true;
+        }
+        $takeaways = $rewrite['key_takeaways'] ?? array();
+        $faq = $rewrite['faq'] ?? array();
+        if (!is_array($takeaways) || count($takeaways) < 3) {
+            return true;
+        }
+        if (!is_array($faq) || count($faq) < 3) {
+            return true;
+        }
+        return false;
+    }
+
+    private function titles_are_near_duplicates($left, $right) {
+        $a = strtolower(preg_replace('/[^a-z0-9]+/', '', (string) $left));
+        $b = strtolower(preg_replace('/[^a-z0-9]+/', '', (string) $right));
+        if (strlen($a) < 8 || strlen($b) < 8) {
+            return false;
+        }
+        if ($a === $b) {
+            return true;
+        }
+        similar_text($a, $b, $percent);
+        return $percent >= 82;
+    }
+
+    private function review_notes_text($review) {
+        $parts = array();
+        foreach (array('issues', 'suggested_fixes') as $key) {
+            foreach ((array) ($review[$key] ?? array()) as $item) {
+                if (is_array($item)) {
+                    $parts[] = implode(' ', $item);
+                } else {
+                    $parts[] = (string) $item;
+                }
+            }
+        }
+        return strtolower(trim(preg_replace('/\s+/', ' ', implode(' ', $parts))));
+    }
+
+    private function rewrite_was_polished($rewrite) {
+        return is_array($rewrite) && !empty($rewrite['_tr_score_polish']);
+    }
+
+    private function review_should_polish($review, $rewrite) {
+        if (!is_array($review) || $this->rewrite_was_polished($rewrite)) {
+            return false;
+        }
+        $score = isset($review['score']) ? (int) $review['score'] : 0;
+        if ($score < 85 || $score >= 90) {
+            return false;
+        }
+        if (strtolower(trim((string) ($review['verdict'] ?? ''))) !== 'pass') {
+            return false;
+        }
+        if (!$this->flag_list_is_empty($review['fact_flags'] ?? null) || !$this->flag_list_is_empty($review['policy_flags'] ?? null)) {
+            return false;
+        }
+        if ($this->story_value_model_reason($review['story_value'] ?? null) !== '') {
+            return false;
+        }
+        foreach ((array) ($review['suggested_fixes'] ?? array()) as $fix) {
+            if (is_array($fix)) {
+                $fix = implode(' ', $fix);
+            }
+            if (trim((string) $fix) !== '') {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function related_site_posts($hint, $limit = 3) {

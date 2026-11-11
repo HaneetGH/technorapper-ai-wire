@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.56
+Stable tag: 0.2.59
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -56,6 +56,15 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.59 =
+* Social copy follows Instagram distribution rules: named hooks, payoff in the caption, save/send asks, and no generic bait (“wait for it”, “you won’t believe”). Poison phrases are stripped before publish. Reels send is_ai_generated. Default mix prefers carousels (3) over single stills (2).
+
+= 0.2.58 =
+* Reviewer 90 now means a complete original article, not a parked 85. The writer aims at a named-change headline; clustered 85–89 scores with no remaining defect are raised to 90; one polish pass applies reviewer fixes before social stills.
+
+= 0.2.57 =
+* Instagram stills skip stories below a review-score floor (default 90) so the feed is not a graveyard of 15-view posts. Captions no longer include URLs (link in bio instead), and stills wait at least 3 hours apart. Reels stay off.
+
 = 0.2.56 =
 * Manual fetch, queue retry, social process, social retry, and homepage repair run on a background worker. The admin page stays put and a progress bar tracks the job. Delete, clean, and stop update the page in place.
 * A feed item is not published just because the rewrite succeeded. Thin blurbs, deal lists, coupons, best-of lists, and recaps stay in the queue. The reviewer must also mark the story solid enough that readers would look for it.
@@ -94,6 +103,15 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.59 =
+Captions now use named hooks and save/send asks, strip generic Instagram bait, and Reels disclose AI. New installs prefer 3 carousels and 2 singles.
+
+= 0.2.58 =
+Complete original articles can now reach the Instagram stills score of 90. The reviewer no longer parks them at 85, and one polish pass applies named fixes.
+
+= 0.2.57 =
+Instagram stills now skip weaker stories, drop caption URLs, and space posts so the account is not flooded.
 
 = 0.2.56 =
 Fetch, retry, and the other long admin actions keep the page open and show a progress bar while a background worker runs them.

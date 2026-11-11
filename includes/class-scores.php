@@ -182,6 +182,7 @@ trait TechnoRapper_AI_Wire_Scores {
                 'score' => $score,
                 'seo_score' => $seo,
                 'wp_post_id' => (int) ($row['wp_post_id'] ?? 0),
+                'social' => $this->social_quality_label((int) ($row['wp_post_id'] ?? 0)),
             );
         }
         $count = count($items);
@@ -199,6 +200,7 @@ trait TechnoRapper_AI_Wire_Scores {
         return array(
             'filters' => $filters,
             'min_score' => $min,
+            'social_min_score' => $this->social_min_review_score($s),
             'count' => $count,
             'average' => $count ? round($review_sum / $count, 1) : 0.0,
             'seo_average' => $seo_count ? round($seo_sum / $seo_count, 1) : null,

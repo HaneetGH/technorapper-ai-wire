@@ -49,7 +49,7 @@ The separation is intentional:
 | Destinations | `x`, `instagram`, `youtube` — only when credentials exist **and** that network is on. YouTube-only installs do not force X or Instagram on. |
 | Queue | One row per `(post_id, platform)` in `{prefix}tr_ai_wire_social`. Unique key prevents duplicate destinations. |
 | Daily cap | Unique **articles** (1–10), not per-network posts. A successful Instagram or YouTube post does not spend an extra X slot for the same article. |
-| Mix | Operators set daily counts for **Reel**, **carousel**, **collage**, and **single-story**. Reel fills first (default **0** / off), then carousel, then collage, then singles. |
+| Mix | Operators set daily counts for **Reel**, **carousel**, **collage**, and **single-story**. Reel fills first (default **0** / off), then carousel (default **3**), then collage, then singles (default **2**). |
 | YouTube eligibility | YouTube rows are created **only** for `reel` mode. Stills, carousels and collages never go to YouTube. |
 | Policy | Local profanity/slur list plus OpenAI Moderation on article text and on outbound social copy (captions, Reel script, YouTube title/description/tags, on-image lines). A hit holds the job; it does not post. |
 | Credentials | Non-autoloaded option. X = four Keys and tokens (OAuth 1.0a). Instagram = Page token + Professional account ID (optional Meta Unified Login). YouTube = Google OAuth client + **Sign in with Google** (or a pasted refresh token). A YouTube/Google **API key cannot upload**. |
@@ -58,10 +58,10 @@ The separation is intentional:
 
 1. **Editorial processing:** AI Wire discovers and deduplicates a source, then runs Writer → Reviewer and applies its existing gates.
 2. **Article creation:** A passing item becomes a WordPress draft or published post. Social work starts only after WordPress confirms `publish`, including a later draft-to-publish transition.
-3. **Queue insert:** For each connected, enabled platform, insert one `queued` row. YouTube is skipped unless the article’s social mode is `reel`.
-4. **Copy generation:** One Writer JSON pass. Invalid or policy-failing copy is held; it is never sent to an adapter.
+3. **Queue insert:** Skip social if the article’s review score is below `social_min_review_score` (default **90**). 90 means a complete original article; 85–89 stay on the website. The writer aims at 90, clustered complete scores are raised to 90, and one polish pass can apply reviewer fixes. Qualifying articles get one `queued` row per connected platform. YouTube is skipped unless the article’s social mode is `reel`. Instagram stills wait at least 3 hours after the last Instagram publish, and their captions never include a URL.
+4. **Copy generation:** One Writer JSON pass. Copy uses a named hook, pays it off, and asks for a save or send. Generic bait (“wait for it”, “you won’t believe”) is banned in the prompt and stripped before publish. Invalid or policy-failing copy is held; it is never sent to an adapter.
 5. **Still graphic:** GPT Image 2 low 1080×1350, GD overlay of this site’s name, cached as `_tr_ai_wire_social_image_id`. Reused across platforms. X always gets this still (even when Instagram/YouTube get a Reel).
-6. **Spoken Reel (when mix allots a Reel):** Fal image-to-video (suggested Veo 3.1 Lite), Mini TTS (`gpt-4o-mini-tts` / `cedar`), ffmpeg mux with captions and a brand sting. Missing Fal key or `ffmpeg` **holds** the job — no slideshow fallback.
+6. **Spoken Reel (when mix allots a Reel):** Fal image-to-video (suggested Veo 3.1 Lite), Mini TTS (`gpt-4o-mini-tts` / `cedar`), ffmpeg mux with captions and a brand sting. The Instagram Reel container sets `is_ai_generated=true` (YouTube already sets `containsSyntheticMedia`). Missing Fal key or `ffmpeg` **holds** the job — no slideshow fallback.
 7. **Publish:** X, Instagram and YouTube adapters run separately. Ambiguous timeouts go to `needs_review`; they are not blindly retried.
 8. **YouTube listing:** `videos.insert` sets title, description (`#Shorts` + tags + permalink), tags, category, language, license, **public** privacy, not-made-for-kids, and synthetic-media disclosure in that call. `publishAt` is never set. If the channel default is private, the worker updates the video to public.
 
@@ -183,6 +183,8 @@ Keep three measurements distinct:
 Before production automation, verify that:
 
 - A draft, rejected article and failed editorial job never create social rows.
+- A published article below `social_min_review_score` (default 90) creates no social rows; it stays on the website.
+- Instagram captions never include a URL. Stills wait at least 3 hours after the last Instagram publish.
 - Publish (including draft-to-publish) creates at most one row per enabled destination.
 - YouTube rows appear only for Reel-mode articles.
 - Social generation cannot write into the article featured-image field.

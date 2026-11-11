@@ -163,6 +163,25 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->queue_social_for_post('publish', $old_status, get_post($post_id));
     }
 
+    private function attach_review_score($post_id, $score) {
+        $post_id = (int) $post_id;
+        $qid = (int) get_post_meta($post_id, '_tr_ai_wire_queue_id', true);
+        $item = $qid > 0 ? $this->invoke_private('get_item', array($qid)) : null;
+        if (!is_array($item)) {
+            $qid = $this->create_queue_item('published');
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', $qid);
+        }
+        $this->invoke_private('update_item', array($qid, array(
+            'status' => 'published',
+            'wp_post_id' => $post_id,
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => (int) $score,
+                'safe_to_publish' => true,
+            )),
+        )));
+    }
+
     private function create_queue_item($status = 'reviewed') {
         return $this->invoke_private('insert_item', array(
             hash('sha256', wp_generate_uuid4()),
@@ -790,10 +809,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, (int) $settings['social_youtube_notify_subscribers']);
         $this->assertSame('single', $settings['social_post_format']);
         $this->assertSame(5, $settings['social_slide_count']);
-        $this->assertSame(2, $settings['social_carousel_daily_limit']);
+        $this->assertSame(3, $settings['social_carousel_daily_limit']);
         $this->assertSame(0, $settings['social_collage_daily_limit']);
-        $this->assertSame(3, $settings['social_single_daily_limit']);
+        $this->assertSame(2, $settings['social_single_daily_limit']);
         $this->assertSame(0, $settings['social_reel_daily_limit']);
+        $this->assertSame(90, (int) $settings['social_min_review_score']);
         $this->assertSame(0, (int) $settings['social_mix_saved']);
         $this->assertSame(array_keys(TechnoRapper_AI_Wire::social_news_formats()), $settings['social_news_formats']);
         $this->assertArrayNotHasKey('social_pack_wait_minutes', $settings);
@@ -1616,11 +1636,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Fail closed', $reviewer);
         $this->assertStringContainsString('hallucinations', $reviewer);
         $this->assertStringContainsString('FAQ', $reviewer);
-        $this->assertStringContainsString('85-92', $reviewer);
+        $this->assertStringContainsString('85-89', $reviewer);
+        $this->assertStringContainsString('90-100', $reviewer);
+        $this->assertStringContainsString('Do not park a 90-checklist article at 85-89', $reviewer);
+        $this->assertStringContainsString('Instagram and X stills require 90', $reviewer);
         $this->assertStringContainsString('Do not deduct below 85', $reviewer);
         $this->assertStringContainsString('fact_flags must be an empty array', $reviewer);
         $this->assertStringContainsString('If a human editor would publish it, score 85', $reviewer);
         $this->assertStringContainsString('do not park a publishable article at 78-84', strtolower($reviewer));
+        $this->assertStringContainsString('Title names the product, company, or policy AND what changed', $writer);
+        $this->assertStringContainsString('Never clone', $writer);
         $this->assertStringContainsString('labeled analysis', strtolower($writer));
         $this->assertStringContainsString('that is not a failure', $writer);
         $this->assertStringContainsString('Never use News or Technology', $writer);
@@ -1640,8 +1665,178 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('You are not the author', $input);
         $this->assertStringContainsString('none supplied. Do not lower the score', $input);
         $this->assertStringContainsString('Publish gate: 85', $input);
+        $this->assertStringContainsString('Social stills gate: 90', $input);
         $this->assertStringContainsString('fact_flags as []', $input);
         $this->assertStringContainsString('If a human editor would publish this, score 85', $input);
+        $this->assertStringContainsString('If the 90 checklist is met, score 90 or higher', $input);
+        $this->assertStringNotContainsString('_tr_score_polish', $input);
+    }
+
+    private function complete_rewrite_for_score($title = 'Apple M5 chip memory bandwidth jumps') {
+        return array(
+            'title' => $title,
+            'lede' => 'Apple M5 chip adds on-device photo models this spring.',
+            'body_html' => '<p>Grounded article body about the M5 chip launch.</p>',
+            'focus_keyphrase' => 'apple m5 chip',
+            'key_takeaways' => array(
+                'Apple M5 chip raises memory bandwidth.',
+                'On-device photo model ships in April.',
+                'Developers get a beta API the same day.',
+            ),
+            'faq' => array(
+                array('question' => 'When does the M5 chip ship?', 'answer' => 'April 2026 according to the source.'),
+                array('question' => 'How much does it cost?', 'answer' => 'The source lists $999.'),
+                array('question' => 'What changed for developers?', 'answer' => 'A new API in the same-day beta.'),
+            ),
+        );
+    }
+
+    private function passing_review_for_score($score, $extra = array()) {
+        return array_merge(array(
+            'verdict' => 'pass',
+            'score' => (int) $score,
+            'safe_to_publish' => true,
+            'fact_flags' => array(),
+            'policy_flags' => array(),
+            'issues' => array(),
+            'suggested_fixes' => array(),
+            'pragmatism' => array(
+                'is_new' => true,
+                'is_useful' => true,
+                'is_grounded' => true,
+                'similarity_risk' => 'low',
+            ),
+            'story_value' => array(
+                'publish' => true,
+                'substance' => 'major',
+                'reader_demand' => 'high',
+                'adds_value' => true,
+                'reason' => 'Named chip launch readers will search.',
+            ),
+        ), is_array($extra) ? $extra : array());
+    }
+
+    public function test_clustered_complete_review_is_raised_to_social_floor() {
+        $rewrite = $this->complete_rewrite_for_score();
+        $item = array('source_title' => 'Apple announced the M5 chip');
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(86),
+            $rewrite,
+            $item,
+        ));
+        $this->assertSame(90, (int) $review['score']);
+        $this->assertStringContainsString('clustering below 90', (string) $review['pragmatism']['notes']);
+    }
+
+    public function test_generic_headline_review_stays_below_social_floor() {
+        $rewrite = $this->complete_rewrite_for_score('Apple announced the M5 chip');
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(86, array(
+                'issues' => array('Generic headline restates the source headline'),
+                'suggested_fixes' => array('Name the bandwidth change in the title'),
+            )),
+            $rewrite,
+            array('source_title' => 'Apple announced the M5 chip'),
+        ));
+        $this->assertSame(86, (int) $review['score']);
+        $this->assertTrue($this->invoke_private('review_should_polish', array($review, $rewrite)));
+    }
+
+    public function test_style_nits_do_not_block_a_90_lift() {
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(87, array(
+                'issues' => array('Readability nit: one long sentence in Why it matters'),
+            )),
+            $this->complete_rewrite_for_score(),
+            array('source_title' => 'Apple announced the M5 chip'),
+        ));
+        $this->assertSame(90, (int) $review['score']);
+    }
+
+    public function test_clustered_pass_does_not_spend_a_polish_call() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $id = $this->create_queue_item();
+        $calls = 0;
+        $writer = $this->complete_rewrite_for_score();
+        $review = $this->passing_review_for_score(86);
+        $callback = function ($preempt, $args, $url) use (&$calls, $writer, $review) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $payload = json_decode($args['body'], true);
+            $system = (string) ($payload['input'][0]['content'][0]['text'] ?? '');
+            $this->assertStringNotContainsString('revising a', $system);
+            return $this->openai_json_http($calls === 1 ? $writer : $review);
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $settings = $this->draft_settings();
+        $this->invoke_private('process_item', array($id, $settings));
+        $this->invoke_private('process_item', array($id, $settings));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, review_json FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('reviewed', $row['status']);
+        $this->assertSame(2, $calls);
+        $decoded = json_decode($row['review_json'], true);
+        $this->assertSame(90, (int) $decoded['score']);
+        $this->assertStringContainsString('clustering below 90', (string) ($decoded['pragmatism']['notes'] ?? ''));
+    }
+
+    public function test_near_miss_review_polishes_once_then_can_hit_90() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $id = $this->create_queue_item();
+        $calls = 0;
+        $writer = $this->complete_rewrite_for_score('Apple announced the M5 chip');
+        $first_review = $this->passing_review_for_score(86, array(
+            'issues' => array('Generic headline restates the source headline'),
+            'suggested_fixes' => array('Name the M5 bandwidth change in the title'),
+        ));
+        $polished = $this->complete_rewrite_for_score('Apple M5 chip memory bandwidth jumps');
+        $second_review = $this->passing_review_for_score(92);
+        $callback = function ($preempt, $args, $url) use (&$calls, $writer, $first_review, $polished, $second_review) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $payload = json_decode($args['body'], true);
+            $system = (string) ($payload['input'][0]['content'][0]['text'] ?? '');
+            if ($calls === 1) {
+                $this->assertStringContainsString('Write a detailed', $system);
+                $output = $writer;
+            } elseif ($calls === 2) {
+                $this->assertStringContainsString('independent editorial reviewer', $system);
+                $output = $first_review;
+            } elseif ($calls === 3) {
+                $this->assertStringContainsString('revising a', $system);
+                $this->assertStringContainsString('suggested_fixes', $system);
+                $output = $polished;
+            } else {
+                $this->assertStringContainsString('independent editorial reviewer', $system);
+                $output = $second_review;
+            }
+            return $this->openai_json_http($output);
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $settings = $this->draft_settings();
+        $this->invoke_private('process_item', array($id, $settings));
+        $this->invoke_private('process_item', array($id, $settings));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, rewrite_json, review_json, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('generated', $row['status']);
+        $this->assertSame(3, $calls);
+        $this->assertStringContainsString('Polished once', (string) $row['error_text']);
+        $rewrite = json_decode($row['rewrite_json'], true);
+        $this->assertSame(1, (int) ($rewrite['_tr_score_polish'] ?? 0));
+        $this->assertSame('Apple M5 chip memory bandwidth jumps', $rewrite['title']);
+        $this->assertSame('', (string) $row['review_json']);
+
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, review_json FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('reviewed', $row['status']);
+        $this->assertSame(4, $calls);
+        $review = json_decode($row['review_json'], true);
+        $this->assertSame(92, (int) $review['score']);
+        $this->assertFalse($this->invoke_private('review_should_polish', array($review, $rewrite)));
     }
 
     public function test_writer_input_and_draft_include_internal_links() {
@@ -1890,7 +2085,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('published', $row['status']);
         $this->assertGreaterThan(0, (int) $row['wp_post_id']);
         $review = json_decode($row['review_json'], true);
-        $this->assertSame(88, (int) $review['score']);
+        $this->assertSame(90, (int) $review['score']);
         $this->assertSame(array(), $review['fact_flags']);
     }
 
@@ -2339,6 +2534,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         )));
         $this->assertSame(3, $day['count']);
         $this->assertSame(76.7, $day['average']);
+        $this->assertSame(90, (int) $day['social_min_score']);
         $this->assertSame(66.7, $day['seo_average']);
         $this->assertSame(3, $day['above_min']);
         $this->assertSame(1, $day['distribution']['50-69']);
@@ -2498,23 +2694,147 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'on_image_subhead' => 'AI servers are the new battleground',
             'cta' => 'Read the full story on TechnoRapper',
             'x_text' => 'Qualcomm is chasing AI servers, not just phones.',
-            'instagram_caption' => "Your next phone chip has a server cousin\n\nWhat changed: a bigger data-center push.",
+            'instagram_caption' => "Your next phone chip has a server cousin\n\nWhat changed: a bigger data-center push.\nhttps://example.com/do-not-post",
             'hashtags' => array('AI', 'Qualcomm', 'bad tag!'),
         ), get_post($post_id)));
         $permalink = get_permalink($post_id);
         $this->assertSame('Qualcomm wants the data center', $copy['on_image_headline']);
         $this->assertSame('Your next phone chip has a server cousin', $copy['hook']);
         $this->assertStringContainsString($permalink, $copy['x']);
-        $this->assertStringContainsString($permalink, $copy['instagram']);
+        $this->assertStringNotContainsString($permalink, $copy['instagram']);
+        $this->assertStringNotContainsString('http://', $copy['instagram']);
+        $this->assertStringNotContainsString('https://', $copy['instagram']);
         $this->assertContains('ai', $copy['hashtags']);
         $this->assertContains('qualcomm', $copy['hashtags']);
         $this->assertStringContainsString('Read the full story on TechnoRapper', $copy['instagram']);
+        $this->assertStringContainsString('Link in bio.', $copy['instagram']);
         $this->assertNotSame('', $copy['reel_script']);
         $this->assertGreaterThanOrEqual(3, count($copy['reel_captions']));
         $this->assertSame('Your next phone chip has a server cousin', $copy['youtube_title']);
         $this->assertStringContainsString($permalink, $copy['youtube_description']);
         $this->assertContains('ai', $copy['youtube_tags']);
         $this->assertStringNotContainsString('•', $copy['reel_script']);
+    }
+
+    public function test_social_copy_strips_instagram_poison_phrases() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Qualcomm data-center push',
+            'post_excerpt' => 'The chipmaker wants a larger share of AI servers.',
+        ));
+        $copy = $this->invoke_private('sanitize_social_copy', array(array(
+            'hook' => 'You won’t believe this Qualcomm server chip',
+            'on_image_headline' => 'Wait for it: Qualcomm servers',
+            'on_image_subhead' => 'This changes everything for phones',
+            'instagram_caption' => "Must see: Qualcomm wants AI servers.\n\nWait until the end.",
+            'x_text' => 'Shocking Qualcomm data-center push',
+            'on_image_bullets' => array('Gone wrong? No — bandwidth is up.', 'This will blow your mind: 2x memory.'),
+            'reel_script' => 'Wait for it. Qualcomm is chasing AI servers, not just phones, and that shift is why memory bandwidth is the story.',
+        ), get_post($post_id)));
+        $this->assertStringNotContainsString('won’t believe', $copy['hook']);
+        $this->assertStringNotContainsString('Wait for it', $copy['on_image_headline']);
+        $this->assertStringNotContainsString('changes everything', $copy['on_image_subhead']);
+        $this->assertStringNotContainsString('Must see', $copy['instagram']);
+        $this->assertStringNotContainsString('Wait until the end', $copy['instagram']);
+        $this->assertStringNotContainsString('Shocking', $copy['x']);
+        $this->assertStringContainsString('Qualcomm', $copy['hook']);
+        $this->assertStringContainsString('Qualcomm', $copy['instagram']);
+        $this->assertStringNotContainsString('blow your mind', implode(' ', $copy['on_image_bullets']));
+        $this->assertStringNotContainsString('Wait for it', $copy['reel_script']);
+        $this->assertStringContainsString('Qualcomm is chasing AI servers', $copy['reel_script']);
+        $this->assertStringContainsString('memory bandwidth is the story', $copy['reel_script']);
+    }
+
+    public function test_weak_review_scores_do_not_queue_instagram_stills() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 0,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 3,
+            'social_min_review_score' => 90,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $weak = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Okay story stays on the website',
+        ));
+        $this->attach_review_score($weak, 86);
+        $this->invoke_private('collect_social_article', array($weak, $settings));
+        global $wpdb;
+        $this->assertSame(0, (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $weak)));
+        $this->assertStringContainsString('86', (string) get_post_meta($weak, '_tr_ai_wire_social_skip', true));
+        $this->assertSame('', (string) get_post_meta($weak, '_tr_ai_wire_social_mode', true));
+
+        $strong = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Strong story can go to Instagram',
+        ));
+        $this->attach_review_score($strong, 92);
+        $this->invoke_private('collect_social_article', array($strong, $settings));
+        $this->assertSame('single', (string) get_post_meta($strong, '_tr_ai_wire_social_mode', true));
+        $this->assertSame('', (string) get_post_meta($strong, '_tr_ai_wire_social_skip', true));
+        $this->assertSame(1, (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram' AND status = 'queued'", $strong)));
+    }
+
+    public function test_social_score_floor_zero_posts_every_published_article() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 0,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 3,
+            'social_min_review_score' => 0,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Low score still posts when the floor is off',
+        ));
+        $this->attach_review_score($post_id, 70);
+        $this->invoke_private('collect_social_article', array($post_id, $settings));
+        global $wpdb;
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertSame(1, (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $post_id)));
+    }
+
+    public function test_instagram_stills_wait_after_a_recent_post() {
+        $this->onboard_social(array('instagram'));
+        global $wpdb;
+        $old_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Already posted still',
+        ));
+        $now = current_time('mysql', true);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $old_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s'));
+        $this->assertSame(10800, $this->invoke_private('instagram_stills_spacing_seconds'));
+        $this->assertGreaterThan(0, $this->invoke_private('instagram_spacing_wait_seconds'));
+
+        $next_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Next still should wait',
+        ));
+        update_post_meta($next_id, '_tr_ai_wire_queue_id', 940);
+        $this->invoke_private('collect_social_article', array($next_id, $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()))));
+        $publish_calls = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$publish_calls) {
+            if (strpos((string) $url, '/media_publish') !== false) {
+                $publish_calls++;
+            }
+            return new WP_Error('blocked', 'Instagram should not publish while spacing.');
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $next_id), ARRAY_A);
+        $this->assertSame('queued', $row['status']);
+        $this->assertSame(0, $publish_calls);
     }
 
     public function test_zero_social_image_budget_blocks_generation() {
@@ -2891,7 +3211,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(10, $clamped['social_carousel_daily_limit']);
         $this->assertSame(10, $clamped['social_collage_daily_limit']);
         $this->assertSame(10, $clamped['social_single_daily_limit']);
-        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 3, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 2, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertSame(array('carousel' => 3, 'collage' => 1, 'single' => 4, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array($counts)));
         $reel_mix = $this->plugin->sanitize_settings(array(
             'social_mix_saved' => 1,
@@ -2901,6 +3221,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'social_single_daily_limit' => 3,
         ));
         $this->assertSame(1, $reel_mix['social_reel_daily_limit']);
+        $this->assertSame(90, (int) $this->plugin->sanitize_settings(array('social_post_format' => 'single'))['social_min_review_score']);
+        $this->assertSame(85, (int) $this->plugin->sanitize_settings(array('social_min_review_score' => 85))['social_min_review_score']);
+        $this->assertSame(0, (int) $this->plugin->sanitize_settings(array('social_min_review_score' => 0))['social_min_review_score']);
+        $this->assertSame(100, (int) $this->plugin->sanitize_settings(array('social_min_review_score' => 140))['social_min_review_score']);
         $this->assertSame('carousel', $reel_mix['social_post_format']);
         $this->assertSame(array('carousel' => 2, 'collage' => 0, 'single' => 3, 'reel' => 1), $this->invoke_private('social_daily_mix_limits', array($reel_mix)));
         $reels_only = $this->plugin->sanitize_settings(array(
@@ -3134,6 +3458,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $caption = $this->invoke_private('instagram_pack_caption', array($posts));
         $this->assertStringContainsString('Don\'t skip the last slide.', $caption);
         $this->assertStringContainsString('First story', $caption);
+        $this->assertStringContainsString('Link in bio.', $caption);
+        $this->assertStringNotContainsString('http://', $caption);
+        $this->assertStringNotContainsString('https://', $caption);
         $urls = $this->invoke_private('instagram_carousel_urls', array($posts, array(
             'social_news_formats' => array('editorial_poster'),
         )));
@@ -3250,6 +3577,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('13-inch or 15-inch Air?', $pack_caption);
         $this->assertStringContainsString('When fake IDs become easier to scale', $pack_caption);
         $this->assertStringContainsString('When big tech becomes politics', $pack_caption);
+        $this->assertStringContainsString('Link in bio.', $pack_caption);
+        $this->assertStringNotContainsString('http://', $pack_caption);
+        $this->assertStringNotContainsString('https://', $pack_caption);
         $this->assertSame(3, $this->invoke_private('social_published_today'));
     }
 
@@ -3578,7 +3908,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             }
             if (($body['media_type'] ?? '') === 'CAROUSEL') {
                 $parents++;
-                $this->assertSame('Caption for the carousel', $body['caption'] ?? '');
+                $this->assertSame("Caption for the carousel\n\nLink in bio.", $body['caption'] ?? '');
                 $this->assertStringContainsString(',', (string) ($body['children'] ?? ''));
             }
         }
@@ -3892,7 +4222,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (($body['media_type'] ?? '') === 'REELS') {
                 $reels++;
                 $this->assertSame('https://example.org/story.mp4', $body['video_url'] ?? '');
-                $this->assertSame('Spoken reel caption', $body['caption'] ?? '');
+                $this->assertSame("Spoken reel caption\n\nLink in bio.", $body['caption'] ?? '');
+                $this->assertSame('true', (string) ($body['is_ai_generated'] ?? ''));
                 $this->assertArrayNotHasKey('image_url', $body);
                 $this->assertArrayNotHasKey('children', $body);
             }
@@ -5454,14 +5785,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNull($this->invoke_private('social_copy_policy_error', array($news)));
         $desk = $this->invoke_private('social_copy_system_prompt', array('TechnoRapper'));
         $this->assertStringContainsString('growth lead', $desk);
-        $this->assertStringContainsString('Clickbait is allowed', $desk);
+        $this->assertStringContainsString('generic clickbait', $desk);
+        $this->assertStringContainsString('wire dump', $desk);
         $this->assertStringContainsString('no nudity', strtolower($desk));
         $user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news')));
         $this->assertStringContainsString('reader stake', $user);
-        $this->assertStringContainsString('Clickbait is on', $user);
-        $this->assertStringContainsString('you won’t believe', $user);
+        $this->assertStringContainsString('saves, and sends', $user);
+        $this->assertStringContainsString('Never use: you won’t believe', $user);
+        $this->assertStringContainsString('save or send ask', $user);
+        $this->assertStringContainsString('named hook in the first', $user);
         $this->assertStringContainsString('fully clothed', $user);
-        $this->assertStringNotContainsString('Never use: you won’t believe', $user);
         $this->assertNull($this->invoke_private('sanitize_social_idea_item', array(array(
             'title' => 'Nude recap cover',
             'description' => 'A naked model as the hero of the graphic.',

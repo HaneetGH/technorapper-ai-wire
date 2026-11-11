@@ -84,7 +84,12 @@ trait TechnoRapper_AI_Wire_Pipeline {
         }
     }
 
-    private function advance_item_until_idle($id, $s, $max_stages = 5, $started_at = null, $time_budget = null, $lock_token = null) {
+    private function pipeline_item_fingerprint($item) {
+        $item = is_array($item) ? $item : array();
+        return $this->pipeline_status($item['status'] ?? '') . '|' . md5((string) ($item['rewrite_json'] ?? '') . "\n" . (string) ($item['review_json'] ?? ''));
+    }
+
+    private function advance_item_until_idle($id, $s, $max_stages = 6, $started_at = null, $time_budget = null, $lock_token = null) {
         $id = (int) $id;
         for ($i = 0; $i < $max_stages; $i++) {
             if ($lock_token && !$this->refresh_processing_lock($lock_token)) {
@@ -98,11 +103,14 @@ trait TechnoRapper_AI_Wire_Pipeline {
             if (!$this->pipeline_item_is_actionable($item)) {
                 return;
             }
-            $before = $this->pipeline_status($item['status'] ?? '');
+            $before = $this->pipeline_item_fingerprint($item);
             $this->process_item($id, $s);
             $after_item = $this->get_item($id);
             $after = $this->pipeline_status($after_item['status'] ?? '');
-            if ($after === $before || in_array($after, array('retry_wait', 'waiting_budget', 'error', 'quarantined', 'draft', 'published'), true)) {
+            if (in_array($after, array('retry_wait', 'waiting_budget', 'error', 'quarantined', 'draft', 'published'), true)) {
+                return;
+            }
+            if ($this->pipeline_item_fingerprint($after_item) === $before) {
                 return;
             }
         }
@@ -210,12 +218,16 @@ trait TechnoRapper_AI_Wire_Pipeline {
                 );
             }
         }
+        $review = $this->normalize_review_score($review, $rewrite, $item);
         $blockers = $this->review_draft_blockers($review, $s);
         if ($blockers) {
             $this->quarantine_item($id, 'Held for editorial review: ' . implode(', ', $blockers), $item, array(
                 'rewrite_json' => wp_json_encode($rewrite),
                 'review_json' => wp_json_encode($review),
             ));
+            return;
+        }
+        if ($this->pipeline_polish_near_miss($id, $item, $rewrite, $review, $s)) {
             return;
         }
         $this->update_item($id, array(
@@ -225,6 +237,39 @@ trait TechnoRapper_AI_Wire_Pipeline {
             'error_text' => null,
         ));
         wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('publish', (int) $id, wp_generate_uuid4()));
+    }
+
+    /**
+     * One extra writer pass for a website-grade 85-89 that the reviewer
+     * already named fixes for. Fail closed: keep the original article.
+     */
+    private function pipeline_polish_near_miss($id, $item, $rewrite, $review, $s) {
+        if (!$this->review_should_polish($review, $rewrite)) {
+            return false;
+        }
+        $polished = $this->ai_json(
+            $s['writer_model'],
+            $this->polish_writer_prompt($item['variant'] ?? 'A'),
+            $this->build_polish_input($item, $rewrite, $review),
+            $s,
+            false
+        );
+        if (is_wp_error($polished) || !$this->has_usable_rewrite($polished)) {
+            return false;
+        }
+        $polished['_tr_score_polish'] = 1;
+        $polished = $this->prepare_rewrite_seo($polished);
+        if ($this->rewrite_seo_blockers($polished, $s)) {
+            return false;
+        }
+        $this->update_item($id, array(
+            'status' => 'generated',
+            'rewrite_json' => wp_json_encode($polished),
+            'review_json' => '',
+            'error_text' => 'Polished once to try for a 90 review score.',
+        ));
+        wp_schedule_single_event(time() + 1, self::CRON_HOOK, array('review', (int) $id, wp_generate_uuid4()));
+        return true;
     }
 
     private function pipeline_publish($id, $item, $s) {
