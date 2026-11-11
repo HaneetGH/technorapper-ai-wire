@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.64
+Stable tag: 0.2.65
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.65 =
+* Hosted-image backfill no longer runs inside admin page loads, so wp-admin / AI Wire does not hang after update.
 
 = 0.2.64 =
 * Auto-publish runs a pre-publish SEO and editorial gate (clickbait, placeholders, near-duplicates, brand identity). Existing score, similarity, and SEO settings still decide the rest. The plugin no longer prints a second NewsArticle JSON-LD graph.
@@ -118,6 +121,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.65 =
+Fixes wp-admin hanging after update. Image backfill now runs in the background.
 
 = 0.2.64 =
 New posts must pass a pre-publish SEO and editorial gate. Daily cap, review score, and similarity settings are unchanged.

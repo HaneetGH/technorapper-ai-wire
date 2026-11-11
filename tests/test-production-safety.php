@@ -1503,6 +1503,43 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertGreaterThan(0, (int) get_post($post_id)->post_author);
     }
 
+    public function test_hosted_image_backfill_does_not_block_wp_admin() {
+        delete_option('tr_ai_wire_hosted_images_22');
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        $id = $this->create_queue_item();
+        $post_id = self::factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Admin hang check',
+            'meta_input' => array(
+                '_tr_ai_wire_queue_id' => $id,
+                '_tr_ai_wire_source_image' => 'https://cdn.example.com/photo.jpg',
+            ),
+        ));
+        set_current_screen('dashboard');
+        $this->plugin->maybe_backfill_home_media();
+        $this->assertSame('1', get_option('tr_ai_wire_hosted_images_22'));
+        $this->assertSame(0, (int) $this->invoke_private('real_thumbnail_id', array($post_id)));
+        $job = get_option(TechnoRapper_AI_Wire::JOB_OPTION, array());
+        $this->assertSame('repair', $job['kind'] ?? '');
+        $this->assertSame('queued', $job['status'] ?? '');
+        unset($GLOBALS['current_screen']);
+    }
+
+    public function test_hosted_image_backfill_still_runs_outside_admin() {
+        delete_option('tr_ai_wire_hosted_images_22');
+        $id = $this->create_queue_item();
+        $post_id = self::factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Cron backfill check',
+            'meta_input' => array(
+                '_tr_ai_wire_queue_id' => $id,
+            ),
+        ));
+        $this->plugin->maybe_backfill_home_media();
+        $this->assertSame('1', get_option('tr_ai_wire_hosted_images_22'));
+        $this->assert_featured_image_is_hosted($post_id);
+    }
+
     public function test_migrate_older_images_hosts_remote_featured_and_body() {
         $id = $this->create_queue_item();
         $post_id = self::factory()->post->create(array(

@@ -28,8 +28,22 @@ trait TechnoRapper_AI_Wire_Publisher {
         if (get_option('tr_ai_wire_hosted_images_22') === '1') {
             return;
         }
-        $this->repair_home_posts(40);
+        // Mark done first. If this runs on admin_init and then sideloads
+        // dozens of photos, a timeout never saves the flag and wp-admin
+        // hangs on every later dashboard load.
         update_option('tr_ai_wire_hosted_images_22', '1', false);
+        if ($this->should_defer_media_backfill()) {
+            $this->enqueue_background_job('repair');
+            return;
+        }
+        $this->repair_home_posts(40);
+    }
+
+    private function should_defer_media_backfill() {
+        if (function_exists('wp_doing_cron') && wp_doing_cron()) {
+            return false;
+        }
+        return is_admin();
     }
 
     public function migrate_hosted_images($limit = 400) {
