@@ -846,6 +846,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $credentials = $this->social_credentials();
         $limit = min(20, max(1, (int) ($settings['social_daily_limit'] ?? 10)));
+        $instagram_spacing_wait = 0;
         if ($this->social_published_today() >= $limit) {
             global $wpdb;
             $table = $this->social_table();
@@ -876,6 +877,13 @@ trait TechnoRapper_AI_Wire_Social {
                 }
                 continue;
             }
+            if ((string) ($row['platform'] ?? '') === 'instagram' && !$this->social_item_is_manual_repost($row)) {
+                $wait = $this->instagram_spacing_wait_seconds();
+                if ($wait > 0) {
+                    $instagram_spacing_wait = max($instagram_spacing_wait, $wait);
+                    continue;
+                }
+            }
             $claimed = $wpdb->query($wpdb->prepare(
                 "UPDATE {$wpdb->prefix}tr_ai_wire_social SET status = 'processing', attempts = attempts + 1, updated_at = %s WHERE id = %d AND status = 'queued'",
                 current_time('mysql', true),
@@ -893,6 +901,7 @@ trait TechnoRapper_AI_Wire_Social {
                     $this->finish_instagram_pack($pack, $this->publish_x_pack($pack, $credentials, $settings));
                 } elseif ($row['platform'] === 'instagram') {
                     $this->finish_instagram_pack($pack, $this->publish_instagram_pack($pack, $credentials, $settings));
+                    $instagram_spacing_wait = max($instagram_spacing_wait, $this->instagram_stills_spacing_seconds());
                 } else {
                     $result = $this->publish_social_item($row, $credentials, $settings);
                     if (is_wp_error($result)) {
@@ -940,14 +949,40 @@ trait TechnoRapper_AI_Wire_Social {
                 break;
             }
             $this->finish_social_item($row['id'], 'published', $result['id'], $result['url'], '');
+            if ((string) ($row['platform'] ?? '') === 'instagram') {
+                $instagram_spacing_wait = max($instagram_spacing_wait, $this->instagram_stills_spacing_seconds());
+            }
             break;
         }
 
         $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'");
         $finishable = $this->social_finishable_queued_count();
         if ($remaining > 0 && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0)) {
-            $this->kick_social_queue($finishable > 0 ? 5 : 60);
+            $delay = $finishable > 0 ? 5 : 60;
+            if ($instagram_spacing_wait > 0) {
+                $delay = max($delay, $instagram_spacing_wait);
+            }
+            $this->kick_social_queue($delay);
         }
+    }
+
+    private function instagram_stills_spacing_seconds() {
+        return (int) self::SOCIAL_INSTAGRAM_STILL_SPACING;
+    }
+
+    private function instagram_spacing_wait_seconds() {
+        global $wpdb;
+        $last = $wpdb->get_var("SELECT updated_at FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' AND status = 'published' ORDER BY updated_at DESC LIMIT 1");
+        if (!is_string($last) || $last === '') {
+            return 0;
+        }
+        $ts = strtotime($last . ' UTC');
+        if (!$ts) {
+            return 0;
+        }
+        $need = $this->instagram_stills_spacing_seconds();
+        $elapsed = time() - $ts;
+        return $elapsed >= $need ? 0 : ($need - $elapsed);
     }
 
     private function social_queued_rows_for_worker($limit) {
@@ -1516,10 +1551,7 @@ trait TechnoRapper_AI_Wire_Social {
             }
         }
         $caption = implode("\n", $lines) . "\n\n" . $cta;
-        $home = home_url('/');
-        if (strpos($caption, $home) === false) {
-            $caption .= "\n" . $home;
-        }
+        $caption = $this->instagram_caption_without_links($caption, $cta);
         if ($hashtags) {
             $tag_line = '';
             foreach ($hashtags as $tag) {
@@ -1679,7 +1711,7 @@ trait TechnoRapper_AI_Wire_Social {
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
             . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
-            . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook, 2–4 short lines that pay off the curiosity, then CTA; do not include the URL. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
+            . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line, 2–4 short lines that pay off the curiosity, then tell them the full story is in the bio. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
             . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway without opening the article. Three beats: hook in the first sentence; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
             . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
@@ -1729,9 +1761,7 @@ trait TechnoRapper_AI_Wire_Social {
         $x = $this->fit_social_with_url($x_body, $url, 270);
         $caption = trim((string) ($raw['instagram_caption'] ?? ($hook . "\n\n" . $excerpt)));
         $caption = $this->clip_social_block($caption, 1800);
-        if (strpos($caption, $url) === false) {
-            $caption = trim($caption . "\n\n" . $cta . "\n" . $url);
-        }
+        $caption = $this->instagram_caption_without_links($caption, $cta);
         if ($hashtags) {
             $tag_line = '';
             foreach ($hashtags as $tag) {
@@ -2294,11 +2324,79 @@ trait TechnoRapper_AI_Wire_Social {
         ), false);
     }
 
+    private function social_min_review_score($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        return min(100, max(0, (int) ($settings['social_min_review_score'] ?? 90)));
+    }
+
+    private function social_article_review_score($post_id) {
+        $qid = (int) get_post_meta((int) $post_id, '_tr_ai_wire_queue_id', true);
+        if ($qid < 1) {
+            return null;
+        }
+        $item = $this->get_item($qid);
+        if (!is_array($item)) {
+            return null;
+        }
+        return $this->extract_review_score($item['review_json'] ?? '');
+    }
+
+    private function social_article_clears_quality_gate($post_id, $settings = null) {
+        $min = $this->social_min_review_score($settings);
+        if ($min < 1) {
+            return true;
+        }
+        $score = $this->social_article_review_score($post_id);
+        if ($score === null) {
+            return true;
+        }
+        return $score >= $min;
+    }
+
+    private function mark_social_quality_skip($post_id, $settings = null) {
+        $score = $this->social_article_review_score($post_id);
+        $min = $this->social_min_review_score($settings);
+        $detail = $score === null
+            ? 'No review score'
+            : ('Review score ' . (string) $score . ' is below the social minimum ' . (string) $min);
+        update_post_meta((int) $post_id, '_tr_ai_wire_social_skip', $detail);
+    }
+
+    private function social_quality_label($post_id) {
+        $post_id = (int) $post_id;
+        if ($post_id < 1) {
+            return '';
+        }
+        $skip = trim((string) get_post_meta($post_id, '_tr_ai_wire_social_skip', true));
+        if ($skip !== '') {
+            return 'Skipped';
+        }
+        $mode = sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        if ($mode === 'reel') {
+            return 'Reel';
+        }
+        if ($mode === 'pack' || $mode === 'carousel') {
+            return 'Carousel';
+        }
+        if ($mode === 'collage') {
+            return 'Collage';
+        }
+        if ($mode === 'single') {
+            return 'Still';
+        }
+        return '';
+    }
+
     private function collect_social_article($post_id, $settings) {
         $post_id = (int) $post_id;
         if ($post_id < 1) {
             return;
         }
+        if (!$this->social_article_clears_quality_gate($post_id, $settings)) {
+            $this->mark_social_quality_skip($post_id, $settings);
+            return;
+        }
+        delete_post_meta($post_id, '_tr_ai_wire_social_skip');
         $left = $this->social_mix_remaining($settings);
         if ($left['reel'] > 0) {
             $this->enqueue_social_article($post_id, 'reel');
@@ -2365,6 +2463,9 @@ trait TechnoRapper_AI_Wire_Social {
                 $platform
             ));
             if ($exists > 0) {
+                continue;
+            }
+            if (!$this->social_article_clears_quality_gate($post_id)) {
                 continue;
             }
             if ($platform === 'youtube') {
@@ -3590,7 +3691,26 @@ trait TechnoRapper_AI_Wire_Social {
         return $media_id;
     }
 
+    private function strip_http_urls_from_text($text) {
+        $text = preg_replace('#https?://\S+#i', '', (string) $text);
+        $text = preg_replace("/\n[ \t]*\n[ \t]*\n+/", "\n\n", (string) $text);
+        return trim((string) $text);
+    }
+
+    private function instagram_caption_without_links($caption, $cta = '') {
+        $caption = $this->strip_http_urls_from_text($caption);
+        $cta = $this->strip_http_urls_from_text($cta);
+        if ($cta !== '' && stripos($caption, $cta) === false) {
+            $caption = trim($caption . "\n\n" . $cta);
+        }
+        if ($caption !== '' && stripos($caption, 'link in bio') === false) {
+            $caption = trim($caption . "\n\nLink in bio.");
+        }
+        return $this->clip_social_block($caption, 2200);
+    }
+
     private function publish_instagram_post($caption, $alt_text, $image_url, $credentials, $video_url = '') {
+        $caption = $this->instagram_caption_without_links($caption);
         $video_url = is_string($video_url) ? $video_url : '';
         if ($video_url !== '' && wp_http_validate_url($video_url)) {
             return $this->publish_instagram_reel($caption, $video_url, $credentials);
@@ -3666,6 +3786,7 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function publish_instagram_reel($caption, $video_url, $credentials) {
+        $caption = $this->instagram_caption_without_links($caption);
         if (!is_string($video_url) || $video_url === '' || !wp_http_validate_url($video_url)) {
             return new WP_Error('tr_ai_wire_ig_video_url', 'The Instagram Reel must have a public HTTP(S) Media Library URL.');
         }

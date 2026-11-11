@@ -163,6 +163,25 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->queue_social_for_post('publish', $old_status, get_post($post_id));
     }
 
+    private function attach_review_score($post_id, $score) {
+        $post_id = (int) $post_id;
+        $qid = (int) get_post_meta($post_id, '_tr_ai_wire_queue_id', true);
+        $item = $qid > 0 ? $this->invoke_private('get_item', array($qid)) : null;
+        if (!is_array($item)) {
+            $qid = $this->create_queue_item('published');
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', $qid);
+        }
+        $this->invoke_private('update_item', array($qid, array(
+            'status' => 'published',
+            'wp_post_id' => $post_id,
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => (int) $score,
+                'safe_to_publish' => true,
+            )),
+        )));
+    }
+
     private function create_queue_item($status = 'reviewed') {
         return $this->invoke_private('insert_item', array(
             hash('sha256', wp_generate_uuid4()),
@@ -794,6 +813,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $settings['social_collage_daily_limit']);
         $this->assertSame(3, $settings['social_single_daily_limit']);
         $this->assertSame(0, $settings['social_reel_daily_limit']);
+        $this->assertSame(90, (int) $settings['social_min_review_score']);
         $this->assertSame(0, (int) $settings['social_mix_saved']);
         $this->assertSame(array_keys(TechnoRapper_AI_Wire::social_news_formats()), $settings['social_news_formats']);
         $this->assertArrayNotHasKey('social_pack_wait_minutes', $settings);
@@ -2339,6 +2359,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         )));
         $this->assertSame(3, $day['count']);
         $this->assertSame(76.7, $day['average']);
+        $this->assertSame(90, (int) $day['social_min_score']);
         $this->assertSame(66.7, $day['seo_average']);
         $this->assertSame(3, $day['above_min']);
         $this->assertSame(1, $day['distribution']['50-69']);
@@ -2498,23 +2519,118 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'on_image_subhead' => 'AI servers are the new battleground',
             'cta' => 'Read the full story on TechnoRapper',
             'x_text' => 'Qualcomm is chasing AI servers, not just phones.',
-            'instagram_caption' => "Your next phone chip has a server cousin\n\nWhat changed: a bigger data-center push.",
+            'instagram_caption' => "Your next phone chip has a server cousin\n\nWhat changed: a bigger data-center push.\nhttps://example.com/do-not-post",
             'hashtags' => array('AI', 'Qualcomm', 'bad tag!'),
         ), get_post($post_id)));
         $permalink = get_permalink($post_id);
         $this->assertSame('Qualcomm wants the data center', $copy['on_image_headline']);
         $this->assertSame('Your next phone chip has a server cousin', $copy['hook']);
         $this->assertStringContainsString($permalink, $copy['x']);
-        $this->assertStringContainsString($permalink, $copy['instagram']);
+        $this->assertStringNotContainsString($permalink, $copy['instagram']);
+        $this->assertStringNotContainsString('http://', $copy['instagram']);
+        $this->assertStringNotContainsString('https://', $copy['instagram']);
         $this->assertContains('ai', $copy['hashtags']);
         $this->assertContains('qualcomm', $copy['hashtags']);
         $this->assertStringContainsString('Read the full story on TechnoRapper', $copy['instagram']);
+        $this->assertStringContainsString('Link in bio.', $copy['instagram']);
         $this->assertNotSame('', $copy['reel_script']);
         $this->assertGreaterThanOrEqual(3, count($copy['reel_captions']));
         $this->assertSame('Your next phone chip has a server cousin', $copy['youtube_title']);
         $this->assertStringContainsString($permalink, $copy['youtube_description']);
         $this->assertContains('ai', $copy['youtube_tags']);
         $this->assertStringNotContainsString('•', $copy['reel_script']);
+    }
+
+    public function test_weak_review_scores_do_not_queue_instagram_stills() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 0,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 3,
+            'social_min_review_score' => 90,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $weak = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Okay story stays on the website',
+        ));
+        $this->attach_review_score($weak, 86);
+        $this->invoke_private('collect_social_article', array($weak, $settings));
+        global $wpdb;
+        $this->assertSame(0, (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $weak)));
+        $this->assertStringContainsString('86', (string) get_post_meta($weak, '_tr_ai_wire_social_skip', true));
+        $this->assertSame('', (string) get_post_meta($weak, '_tr_ai_wire_social_mode', true));
+
+        $strong = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Strong story can go to Instagram',
+        ));
+        $this->attach_review_score($strong, 92);
+        $this->invoke_private('collect_social_article', array($strong, $settings));
+        $this->assertSame('single', (string) get_post_meta($strong, '_tr_ai_wire_social_mode', true));
+        $this->assertSame('', (string) get_post_meta($strong, '_tr_ai_wire_social_skip', true));
+        $this->assertSame(1, (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram' AND status = 'queued'", $strong)));
+    }
+
+    public function test_social_score_floor_zero_posts_every_published_article() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 0,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 3,
+            'social_min_review_score' => 0,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Low score still posts when the floor is off',
+        ));
+        $this->attach_review_score($post_id, 70);
+        $this->invoke_private('collect_social_article', array($post_id, $settings));
+        global $wpdb;
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertSame(1, (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $post_id)));
+    }
+
+    public function test_instagram_stills_wait_after_a_recent_post() {
+        $this->onboard_social(array('instagram'));
+        global $wpdb;
+        $old_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Already posted still',
+        ));
+        $now = current_time('mysql', true);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $old_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s'));
+        $this->assertSame(10800, $this->invoke_private('instagram_stills_spacing_seconds'));
+        $this->assertGreaterThan(0, $this->invoke_private('instagram_spacing_wait_seconds'));
+
+        $next_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Next still should wait',
+        ));
+        update_post_meta($next_id, '_tr_ai_wire_queue_id', 940);
+        $this->invoke_private('collect_social_article', array($next_id, $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()))));
+        $publish_calls = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$publish_calls) {
+            if (strpos((string) $url, '/media_publish') !== false) {
+                $publish_calls++;
+            }
+            return new WP_Error('blocked', 'Instagram should not publish while spacing.');
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $next_id), ARRAY_A);
+        $this->assertSame('queued', $row['status']);
+        $this->assertSame(0, $publish_calls);
     }
 
     public function test_zero_social_image_budget_blocks_generation() {
@@ -2901,6 +3017,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'social_single_daily_limit' => 3,
         ));
         $this->assertSame(1, $reel_mix['social_reel_daily_limit']);
+        $this->assertSame(90, (int) $this->plugin->sanitize_settings(array('social_post_format' => 'single'))['social_min_review_score']);
+        $this->assertSame(85, (int) $this->plugin->sanitize_settings(array('social_min_review_score' => 85))['social_min_review_score']);
+        $this->assertSame(0, (int) $this->plugin->sanitize_settings(array('social_min_review_score' => 0))['social_min_review_score']);
+        $this->assertSame(100, (int) $this->plugin->sanitize_settings(array('social_min_review_score' => 140))['social_min_review_score']);
         $this->assertSame('carousel', $reel_mix['social_post_format']);
         $this->assertSame(array('carousel' => 2, 'collage' => 0, 'single' => 3, 'reel' => 1), $this->invoke_private('social_daily_mix_limits', array($reel_mix)));
         $reels_only = $this->plugin->sanitize_settings(array(
@@ -3134,6 +3254,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $caption = $this->invoke_private('instagram_pack_caption', array($posts));
         $this->assertStringContainsString('Don\'t skip the last slide.', $caption);
         $this->assertStringContainsString('First story', $caption);
+        $this->assertStringContainsString('Link in bio.', $caption);
+        $this->assertStringNotContainsString('http://', $caption);
+        $this->assertStringNotContainsString('https://', $caption);
         $urls = $this->invoke_private('instagram_carousel_urls', array($posts, array(
             'social_news_formats' => array('editorial_poster'),
         )));
@@ -3250,6 +3373,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('13-inch or 15-inch Air?', $pack_caption);
         $this->assertStringContainsString('When fake IDs become easier to scale', $pack_caption);
         $this->assertStringContainsString('When big tech becomes politics', $pack_caption);
+        $this->assertStringContainsString('Link in bio.', $pack_caption);
+        $this->assertStringNotContainsString('http://', $pack_caption);
+        $this->assertStringNotContainsString('https://', $pack_caption);
         $this->assertSame(3, $this->invoke_private('social_published_today'));
     }
 
@@ -3578,7 +3704,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             }
             if (($body['media_type'] ?? '') === 'CAROUSEL') {
                 $parents++;
-                $this->assertSame('Caption for the carousel', $body['caption'] ?? '');
+                $this->assertSame("Caption for the carousel\n\nLink in bio.", $body['caption'] ?? '');
                 $this->assertStringContainsString(',', (string) ($body['children'] ?? ''));
             }
         }
@@ -3892,7 +4018,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (($body['media_type'] ?? '') === 'REELS') {
                 $reels++;
                 $this->assertSame('https://example.org/story.mp4', $body['video_url'] ?? '');
-                $this->assertSame('Spoken reel caption', $body['caption'] ?? '');
+                $this->assertSame("Spoken reel caption\n\nLink in bio.", $body['caption'] ?? '');
                 $this->assertArrayNotHasKey('image_url', $body);
                 $this->assertArrayNotHasKey('children', $body);
             }

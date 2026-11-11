@@ -58,7 +58,7 @@ The separation is intentional:
 
 1. **Editorial processing:** AI Wire discovers and deduplicates a source, then runs Writer → Reviewer and applies its existing gates.
 2. **Article creation:** A passing item becomes a WordPress draft or published post. Social work starts only after WordPress confirms `publish`, including a later draft-to-publish transition.
-3. **Queue insert:** For each connected, enabled platform, insert one `queued` row. YouTube is skipped unless the article’s social mode is `reel`.
+3. **Queue insert:** Skip social if the article’s review score is below `social_min_review_score` (default **90**). Qualifying articles get one `queued` row per connected platform. YouTube is skipped unless the article’s social mode is `reel`. Instagram stills wait at least 3 hours after the last Instagram publish, and their captions never include a URL.
 4. **Copy generation:** One Writer JSON pass. Invalid or policy-failing copy is held; it is never sent to an adapter.
 5. **Still graphic:** GPT Image 2 low 1080×1350, GD overlay of this site’s name, cached as `_tr_ai_wire_social_image_id`. Reused across platforms. X always gets this still (even when Instagram/YouTube get a Reel).
 6. **Spoken Reel (when mix allots a Reel):** Fal image-to-video (suggested Veo 3.1 Lite), Mini TTS (`gpt-4o-mini-tts` / `cedar`), ffmpeg mux with captions and a brand sting. Missing Fal key or `ffmpeg` **holds** the job — no slideshow fallback.
@@ -183,6 +183,8 @@ Keep three measurements distinct:
 Before production automation, verify that:
 
 - A draft, rejected article and failed editorial job never create social rows.
+- A published article below `social_min_review_score` (default 90) creates no social rows; it stays on the website.
+- Instagram captions never include a URL. Stills wait at least 3 hours after the last Instagram publish.
 - Publish (including draft-to-publish) creates at most one row per enabled destination.
 - YouTube rows appear only for Reel-mode articles.
 - Social generation cannot write into the article featured-image field.

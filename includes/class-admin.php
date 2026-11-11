@@ -245,6 +245,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
                     <h2>Distribution</h2>
                     <p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per network that is turned on.</span></p>
+                    <p><label for="tr-social-min-score">Minimum review score to post stills</label> <input id="tr-social-min-score" type="number" min="0" max="100" name="<?php echo esc_attr($option); ?>[social_min_review_score]" value="<?php echo esc_attr((int) ($s['social_min_review_score'] ?? 90)); ?>"> <span class="description">Only stories at or above this score get an Instagram or X graphic. Weaker published articles stay on the website so the feed is not a graveyard of 15-view posts. 0 posts every published article. Default 90. Instagram captions never include a URL (link in bio instead), and stills are spaced at least 3 hours apart. Reels stay off until you raise Reels per day.</span></p>
                     <p class="description">Outbound captions, Reel scripts, YouTube titles/descriptions/tags, and on-image lines are scanned for profanity/slurs and sent through OpenAI Moderation before X, Instagram, or YouTube. A fail holds the job for review — it does not post.</p>
                     <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_mix_saved]" value="1">
@@ -478,7 +479,7 @@ trait TechnoRapper_AI_Wire_Admin {
         ?>
         <div class="wrap">
             <h1>AI Wire — Scores</h1>
-            <p>Average reviewer score for items in the selected range. The yellow line is your minimum review score. Grey bars are how many items landed in that day, week, or month.</p>
+            <p>Average reviewer score for items in the selected range. The yellow line is your minimum review score. Grey bars are how many items landed in that day, week, or month. Instagram and X stills only go out at or above the social stills minimum (default 90); weaker stories stay on the website.</p>
             <form method="get" style="margin:16px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
                 <input type="hidden" name="page" value="tr-ai-wire-scores">
                 <p><label for="tr-score-range"><strong>Range</strong></label><br>
@@ -500,6 +501,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <div class="card" style="margin:0;padding:14px 16px;"><p class="description" style="margin:0;">Average SEO score</p><p style="font-size:28px;margin:4px 0 0;"><strong><?php echo esc_html($report['seo_average'] !== null ? number_format_i18n($report['seo_average'], 1) : '—'); ?></strong></p></div>
                 <div class="card" style="margin:0;padding:14px 16px;"><p class="description" style="margin:0;">Scored items</p><p style="font-size:28px;margin:4px 0 0;"><strong><?php echo esc_html(number_format_i18n($report['count'])); ?></strong></p></div>
                 <div class="card" style="margin:0;padding:14px 16px;"><p class="description" style="margin:0;">At or above minimum (<?php echo esc_html((string) $report['min_score']); ?>)</p><p style="font-size:28px;margin:4px 0 0;"><strong><?php echo esc_html($report['count'] ? number_format_i18n($report['above_min_rate'], 1) . '%' : '—'); ?></strong></p></div>
+                <div class="card" style="margin:0;padding:14px 16px;"><p class="description" style="margin:0;">Social stills minimum</p><p style="font-size:28px;margin:4px 0 0;"><strong><?php echo esc_html((string) (int) ($report['social_min_score'] ?? 90)); ?></strong></p></div>
             </div>
             <p><span style="display:inline-block;width:12px;height:12px;background:#2271b1;margin-right:6px;"></span> Review score
                 <span style="display:inline-block;width:12px;height:12px;background:#00a32a;margin:0 6px 0 16px;"></span> SEO score
@@ -537,10 +539,10 @@ trait TechnoRapper_AI_Wire_Admin {
             </table>
             <h2>Latest scored items</h2>
             <table class="widefat striped" style="max-width:960px;">
-                <thead><tr><th>When (UTC)</th><th>Source</th><th>Status</th><th>Review</th><th>SEO</th></tr></thead>
+                <thead><tr><th>When (UTC)</th><th>Source</th><th>Status</th><th>Review</th><th>SEO</th><th>Social</th></tr></thead>
                 <tbody>
                 <?php if (empty($report['recent'])) : ?>
-                    <tr><td colspan="5">No scored items yet. Run the queue after the reviewer has scored an item.</td></tr>
+                    <tr><td colspan="6">No scored items yet. Run the queue after the reviewer has scored an item.</td></tr>
                 <?php else : foreach ($report['recent'] as $item) : ?>
                     <tr>
                         <td><?php echo esc_html($item['created_at']); ?></td>
@@ -548,6 +550,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <td><?php echo esc_html($item['status']); ?></td>
                         <td><?php echo esc_html((string) $item['score']); ?></td>
                         <td><?php echo esc_html($item['seo_score'] !== null ? (string) $item['seo_score'] : '—'); ?></td>
+                        <td><?php echo esc_html($item['social'] !== '' ? $item['social'] : '—'); ?></td>
                     </tr>
                 <?php endforeach; endif; ?>
                 </tbody>
