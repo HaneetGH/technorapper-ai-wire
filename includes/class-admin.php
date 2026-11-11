@@ -269,20 +269,21 @@ trait TechnoRapper_AI_Wire_Admin {
                     <h2>Distribution</h2>
                     <p class="description" data-tr-reveal-none="tr-social-x-enabled,tr-social-ig-enabled,tr-social-yt-enabled"<?php echo $any_network ? ' hidden' : ''; ?>>Turn on X, Instagram, or YouTube above to configure how many posts go out each day.</p>
                     <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled,tr-social-yt-enabled"<?php echo $any_network ? '' : ' hidden'; ?>>
-                    <p><label for="tr-social-daily-limit">Maximum articles distributed per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr($s['social_daily_limit']); ?>"> <span class="description">Each article can create one post per network that is turned on.</span></p>
+                    <?php $mix_budget = min(20, max(1, (int) ($s['social_daily_limit'] ?? 10))); ?>
+                    <p><label for="tr-social-daily-limit">Social posts per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr((string) $mix_budget); ?>"> <span class="description">This is the total. Split it below — 5 can be 2 carousels, 1 collage, and 2 singles. Each social post still goes to every network that is turned on.</span></p>
                     <p class="description">Outbound captions, Reel scripts, YouTube titles/descriptions/tags, and on-image lines are scanned for profanity/slurs and sent through OpenAI Moderation before X, Instagram, or YouTube. A fail holds the job for review — it does not post.</p>
                     <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
                     <p><label for="tr-social-min-score">Minimum review score to post stills</label> <input id="tr-social-min-score" type="number" min="0" max="100" name="<?php echo esc_attr($option); ?>[social_min_review_score]" value="<?php echo esc_attr((int) ($s['social_min_review_score'] ?? 90)); ?>"> <span class="description">Only stories at or above this score get an Instagram or X graphic. 90 now means a complete original article (named change in the title, unique angle, takeaways, FAQ). A website-publishable 85–89 stays on the site. The writer aims at 90; a clustered 85–89 with no remaining defect is raised to 90, and one polish pass runs when the reviewer named fixes. 0 posts every published article. Default 90. Instagram captions never include a URL (link in bio instead), and stills are spaced at least 3 hours apart.</span></p>
                     <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
                     </div>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_mix_saved]" value="1">
-                    <h3 style="margin:16px 0 8px;">How many of each post</h3>
-                    <p class="description">Set a type to 0 to turn it off. The job fills Reel quota first (one spoken story), then carousel, then collages, then single stories.</p>
+                    <h3 style="margin:16px 0 8px;">Split that total</h3>
+                    <p class="description" id="tr-social-mix-remaining">Assign Reels, carousels, collages, and single-story posts so they add up to the total above. Set a type to 0 to turn it off. The job fills Reel quota first, then carousel, then collages, then singles.</p>
                     <div data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="0">
                     <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X still gets the still poster.</span></p>
                     <div data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>
-                    <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"></p>
+                    <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"></p>
                     <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label> <input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"> <span class="description">Default $10 covers about one 8s Veo Lite clip per day. Raise this before switching to Fast, full Veo, or Kling. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
                     <fieldset id="tr-social-reel-model">
                         <legend>Reel motion model</legend>
@@ -336,12 +337,12 @@ trait TechnoRapper_AI_Wire_Admin {
                     </div>
                     </div>
                     <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
-                    <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 3); ?>"> <span class="description">Swipeable Instagram posts. On smaller accounts these usually beat single stills. Each one uses several website articles and a curiosity slide so people keep swiping. Default 3.</span></p>
-                    <p><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"> <span class="description">Several website articles in one grid image.</span></p>
+                    <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 3); ?>"> <span class="description">Swipeable Instagram posts. Each one uses several website articles and a curiosity slide so people keep swiping.</span></p>
+                    <p><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"> <span class="description">Several website articles in one grid image.</span></p>
                     <div data-tr-reveal-any="tr-social-carousel-daily,tr-social-collage-daily"<?php echo ((int) ($s['social_carousel_daily_limit'] ?? 3) > 0 || (int) ($s['social_collage_daily_limit'] ?? 0) > 0) ? '' : ' hidden'; ?>>
                     <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
                     </div>
-                    <p><label for="tr-social-single-daily">Single-story posts per day</label> <input id="tr-social-single-daily" type="number" min="0" max="10" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 2); ?>"> <span class="description">One website article, one social post. Default 2. Prefer carousels when a story can fill several slides.</span></p>
+                    <p><label for="tr-social-single-daily">Normal / single-story posts per day</label> <input id="tr-social-single-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 2); ?>"> <span class="description">One website article, one social post.</span></p>
                     <p class="description">Artwork is GPT Image 2 low; type is overlaid locally for stills. Image estimate $0.006 each. X API charges are separate. That file is a social asset only — it never becomes the article featured image.</p>
                     </div>
                     <p class="description" data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal model you selected to animate the social photograph, and ffmpeg to mux captions. One article only — not a roundup of the day’s posts. Mini TTS about $0.004.</p>
@@ -489,11 +490,73 @@ trait TechnoRapper_AI_Wire_Admin {
     var n = parseInt(el.value, 10);
     return !isNaN(n) && n > 0;
   }
+  function num(el, fallback) {
+    if (!el) return fallback || 0;
+    var n = parseInt(el.value, 10);
+    return isNaN(n) ? (fallback || 0) : n;
+  }
+  function mixFields() {
+    return ['tr-social-reel-daily', 'tr-social-carousel-daily', 'tr-social-collage-daily', 'tr-social-single-daily']
+      .map(function (id) { return document.getElementById(id); })
+      .filter(Boolean);
+  }
+  function dailyTotal() {
+    return Math.min(20, Math.max(1, num(document.getElementById('tr-social-daily-limit'), 10)));
+  }
+  function stealFor(field) {
+    if (!field) return;
+    var total = dailyTotal();
+    var need = Math.max(0, num(field, 0));
+    var others = 0;
+    mixFields().forEach(function (el) { if (el !== field) others += Math.max(0, num(el, 0)); });
+    var over = others + need - total;
+    if (over <= 0) return;
+    ['tr-social-single-daily', 'tr-social-collage-daily', 'tr-social-carousel-daily', 'tr-social-reel-daily'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el || el === field || over <= 0) return;
+      var take = Math.min(Math.max(0, num(el, 0)), over);
+      el.value = String(Math.max(0, num(el, 0) - take));
+      over -= take;
+    });
+    if (over > 0) field.value = String(Math.max(0, need - over));
+  }
+  function capMixToTotal() {
+    var total = dailyTotal();
+    var used = 0;
+    ['tr-social-reel-daily', 'tr-social-carousel-daily', 'tr-social-collage-daily', 'tr-social-single-daily'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var keep = Math.min(Math.max(0, num(el, 0)), Math.max(0, total - used));
+      el.value = String(keep);
+      used += keep;
+    });
+  }
+  function syncMixBudget(active) {
+    var total = dailyTotal();
+    var fields = mixFields();
+    if (!fields.length) return;
+    if (active) stealFor(active);
+    var sum = 0;
+    fields.forEach(function (el) { sum += Math.max(0, num(el, 0)); });
+    fields.forEach(function (el) {
+      var others = 0;
+      fields.forEach(function (o) { if (o !== el) others += Math.max(0, num(o, 0)); });
+      el.max = String(Math.max(0, total - others));
+    });
+    var note = document.getElementById('tr-social-mix-remaining');
+    if (note) {
+      var left = Math.max(0, total - sum);
+      note.textContent = left === 0
+        ? ('All ' + total + ' posts are assigned. Change a number above to free a slot.')
+        : (left + ' of ' + total + ' posts left to assign across Reels, carousels, collages, and singles.');
+    }
+  }
   function syncCount(toggle, field) {
     if (!toggle || !field) return;
     if (toggle.checked) {
       var last = parseInt(field.getAttribute('data-tr-last') || '0', 10);
       if (parseInt(field.value, 10) < 1) field.value = String(last > 0 ? last : 1);
+      stealFor(field);
     } else {
       var current = parseInt(field.value, 10);
       if (current > 0) field.setAttribute('data-tr-last', String(current));
@@ -526,10 +589,18 @@ trait TechnoRapper_AI_Wire_Admin {
       }
       if (t.id === 'tr-social-reel-enabled') syncCount(t, document.getElementById('tr-social-reel-daily'));
       if (t.id === 'tr-comic-enabled') syncCount(t, document.getElementById('tr-comic-daily'));
+      if (t.id === 'tr-social-daily-limit') capMixToTotal();
       reveal();
+      syncMixBudget(t.classList && t.classList.contains('tr-social-mix-count') ? t : null);
     });
-    root.addEventListener('input', reveal);
+    root.addEventListener('input', function (e) {
+      reveal();
+      var t = e.target;
+      if (t && t.id === 'tr-social-daily-limit') capMixToTotal();
+      syncMixBudget(t && t.classList && t.classList.contains('tr-social-mix-count') ? t : null);
+    });
     reveal();
+    syncMixBudget(null);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();

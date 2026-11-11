@@ -59,6 +59,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 = 0.2.66 =
 * Settings only show detail fields for features that are on. Reels off hides daily video count, budget, model, clip length, and Fal key. YouTube off hides category and subscriber notify. Comic and A/B experiment IDs stay hidden until those features are enabled.
 * Carousel (and collage) daily counts actually run. The mix no longer throws those quotas away when the legacy post-format value is still "single", which is why only single stills were going out. A one-article leftover stays held instead of posting as a fake single.
+* Social posts per day is the total. Reels, carousels, collages, and singles must add up to that number (5 can be 2 carousels + 1 collage + 2 singles). Extra type counts are trimmed on save.
 
 = 0.2.65 =
 * Hosted-image backfill no longer runs inside a page request (wp-admin or frontend WP-Cron). That timeout was causing WordPress’s “There has been a critical error on this website” screen. Repair homepage still does the work in the background.
@@ -127,7 +128,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.2.66 =
-Inactive features no longer show their extra settings. Carousel and collage daily counts now run instead of collapsing to singles.
+Inactive features no longer show their extra settings. Carousel and collage daily counts now run. Social posts per day is the total; split it across Reels, carousels, collages, and singles.
 
 = 0.2.65 =
 Fixes the WordPress critical-error / dashboard hang after update. Image backfill now runs in the background.

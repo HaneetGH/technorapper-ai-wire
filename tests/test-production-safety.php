@@ -3663,8 +3663,31 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'social_single_daily_limit' => 99,
         ));
         $this->assertSame(10, $clamped['social_carousel_daily_limit']);
-        $this->assertSame(10, $clamped['social_collage_daily_limit']);
-        $this->assertSame(10, $clamped['social_single_daily_limit']);
+        $this->assertSame(0, $clamped['social_collage_daily_limit']);
+        $this->assertSame(0, $clamped['social_single_daily_limit']);
+        $split = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_daily_limit' => 5,
+            'social_carousel_daily_limit' => 2,
+            'social_collage_daily_limit' => 1,
+            'social_single_daily_limit' => 2,
+        ));
+        $this->assertSame(5, (int) $split['social_daily_limit']);
+        $this->assertSame(2, (int) $split['social_carousel_daily_limit']);
+        $this->assertSame(1, (int) $split['social_collage_daily_limit']);
+        $this->assertSame(2, (int) $split['social_single_daily_limit']);
+        $this->assertSame(array('carousel' => 2, 'collage' => 1, 'single' => 2, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array($split)));
+        $over = $this->plugin->sanitize_settings(array(
+            'social_mix_saved' => 1,
+            'social_daily_limit' => 5,
+            'social_carousel_daily_limit' => 3,
+            'social_collage_daily_limit' => 1,
+            'social_single_daily_limit' => 4,
+        ));
+        $this->assertSame(3, (int) $over['social_carousel_daily_limit']);
+        $this->assertSame(1, (int) $over['social_collage_daily_limit']);
+        $this->assertSame(1, (int) $over['social_single_daily_limit']);
+        $this->assertSame(17, $this->invoke_private('social_article_daily_limit', array($split)));
         $this->assertSame(array('carousel' => 3, 'collage' => 0, 'single' => 2, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertSame(array('carousel' => 3, 'collage' => 1, 'single' => 4, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array($counts)));
         $reel_mix = $this->plugin->sanitize_settings(array(
@@ -5500,10 +5523,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('API Key Secret', $html);
         $this->assertStringContainsString('Access Token Secret', $html);
         $this->assertStringContainsString('Bearer is not needed', $html);
-        $this->assertStringContainsString('How many of each post', $html);
+        $this->assertStringContainsString('Split that total', $html);
+        $this->assertStringContainsString('Social posts per day', $html);
         $this->assertStringContainsString('Carousel posts per day', $html);
         $this->assertStringContainsString('Collage posts per day', $html);
-        $this->assertStringContainsString('Single-story posts per day', $html);
+        $this->assertStringContainsString('Normal / single-story posts per day', $html);
         $this->assertStringNotContainsString('Instagram post format', $html);
         $this->assertStringContainsString('News graphics we can produce', $html);
         $this->assertStringContainsString('Editorial news poster', $html);

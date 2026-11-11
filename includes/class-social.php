@@ -845,7 +845,7 @@ trait TechnoRapper_AI_Wire_Social {
             set_time_limit(300);
         }
         $credentials = $this->social_credentials();
-        $limit = min(20, max(1, (int) ($settings['social_daily_limit'] ?? 10)));
+        $limit = $this->social_article_daily_limit($settings);
         $instagram_spacing_wait = 0;
         if ($this->social_published_today() >= $limit) {
             global $wpdb;
@@ -2255,10 +2255,10 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_daily_mix_limits($settings) {
         $settings = is_array($settings) ? $settings : array();
         $format = $this->normalize_social_post_format($settings['social_post_format'] ?? 'single');
-        $carousel = min(10, max(0, (int) ($settings['social_carousel_daily_limit'] ?? 0)));
-        $collage = min(10, max(0, (int) ($settings['social_collage_daily_limit'] ?? 0)));
-        $single = min(10, max(0, (int) ($settings['social_single_daily_limit'] ?? 0)));
-        $reel = min(10, max(0, (int) ($settings['social_reel_daily_limit'] ?? 0)));
+        $carousel = min(20, max(0, (int) ($settings['social_carousel_daily_limit'] ?? 0)));
+        $collage = min(20, max(0, (int) ($settings['social_collage_daily_limit'] ?? 0)));
+        $single = min(20, max(0, (int) ($settings['social_single_daily_limit'] ?? 0)));
+        $reel = min(20, max(0, (int) ($settings['social_reel_daily_limit'] ?? 0)));
         if (empty($settings['social_mix_saved'])) {
             if ($format === 'carousel') {
                 if ($carousel < 1) {
@@ -2287,12 +2287,35 @@ trait TechnoRapper_AI_Wire_Social {
                 $single = 2;
             }
         }
-        return array(
+        $mix = $this->clamp_social_mix_counts(array(
+            'reel' => $reel,
             'carousel' => $carousel,
             'collage' => $collage,
             'single' => $single,
-            'reel' => $reel,
+        ), (int) ($settings['social_daily_limit'] ?? 10));
+        return array(
+            'carousel' => $mix['carousel'],
+            'collage' => $mix['collage'],
+            'single' => $mix['single'],
+            'reel' => $mix['reel'],
         );
+    }
+
+    private function social_article_daily_limit($settings) {
+        $settings = is_array($settings) ? $settings : array();
+        $posts = min(20, max(1, (int) ($settings['social_daily_limit'] ?? 10)));
+        $mix = $this->social_daily_mix_limits($settings);
+        $slides = $this->social_pack_slide_count($settings);
+        $need = (int) $mix['reel'] + (int) $mix['single'] + $slides * ((int) $mix['carousel'] + (int) $mix['collage']);
+        if ($need < 1) {
+            $need = $posts;
+        }
+        return min(200, max($posts, $need));
+    }
+
+    private function social_pack_slide_count($settings) {
+        $count = (int) (is_array($settings) ? ($settings['social_slide_count'] ?? 5) : 5);
+        return in_array($count, array(4, 5, 6), true) ? $count : 5;
     }
 
     private function social_mix_remaining($settings) {
@@ -2344,12 +2367,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($limits['carousel'] < 1 && $limits['collage'] < 1) {
             return 1;
         }
-        $count = (int) (is_array($settings) ? ($settings['social_slide_count'] ?? 5) : 5);
-        if (!in_array($count, array(4, 5, 6), true)) {
-            $count = 5;
-        }
-        $limit = min(20, max(1, (int) (is_array($settings) ? ($settings['social_daily_limit'] ?? 10) : 10)));
-        return min($count, $limit);
+        return $this->social_pack_slide_count($settings);
     }
 
     private function social_batch_ids() {
@@ -4474,13 +4492,14 @@ trait TechnoRapper_AI_Wire_Social {
             <?php $this->render_site_context_card('tr-ai-wire-social'); ?>
             <?php
             $published_today = $this->social_published_today();
-            $daily_limit = (int) ($settings['social_daily_limit'] ?? 10);
+            $daily_limit = $this->social_article_daily_limit($settings);
+            $post_limit = (int) ($settings['social_daily_limit'] ?? 10);
             $failed_x = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'x' AND status = 'needs_review'");
             $failed_ig = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' AND status = 'needs_review'");
             $failed_yt = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'youtube' AND status = 'needs_review'");
             $finishable_now = $this->social_finishable_queued_count();
             ?>
-            <p>X posting is <?php echo !empty($settings['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · Instagram posting is <?php echo !empty($settings['social_instagram_enabled']) && TechnoRapper_AI_Wire::instagram_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · YouTube posting is <?php echo !empty($settings['social_youtube_enabled']) && TechnoRapper_AI_Wire::youtube_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Change that on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Today: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?> articles distributed. That cap counts unique website articles, not each platform. A successful Instagram or YouTube post does not spend an extra slot for X on the same article.</p>
+            <p>X posting is <?php echo !empty($settings['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · Instagram posting is <?php echo !empty($settings['social_instagram_enabled']) && TechnoRapper_AI_Wire::instagram_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · YouTube posting is <?php echo !empty($settings['social_youtube_enabled']) && TechnoRapper_AI_Wire::youtube_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Change that on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Planned social posts today: <strong><?php echo esc_html((string) $post_limit); ?></strong>, split in the mix below. Website articles used for that mix: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?>. A carousel or collage spends several articles on one social post. A successful Instagram or YouTube post does not spend an extra slot for X on the same article.</p>
             <?php if ($published_today >= $daily_limit && ($failed_x > 0 || $failed_ig > 0 || $failed_yt > 0 || $finishable_now > 0)) : ?>
             <div class="notice notice-warning"><p><?php
             $parts = array();
