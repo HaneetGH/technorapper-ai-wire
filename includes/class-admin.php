@@ -127,6 +127,19 @@ trait TechnoRapper_AI_Wire_Admin {
                         <p><label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[seo_require_social]" value="1" <?php checked($s['seo_require_social'], 1); ?>> Require social title and description</label></p>
                         <p class="description">These scores are shown on the queue. Missing keyphrase, missing social markup, or a score below the minimum can hold an item. Readability errors are listed but do not block auto-publish. The writer must also add a unique search angle, key takeaways, FAQ, keyphrase slug, internal links, and an editorial-desk byline.</p>
                     </td></tr>
+                    <tr><th colspan="2"><h2 style="margin:12px 0 0;">Other CMS / no CMS</h2><p class="description">WordPress stays the article host on this install. After a post is live, AI Wire can also send the approved article JSON to another site, or write static HTML. This is how Ghost, Webflow, a custom app, or the standalone reader in this repo receive the same story. It does not add social networks.</p></th></tr>
+                    <tr><th scope="row"><label for="tr-cms-webhook">Webhook URL</label></th><td>
+                        <input id="tr-cms-webhook" class="regular-text" type="url" name="<?php echo esc_attr(self::OPTION); ?>[cms_webhook_url]" value="<?php echo esc_attr($s['cms_webhook_url'] ?? ''); ?>" placeholder="https://example.com/ingest.php">
+                        <p class="description">POST of the approved article JSON after WordPress publish. Use the standalone reader’s <code>/ingest.php</code> or any CMS that accepts that payload. Leave blank to skip.</p>
+                    </td></tr>
+                    <tr><th scope="row"><label for="tr-cms-webhook-secret">Webhook secret</label></th><td>
+                        <input id="tr-cms-webhook-secret" class="regular-text" type="password" name="<?php echo esc_attr(self::OPTION); ?>[cms_webhook_secret]" value="" autocomplete="new-password" placeholder="<?php echo ($s['cms_webhook_secret'] ?? '') !== '' ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('Shared with the receiving site'); ?>">
+                        <p class="description">Sent as <code>X-AI-Wire-Signature: sha256=…</code>. A blank field keeps the saved secret.</p>
+                    </td></tr>
+                    <tr><th scope="row">Static export</th><td>
+                        <label><input type="checkbox" name="<?php echo esc_attr(self::OPTION); ?>[cms_static_export]" value="1" <?php checked(!empty($s['cms_static_export'])); ?>> Write HTML and JSON into <code>wp-content/uploads/tr-ai-wire-export/</code></label>
+                        <p class="description">For GitHub Pages, S3, or copying files into the standalone <code>data/articles</code> folder. Off by default.</p>
+                    </td></tr>
                 </table>
                 <?php submit_button('Save settings'); ?>
             </form>

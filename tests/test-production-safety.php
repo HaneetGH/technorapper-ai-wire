@@ -242,6 +242,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $code, implode("\n", $output));
         $this->assertFileExists($dest . '/readme.txt');
         $this->assertFileExists($dest . '/LICENSE');
+        $this->assertFileExists($dest . '/engine/load.php');
+        $this->assertDirectoryDoesNotExist($dest . '/standalone');
         $packed = file_get_contents($dest . '/readme.txt');
         $this->assertMatchesRegularExpression('/^License:\s*GPLv2 or later\s*$/m', $packed);
         $tag_workflow = file_get_contents($root . '/.github/workflows/tag-version.yml');
@@ -2176,6 +2178,106 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('published', $row['status']);
         $this->assertGreaterThan(0, (int) $row['wp_post_id']);
         $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
+    }
+
+    public function test_cms_settings_are_sanitized_and_preserved() {
+        $clean = $this->plugin->sanitize_settings(array(
+            'cms_webhook_url' => 'https://wire.example/ingest.php',
+            'cms_webhook_secret' => 'shared-secret',
+            'cms_static_export' => '1',
+        ));
+        $this->assertSame('https://wire.example/ingest.php', $clean['cms_webhook_url']);
+        $this->assertSame('shared-secret', $clean['cms_webhook_secret']);
+        $this->assertSame(1, (int) $clean['cms_static_export']);
+        $rejected = $this->plugin->sanitize_settings(array(
+            'cms_webhook_url' => 'javascript:alert(1)',
+            'cms_webhook_secret' => 'x',
+            'cms_static_export' => '1',
+        ));
+        $this->assertSame('', $rejected['cms_webhook_url']);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'cms_webhook_url' => 'https://wire.example/ingest.php',
+            'cms_webhook_secret' => 'keep-me',
+            'cms_static_export' => 1,
+        )), false);
+        $preserved = $this->plugin->sanitize_settings(array(
+            'auto_publish' => 1,
+            'max_posts_per_day' => 10,
+        ));
+        $this->assertSame('https://wire.example/ingest.php', $preserved['cms_webhook_url']);
+        $this->assertSame('keep-me', $preserved['cms_webhook_secret']);
+        $this->assertSame(1, (int) $preserved['cms_static_export']);
+        $blank_secret = $this->plugin->sanitize_settings(array(
+            'cms_webhook_url' => 'https://wire.example/ingest.php',
+            'cms_webhook_secret' => '',
+            'cms_static_export' => '1',
+        ));
+        $this->assertSame('keep-me', $blank_secret['cms_webhook_secret']);
+    }
+
+    public function test_cms_static_export_and_webhook_run_after_publish_not_draft() {
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'cms_static_export' => 1,
+            'cms_webhook_url' => 'https://standalone.example/ingest.php',
+            'cms_webhook_secret' => 'test-secret',
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $posted = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$posted) {
+            if (strpos((string) $url, 'standalone.example') !== false) {
+                $posted = array('url' => $url, 'args' => $args);
+                return $this->mock_http_ok('');
+            }
+            return $preempt;
+        }, 10, 3);
+
+        $draft_id = $this->create_queue_item();
+        $draft_settings = $settings;
+        $draft_settings['auto_publish'] = 0;
+        $wpdb_row_json = array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        );
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode($wpdb_row_json),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $draft_id));
+        $this->invoke_private('process_item', array($draft_id, $draft_settings));
+        $dir = $this->plugin->cms_static_export_dir();
+        $this->assertSame('draft', $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $draft_id)));
+        $this->assertEmpty($posted);
+        $this->assertFileDoesNotExist($dir . '/index.html');
+
+        $id = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode($wpdb_row_json),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 90,
+                'policy_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertFileExists($dir . '/index.html');
+        $this->assertNotEmpty(glob($dir . '/*.json'));
+        $this->assertSame('https://standalone.example/ingest.php', $posted['url'] ?? '');
+        $headers = isset($posted['args']['headers']) ? $posted['args']['headers'] : array();
+        $this->assertTrue(TR_AI_Wire_Engine_Webhook::verify('test-secret', (string) ($posted['args']['body'] ?? ''), (string) ($headers['X-AI-Wire-Signature'] ?? '')));
+        $article = TR_AI_Wire_Engine_Article::from_json((string) ($posted['args']['body'] ?? ''));
+        $this->assertSame('A useful technology update', $article['title']);
+        $this->assertSame('publish', $article['status']);
     }
 
     public function test_auto_publish_promotes_an_existing_draft() {
