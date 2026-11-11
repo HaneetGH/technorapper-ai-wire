@@ -2182,11 +2182,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
 
     public function test_cms_settings_are_sanitized_and_preserved() {
         $clean = $this->plugin->sanitize_settings(array(
-            'cms_webhook_url' => 'https://wire.example/ingest.php',
+            'cms_webhook_url' => 'https://example.com/ingest.php',
             'cms_webhook_secret' => 'shared-secret',
             'cms_static_export' => '1',
         ));
-        $this->assertSame('https://wire.example/ingest.php', $clean['cms_webhook_url']);
+        $this->assertSame('https://example.com/ingest.php', $clean['cms_webhook_url']);
         $this->assertSame('shared-secret', $clean['cms_webhook_secret']);
         $this->assertSame(1, (int) $clean['cms_static_export']);
         $rejected = $this->plugin->sanitize_settings(array(
@@ -2196,7 +2196,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $this->assertSame('', $rejected['cms_webhook_url']);
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
-            'cms_webhook_url' => 'https://wire.example/ingest.php',
+            'cms_webhook_url' => 'https://example.com/ingest.php',
             'cms_webhook_secret' => 'keep-me',
             'cms_static_export' => 1,
         )), false);
@@ -2204,11 +2204,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'auto_publish' => 1,
             'max_posts_per_day' => 10,
         ));
-        $this->assertSame('https://wire.example/ingest.php', $preserved['cms_webhook_url']);
+        $this->assertSame('https://example.com/ingest.php', $preserved['cms_webhook_url']);
         $this->assertSame('keep-me', $preserved['cms_webhook_secret']);
         $this->assertSame(1, (int) $preserved['cms_static_export']);
         $blank_secret = $this->plugin->sanitize_settings(array(
-            'cms_webhook_url' => 'https://wire.example/ingest.php',
+            'cms_webhook_url' => 'https://example.com/ingest.php',
             'cms_webhook_secret' => '',
             'cms_static_export' => '1',
         ));
@@ -2218,13 +2218,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     public function test_cms_static_export_and_webhook_run_after_publish_not_draft() {
         $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
             'cms_static_export' => 1,
-            'cms_webhook_url' => 'https://standalone.example/ingest.php',
+            'cms_webhook_url' => 'https://example.com/standalone-ingest.php',
             'cms_webhook_secret' => 'test-secret',
         ));
         update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
         $posted = array();
         add_filter('pre_http_request', function ($preempt, $args, $url) use (&$posted) {
-            if (strpos((string) $url, 'standalone.example') !== false) {
+            if (strpos((string) $url, 'standalone-ingest.php') !== false) {
                 $posted = array('url' => $url, 'args' => $args);
                 return $this->mock_http_ok('');
             }
@@ -2272,7 +2272,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('published', $row['status']);
         $this->assertFileExists($dir . '/index.html');
         $this->assertNotEmpty(glob($dir . '/*.json'));
-        $this->assertSame('https://standalone.example/ingest.php', $posted['url'] ?? '');
+        $this->assertSame('https://example.com/standalone-ingest.php', $posted['url'] ?? '');
         $headers = isset($posted['args']['headers']) ? $posted['args']['headers'] : array();
         $this->assertTrue(TR_AI_Wire_Engine_Webhook::verify('test-secret', (string) ($posted['args']['body'] ?? ''), (string) ($headers['X-AI-Wire-Signature'] ?? '')));
         $article = TR_AI_Wire_Engine_Article::from_json((string) ($posted['args']['body'] ?? ''));
