@@ -1636,11 +1636,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Fail closed', $reviewer);
         $this->assertStringContainsString('hallucinations', $reviewer);
         $this->assertStringContainsString('FAQ', $reviewer);
-        $this->assertStringContainsString('85-92', $reviewer);
+        $this->assertStringContainsString('85-89', $reviewer);
+        $this->assertStringContainsString('90-100', $reviewer);
+        $this->assertStringContainsString('Do not park a 90-checklist article at 85-89', $reviewer);
+        $this->assertStringContainsString('Instagram and X stills require 90', $reviewer);
         $this->assertStringContainsString('Do not deduct below 85', $reviewer);
         $this->assertStringContainsString('fact_flags must be an empty array', $reviewer);
         $this->assertStringContainsString('If a human editor would publish it, score 85', $reviewer);
         $this->assertStringContainsString('do not park a publishable article at 78-84', strtolower($reviewer));
+        $this->assertStringContainsString('Title names the product, company, or policy AND what changed', $writer);
+        $this->assertStringContainsString('Never clone', $writer);
         $this->assertStringContainsString('labeled analysis', strtolower($writer));
         $this->assertStringContainsString('that is not a failure', $writer);
         $this->assertStringContainsString('Never use News or Technology', $writer);
@@ -1660,8 +1665,178 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('You are not the author', $input);
         $this->assertStringContainsString('none supplied. Do not lower the score', $input);
         $this->assertStringContainsString('Publish gate: 85', $input);
+        $this->assertStringContainsString('Social stills gate: 90', $input);
         $this->assertStringContainsString('fact_flags as []', $input);
         $this->assertStringContainsString('If a human editor would publish this, score 85', $input);
+        $this->assertStringContainsString('If the 90 checklist is met, score 90 or higher', $input);
+        $this->assertStringNotContainsString('_tr_score_polish', $input);
+    }
+
+    private function complete_rewrite_for_score($title = 'Apple M5 chip memory bandwidth jumps') {
+        return array(
+            'title' => $title,
+            'lede' => 'Apple M5 chip adds on-device photo models this spring.',
+            'body_html' => '<p>Grounded article body about the M5 chip launch.</p>',
+            'focus_keyphrase' => 'apple m5 chip',
+            'key_takeaways' => array(
+                'Apple M5 chip raises memory bandwidth.',
+                'On-device photo model ships in April.',
+                'Developers get a beta API the same day.',
+            ),
+            'faq' => array(
+                array('question' => 'When does the M5 chip ship?', 'answer' => 'April 2026 according to the source.'),
+                array('question' => 'How much does it cost?', 'answer' => 'The source lists $999.'),
+                array('question' => 'What changed for developers?', 'answer' => 'A new API in the same-day beta.'),
+            ),
+        );
+    }
+
+    private function passing_review_for_score($score, $extra = array()) {
+        return array_merge(array(
+            'verdict' => 'pass',
+            'score' => (int) $score,
+            'safe_to_publish' => true,
+            'fact_flags' => array(),
+            'policy_flags' => array(),
+            'issues' => array(),
+            'suggested_fixes' => array(),
+            'pragmatism' => array(
+                'is_new' => true,
+                'is_useful' => true,
+                'is_grounded' => true,
+                'similarity_risk' => 'low',
+            ),
+            'story_value' => array(
+                'publish' => true,
+                'substance' => 'major',
+                'reader_demand' => 'high',
+                'adds_value' => true,
+                'reason' => 'Named chip launch readers will search.',
+            ),
+        ), is_array($extra) ? $extra : array());
+    }
+
+    public function test_clustered_complete_review_is_raised_to_social_floor() {
+        $rewrite = $this->complete_rewrite_for_score();
+        $item = array('source_title' => 'Apple announced the M5 chip');
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(86),
+            $rewrite,
+            $item,
+        ));
+        $this->assertSame(90, (int) $review['score']);
+        $this->assertStringContainsString('clustering below 90', (string) $review['pragmatism']['notes']);
+    }
+
+    public function test_generic_headline_review_stays_below_social_floor() {
+        $rewrite = $this->complete_rewrite_for_score('Apple announced the M5 chip');
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(86, array(
+                'issues' => array('Generic headline restates the source headline'),
+                'suggested_fixes' => array('Name the bandwidth change in the title'),
+            )),
+            $rewrite,
+            array('source_title' => 'Apple announced the M5 chip'),
+        ));
+        $this->assertSame(86, (int) $review['score']);
+        $this->assertTrue($this->invoke_private('review_should_polish', array($review, $rewrite)));
+    }
+
+    public function test_style_nits_do_not_block_a_90_lift() {
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(87, array(
+                'issues' => array('Readability nit: one long sentence in Why it matters'),
+            )),
+            $this->complete_rewrite_for_score(),
+            array('source_title' => 'Apple announced the M5 chip'),
+        ));
+        $this->assertSame(90, (int) $review['score']);
+    }
+
+    public function test_clustered_pass_does_not_spend_a_polish_call() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $id = $this->create_queue_item();
+        $calls = 0;
+        $writer = $this->complete_rewrite_for_score();
+        $review = $this->passing_review_for_score(86);
+        $callback = function ($preempt, $args, $url) use (&$calls, $writer, $review) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $payload = json_decode($args['body'], true);
+            $system = (string) ($payload['input'][0]['content'][0]['text'] ?? '');
+            $this->assertStringNotContainsString('revising a', $system);
+            return $this->openai_json_http($calls === 1 ? $writer : $review);
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $settings = $this->draft_settings();
+        $this->invoke_private('process_item', array($id, $settings));
+        $this->invoke_private('process_item', array($id, $settings));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, review_json FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('reviewed', $row['status']);
+        $this->assertSame(2, $calls);
+        $decoded = json_decode($row['review_json'], true);
+        $this->assertSame(90, (int) $decoded['score']);
+        $this->assertStringContainsString('clustering below 90', (string) ($decoded['pragmatism']['notes'] ?? ''));
+    }
+
+    public function test_near_miss_review_polishes_once_then_can_hit_90() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $id = $this->create_queue_item();
+        $calls = 0;
+        $writer = $this->complete_rewrite_for_score('Apple announced the M5 chip');
+        $first_review = $this->passing_review_for_score(86, array(
+            'issues' => array('Generic headline restates the source headline'),
+            'suggested_fixes' => array('Name the M5 bandwidth change in the title'),
+        ));
+        $polished = $this->complete_rewrite_for_score('Apple M5 chip memory bandwidth jumps');
+        $second_review = $this->passing_review_for_score(92);
+        $callback = function ($preempt, $args, $url) use (&$calls, $writer, $first_review, $polished, $second_review) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $payload = json_decode($args['body'], true);
+            $system = (string) ($payload['input'][0]['content'][0]['text'] ?? '');
+            if ($calls === 1) {
+                $this->assertStringContainsString('Write a detailed', $system);
+                $output = $writer;
+            } elseif ($calls === 2) {
+                $this->assertStringContainsString('independent editorial reviewer', $system);
+                $output = $first_review;
+            } elseif ($calls === 3) {
+                $this->assertStringContainsString('revising a', $system);
+                $this->assertStringContainsString('suggested_fixes', $system);
+                $output = $polished;
+            } else {
+                $this->assertStringContainsString('independent editorial reviewer', $system);
+                $output = $second_review;
+            }
+            return $this->openai_json_http($output);
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $settings = $this->draft_settings();
+        $this->invoke_private('process_item', array($id, $settings));
+        $this->invoke_private('process_item', array($id, $settings));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, rewrite_json, review_json, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('generated', $row['status']);
+        $this->assertSame(3, $calls);
+        $this->assertStringContainsString('Polished once', (string) $row['error_text']);
+        $rewrite = json_decode($row['rewrite_json'], true);
+        $this->assertSame(1, (int) ($rewrite['_tr_score_polish'] ?? 0));
+        $this->assertSame('Apple M5 chip memory bandwidth jumps', $rewrite['title']);
+        $this->assertSame('', (string) $row['review_json']);
+
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, review_json FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('reviewed', $row['status']);
+        $this->assertSame(4, $calls);
+        $review = json_decode($row['review_json'], true);
+        $this->assertSame(92, (int) $review['score']);
+        $this->assertFalse($this->invoke_private('review_should_polish', array($review, $rewrite)));
     }
 
     public function test_writer_input_and_draft_include_internal_links() {
@@ -1910,7 +2085,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('published', $row['status']);
         $this->assertGreaterThan(0, (int) $row['wp_post_id']);
         $review = json_decode($row['review_json'], true);
-        $this->assertSame(88, (int) $review['score']);
+        $this->assertSame(90, (int) $review['score']);
         $this->assertSame(array(), $review['fact_flags']);
     }
 

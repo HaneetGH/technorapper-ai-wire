@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.57
+Stable tag: 0.2.58
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -56,6 +56,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
+= 0.2.58 =
+* Reviewer 90 now means a complete original article, not a parked 85. The writer aims at a named-change headline; clustered 85–89 scores with no remaining defect are raised to 90; one polish pass applies reviewer fixes before social stills.
+
 = 0.2.57 =
 * Instagram stills skip stories below a review-score floor (default 90) so the feed is not a graveyard of 15-view posts. Captions no longer include URLs (link in bio instead), and stills wait at least 3 hours apart. Reels stay off.
 
@@ -97,6 +100,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.58 =
+Complete original articles can now reach the Instagram stills score of 90. The reviewer no longer parks them at 85, and one polish pass applies named fixes.
 
 = 0.2.57 =
 Instagram stills now skip weaker stories, drop caption URLs, and space posts so the account is not flooded.
