@@ -638,8 +638,8 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $system = 'You study one WordPress publisher so later social posts stay in that site\'s context. Use only the supplied snapshot. Do not invent coverage areas, products, or a different brand. Return JSON only.';
         $user = 'Read this WordPress site and describe what it is, who it is for, and what later social copy should prioritize. '
-            . 'Priorities should match the live desks and recent stories, not a generic newsroom. Voice should match a technology editorial desk, not an ad agency. '
-            . 'visual_style should describe photoreal cinematic news photography (lighting, setting, mood) for a full-bleed Instagram poster — never illustration, cartoon, navy cards, or graphic-design kits. '
+            . 'Priorities should match the live desks and recent stories, not a generic newsroom. Voice should match a technology editorial desk with a pinch of dry wit, not an ad agency or a meme account. '
+            . 'visual_style should describe photoreal cinematic news photography with one sly visual beat (lighting, setting, mood) for a full-bleed Instagram poster — never illustration, cartoon, navy cards, or graphic-design kits. '
             . "Site snapshot:\n" . wp_json_encode($snapshot)
             . "\nReturn JSON keys: site_name, one_line, audience, desks (array), voice, priorities (array of up to 6 short phrases), avoid (array), cta_style, visual_style.";
         $copy_settings = $s;
@@ -1700,21 +1700,22 @@ trait TechnoRapper_AI_Wire_Social {
             . 'Repackage an already-published article as this desk’s take. Do not write a new article. Do not sound like a wire dump or a screenshot of another outlet. Use only supplied article fields plus the site context. '
             . 'Never invent facts, dates, prices, quotes, tests, or “we tried it”. Never fake countdown deals or fake scarcity. '
             . 'Stop the scroll with a specific name, number, or mechanism from the article — not generic clickbait. Instagram hides empty teases and repeated news-aggregator cards. '
+            . 'A pinch of dry comic sense in the hook, on-image line, and caption is welcome if it stays restrained and the named change still leads. Never a meme page. '
             . 'Safe for a news brand: no nudity, and keep the wording suitable for a general audience. Return JSON only.';
     }
 
     private function social_copy_user_prompt($brand, $profile, $snapshot) {
-        $user = 'Write the package a growth editor would actually post to get views, saves, and sends. Lead with a specific name, number, or mechanism from the article; a reader stake (phone, job, money, privacy, or status); then pay the curiosity off in the next lines with saveable bullets. Short. No throat-clearing. '
+        $user = 'Write the package a growth editor would actually post to get views, saves, and sends. Lead with a specific name, number, or mechanism from the article; a reader stake (phone, job, money, privacy, or status); then pay the curiosity off in the next lines with saveable bullets. Short. No throat-clearing. One dry wink is enough. '
             . 'Never use: you won’t believe, wait for it, wait until the end, must see, gone wrong, shocking, this changes everything, this will blow your mind. Those lines look like bait and Instagram withholds them. Open a loop only if the caption pays it off in the next sentence. '
             . 'Write original wording, not a restated press blurb. Keep it suitable for a general news audience. Never invent the twist. '
-            . 'on_image_headline: 4–9 words, scroll-stopping, a number only if it is in the article, short enough for 2–3 lines of huge type. on_image_subhead: one supporting line that makes them tap, max 10 words. '
+            . 'on_image_headline: 4–9 words, scroll-stopping, a number only if it is in the article, short enough for 2–3 lines of huge type. A wry twist is fine if the named change is still the headline. on_image_subhead: one supporting line that makes them tap, max 10 words. '
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
-            . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
+            . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
-            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
+            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. A light wry line is fine after the takeaway; do not turn the Reel into a bit. Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
             . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
-            . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
+            . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. A dry wink is fine if the named change is still obvious. This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
             . 'youtube_description: two short lines that finish the lesson; do not include the URL or #Shorts (we append both). No hashtag dump. '
             . 'youtube_tags: 3–8 short YouTube tags (words, not #hashtags) grounded in the article. They are sent in the upload API with the public listing. '
             . 'Every field must be suitable for a general audience on X, Instagram, and YouTube. ';
@@ -2198,6 +2199,7 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_image_scroll_stop_clause() {
         return 'This photo must stop a thumb mid-scroll and make someone tap. '
             . 'Pattern interrupt: extreme crop, one glowing object, rain on glass, dusk rim light, or a surprising scale. '
+            . 'One sly photoreal visual beat is welcome if it still looks like magazine news photography: wry scale, a tired desk, an ironic empty room. Never a drawing or a joke poster. '
             . 'High contrast, saturated night color, one hero filling the frame. Not a polite stock photo. '
             . 'Still photoreal news photography, still fully clothed, still no text.';
     }
@@ -2791,6 +2793,8 @@ trait TechnoRapper_AI_Wire_Social {
             'extreme close-up of a phone or laptop edge, neon bokeh, rain on glass',
             'wide empty office at night from behind, one fully clothed figure, one light on, dusk windows',
             'macro of a keyboard, cable, or chip with a single rim light and dust in the beam',
+            'over-the-shoulder of a fully clothed person slumped at a glowing laptop, coffee gone cold, face not identifiable',
+            'empty conference table at night with one laptop open and chairs pushed back, dusk windows',
         );
         $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
         $index = (int) (sprintf('%u', crc32('cam:' . $id . ':' . (int) $revision)) % count($cameras));
@@ -2798,7 +2802,7 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function social_image_art_direction($profile) {
-        $default = 'cinematic photoreal news photography, dusk or night rim light, high contrast, one hero subject filling the frame, built to stop a thumb';
+        $default = 'cinematic photoreal news photography, dusk or night rim light, high contrast, one hero subject filling the frame, one sly visual beat, built to stop a thumb';
         $style = trim((string) ($profile['visual_style'] ?? ''));
         if ($style === '' || preg_match('/illustrat|cartoon|navy|magazine art|vector|flat design|infographic|collage|3d render/i', $style)) {
             return $default;

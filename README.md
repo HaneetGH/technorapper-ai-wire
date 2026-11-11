@@ -51,7 +51,7 @@ flowchart TD
 | Trigger | Configurable WP-Cron interval or an administrator-triggered run | A database-backed lock serializes runs |
 | Ingestion | Fetch configured RSS/Atom feeds and inspect up to 10 recent items per feed | HTTP(S) URL validation, source-key deduplication, source-size cap |
 | Assignment | Stable A/B assignment from the source key | Retries keep the same experiment and variant |
-| Generation | Writer produces title, lede, body, category and tags | Source content is treated as untrusted input |
+| Generation | Writer produces title, lede, body, category and tags in a dry, family-friendly voice | Source content is treated as untrusted input |
 | Review | Separate model evaluates factual consistency, novelty, usefulness and policy flags | Fail closed: only explicit passing output proceeds |
 | Policy scan | Local profanity/slur list plus OpenAI Moderation on the article and on every social caption, Reel script, YouTube title/description/tags, and on-image line | Fail closed: violating copy is quarantined or held for review, never posted |
 | Draft or publish | Sanitized content is published automatically, or saved as a draft if Auto-publish is unchecked | Reject stays quarantined |

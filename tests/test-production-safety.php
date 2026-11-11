@@ -580,6 +580,31 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->assertStringNotContainsString('sexual content', strtolower($prompt));
         }
         $this->assertStringContainsString('family-friendly', $writer);
+        $this->assertStringContainsString('pinch of dry comic sense', $writer);
+        $this->assertStringContainsString('restrained', $writer);
+        $this->assertStringContainsString('do not require jokes', strtolower($reviewer));
+        $this->assertStringContainsString('One dry wink is enough', $social);
+    }
+
+    public function test_house_style_asks_for_restrained_comic_sense() {
+        foreach (array('A', 'B') as $variant) {
+            $writer = $this->invoke_private('writer_prompt', array($variant));
+            $this->assertStringContainsString('pinch of dry comic sense', $writer);
+            $this->assertStringContainsString('Keep that humor restrained', $writer);
+            $this->assertStringContainsString('family-friendly', $writer);
+            $this->assertStringContainsString('light wry aside', $writer);
+        }
+        $polish = $this->invoke_private('polish_writer_prompt', array('A'));
+        $this->assertStringContainsString('pinch of dry comic sense', $polish);
+        $reviewer = $this->invoke_private('reviewer_prompt', array(array()));
+        $this->assertStringContainsString('do not require jokes', strtolower($reviewer));
+        $this->assertStringContainsString('Do not list missing humor', $reviewer);
+        $this->assertStringContainsString('for missing jokes', $reviewer);
+        $cameras = $this->invoke_private('social_image_camera', array(1, 0));
+        $this->assertNotSame('', $cameras);
+        $prompt = $this->invoke_private('social_image_scroll_stop_clause');
+        $this->assertStringContainsString('sly photoreal visual beat', $prompt);
+        $this->assertStringContainsString('Never a drawing or a joke poster', $prompt);
     }
 
     public function test_flagged_prompt_retries_once_with_a_shorter_source() {
@@ -970,6 +995,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotEmpty($this->invoke_private('policy_local_hits', array('This is f*cking news')));
         $this->assertSame(array(), $this->invoke_private('policy_local_hits', array('The assistant class assignment passed on the shell.')));
         $this->assertStringContainsString('family-friendly', $this->invoke_private('writer_prompt', array('A')));
+        $this->assertStringContainsString('pinch of dry comic sense', $this->invoke_private('writer_prompt', array('A')));
         $guard = $this->invoke_private('policy_guard_text', array('A grounded phone-chip update.', 'social'));
         $this->assertTrue($guard);
     }
@@ -1641,6 +1667,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Do not park a 90-checklist article at 85-89', $reviewer);
         $this->assertStringContainsString('Instagram and X stills require 90', $reviewer);
         $this->assertStringContainsString('Do not deduct below 85', $reviewer);
+        $this->assertStringContainsString('for missing jokes', $reviewer);
         $this->assertStringContainsString('fact_flags must be an empty array', $reviewer);
         $this->assertStringContainsString('If a human editor would publish it, score 85', $reviewer);
         $this->assertStringContainsString('do not park a publishable article at 78-84', strtolower($reviewer));
@@ -1651,6 +1678,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Never use News or Technology', $writer);
         $this->assertStringContainsString('Site categories', $writer);
         $this->assertStringContainsString('Do not wait for a human', $writer);
+        $this->assertStringContainsString('pinch of dry comic sense', $writer);
+        $this->assertStringContainsString('light wry aside', $writer);
+        $this->assertStringContainsString('punchline-only headline', $writer);
+        $this->assertStringContainsString('do not require jokes', strtolower($reviewer));
+        $this->assertStringContainsString('punchline-only headlines', $reviewer);
     }
 
     public function test_review_input_does_not_punish_missing_internal_links() {
@@ -1751,6 +1783,31 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             array('source_title' => 'Apple announced the M5 chip'),
         ));
         $this->assertSame(90, (int) $review['score']);
+    }
+
+    public function test_missing_humor_nit_does_not_block_a_90_lift() {
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(87, array(
+                'issues' => array('Could use a wry aside in the lede'),
+            )),
+            $this->complete_rewrite_for_score(),
+            array('source_title' => 'Apple announced the M5 chip'),
+        ));
+        $this->assertSame(90, (int) $review['score']);
+        $this->assertFalse($this->invoke_private('review_has_social_blocking_defect', array(
+            $this->passing_review_for_score(87, array(
+                'issues' => array('Missing a joke in Why it matters'),
+            )),
+            $this->complete_rewrite_for_score(),
+            array('source_title' => 'Apple announced the M5 chip'),
+        )));
+        $this->assertTrue($this->invoke_private('review_has_social_blocking_defect', array(
+            $this->passing_review_for_score(86, array(
+                'issues' => array('Generic headline restates the source headline'),
+            )),
+            $this->complete_rewrite_for_score('Apple announced the M5 chip'),
+            array('source_title' => 'Apple announced the M5 chip'),
+        )));
     }
 
     public function test_clustered_pass_does_not_spend_a_polish_call() {
@@ -5746,6 +5803,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('No children', $prompt);
         $this->assertStringContainsString('stop a thumb mid-scroll', $prompt);
         $this->assertStringContainsString('make someone tap', $prompt);
+        $this->assertStringContainsString('sly photoreal visual beat', $prompt);
+        $this->assertStringContainsString('one sly visual beat', $prompt);
+        $this->assertStringNotContainsString('standup', $prompt);
     }
 
     public function test_unsafe_visual_brief_is_dropped_before_the_image_api() {
@@ -5788,6 +5848,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('generic clickbait', $desk);
         $this->assertStringContainsString('wire dump', $desk);
         $this->assertStringContainsString('no nudity', strtolower($desk));
+        $this->assertStringContainsString('pinch of dry comic sense', $desk);
+        $this->assertStringContainsString('Never a meme page', $desk);
         $user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news')));
         $this->assertStringContainsString('reader stake', $user);
         $this->assertStringContainsString('saves, and sends', $user);
@@ -5795,6 +5857,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('save or send ask', $user);
         $this->assertStringContainsString('named hook in the first', $user);
         $this->assertStringContainsString('fully clothed', $user);
+        $this->assertStringContainsString('One dry wink is enough', $user);
+        $this->assertStringContainsString('sly photoreal visual beat', $user);
+        $this->assertStringContainsString('do not turn the Reel into a bit', $user);
         $this->assertNull($this->invoke_private('sanitize_social_idea_item', array(array(
             'title' => 'Nude recap cover',
             'description' => 'A naked model as the hero of the graphic.',

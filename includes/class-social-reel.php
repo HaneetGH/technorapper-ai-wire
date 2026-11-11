@@ -606,7 +606,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
         $prompt = $brief !== '' ? $brief : 'Photoreal cinematic news B-roll of the story, slow camera move.';
-        $prompt .= ' Slow cinematic push-in, natural light, no text, no logos, no watermarks, no subtitles, no captions.';
+        $prompt .= ' Keep any sly visual beat photoreal. Slow cinematic push-in, natural light, no text, no logos, no watermarks, no subtitles, no captions.';
         $submitted = $this->social_fal_submit($endpoint, $this->social_fal_motion_payload($model, $image_url, $prompt, $seconds));
         if (is_wp_error($submitted)) {
             return $submitted;
