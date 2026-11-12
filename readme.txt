@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.70
+Stable tag: 0.2.71
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.71 =
+* Social queue has a Download video button on the Reel row. It saves the MP4 to your computer. Publish to Instagram is unchanged.
 
 = 0.2.70 =
 * Hosts without ffmpeg can still make Reels: Fal assembles the spoken MP4 when possible, otherwise Social queue offers Download motion/voice/kit so you can run ffmpeg on a laptop, upload reel.mp4, and Publish to Instagram.
@@ -140,6 +143,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.71 =
+Social queue Reels now have Download video, which saves the MP4 file.
 
 = 0.2.70 =
 If this WordPress host has no ffmpeg, Generate Reel still builds motion and voice. Download the kit, mux on your laptop, upload the MP4, then Publish to Instagram.

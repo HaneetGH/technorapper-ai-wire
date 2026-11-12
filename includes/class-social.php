@@ -4852,6 +4852,56 @@ trait TechnoRapper_AI_Wire_Social {
         exit;
     }
 
+    public function download_social_reel() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to download this Reel.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_GET['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_download_reel_' . $id);
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if (!$row || $post_id < 1) {
+            wp_die(esc_html__('That Social queue row is gone.', 'technorapper-ai-wire'));
+        }
+        $video_id = $this->social_reel_downloadable_id($post_id);
+        $path = $video_id > 0 ? get_attached_file($video_id) : '';
+        if (!$path || !file_exists($path) || filesize($path) < 512) {
+            wp_die(esc_html__('No video file is ready on this row yet. Click Retry building this Reel first.', 'technorapper-ai-wire'));
+        }
+        $filename = 'technorapper-reel-' . $post_id . '.mp4';
+        nocache_headers();
+        header('Content-Type: video/mp4');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . (string) filesize($path));
+        header('X-Content-Type-Options: nosniff');
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        readfile($path);
+        exit;
+    }
+
+    private function social_reel_downloadable_id($post_id) {
+        $reel_id = $this->social_reel_preview_id($post_id);
+        if ($reel_id > 0) {
+            return $reel_id;
+        }
+        return $this->social_motion_id($post_id);
+    }
+
+    private function social_reel_download_url($row) {
+        $id = (int) ($row['id'] ?? 0);
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if ($id < 1 || $post_id < 1 || $this->social_reel_downloadable_id($post_id) < 1) {
+            return '';
+        }
+        return wp_nonce_url(
+            admin_url('admin-post.php?action=tr_ai_wire_download_reel&item_id=' . $id),
+            'tr_ai_wire_download_reel_' . $id
+        );
+    }
+
     private function render_social_reel_preview_video($row, $post) {
         if (!$post instanceof WP_Post || !in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true) || !$this->social_wants_reel(null, $post->ID)) {
             return;
@@ -4864,8 +4914,12 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
         echo '<video class="tr-ai-wire-social-preview-video" controls playsinline preload="metadata" src="' . esc_url($url) . '"></video>';
+        $download = $this->social_reel_download_url($row);
+        if ($download !== '') {
+            echo '<p class="tr-ai-wire-reel-downloads"><a class="button button-primary" href="' . esc_url($download) . '">Download video</a></p>';
+        }
         if ($reel_id < 1 && $motion_id > 0) {
-            echo '<p class="description">Motion clip only. Download the kit and mux voice on your laptop.</p>';
+            echo '<p class="description">This is the generated motion clip. Click Download video to save the MP4.</p>';
         }
     }
 
@@ -4873,44 +4927,28 @@ trait TechnoRapper_AI_Wire_Social {
         if (!$post instanceof WP_Post || !in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true) || !$this->social_wants_reel(null, $post->ID)) {
             return;
         }
+        $download = $this->social_reel_download_url($row);
+        if ($download !== '') {
+            echo '<p class="tr-ai-wire-reel-downloads"><a class="button button-primary" href="' . esc_url($download) . '">Download video</a></p>';
+        }
         $reel_id = $this->social_reel_preview_id($post->ID);
-        $motion_id = $this->social_motion_id($post->ID);
         $voice_id = $this->social_voice_id($post->ID);
         $kit_id = $this->social_reel_kit_id($post->ID);
-        $links = array();
-        if ($reel_id > 0) {
-            $url = wp_get_attachment_url($reel_id);
-            if ($url) {
-                $links[] = '<a class="button button-primary" href="' . esc_url($url) . '" download="reel.mp4">Download Reel MP4</a>';
-            }
-        }
+        $extra = array();
         if ($kit_id > 0) {
             $url = wp_get_attachment_url($kit_id);
             if ($url) {
-                $links[] = '<a class="button" href="' . esc_url($url) . '" download="reel-kit.zip">Download Reel kit (zip)</a>';
-            }
-        }
-        if ($motion_id > 0) {
-            $url = wp_get_attachment_url($motion_id);
-            if ($url) {
-                $links[] = '<a class="button" href="' . esc_url($url) . '" download="motion.mp4">Download motion video</a>';
+                $extra[] = '<a href="' . esc_url($url) . '" download="reel-kit.zip">kit zip</a>';
             }
         }
         if ($voice_id > 0) {
             $url = wp_get_attachment_url($voice_id);
             if ($url) {
-                $links[] = '<a class="button" href="' . esc_url($url) . '" download="voice.mp3">Download voice MP3</a>';
+                $extra[] = '<a href="' . esc_url($url) . '" download="voice.mp3">voice MP3</a>';
             }
         }
-        if (!$links) {
-            return;
-        }
-        echo '<p class="tr-ai-wire-reel-downloads">' . implode(' ', $links) . '</p>';
-        if ($reel_id < 1) {
-            echo '<p class="description">This host cannot run ffmpeg. On your laptop: install ffmpeg from '
-                . '<a href="https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" target="_blank" rel="noopener noreferrer">Windows zip</a>'
-                . ' or <a href="https://evermeet.cx/ffmpeg/getrelease/zip" target="_blank" rel="noopener noreferrer">Mac zip</a>'
-                . ', unzip the kit, run make-reel.bat / make-reel.sh, then upload reel.mp4 below.</p>';
+        if ($extra && $reel_id < 1) {
+            echo '<p class="description">Also: ' . implode(' · ', $extra) . '</p>';
         }
     }
 
