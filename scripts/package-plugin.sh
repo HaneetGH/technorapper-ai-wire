@@ -15,6 +15,7 @@ cp "$ROOT/LICENSE" "$DEST/"
 cp "$ROOT/README.md" "$DEST/"
 cp "$ROOT/includes/"*.php "$DEST/includes/"
 cp "$ROOT/assets/index.php" "$DEST/assets/"
+cp "$ROOT/assets/admin.css" "$DEST/assets/"
 cp "$ROOT/assets/fonts/Anton-Regular.ttf" "$ROOT/assets/fonts/OFL.txt" "$ROOT/assets/fonts/index.php" "$DEST/assets/fonts/"
 
 test -f "$DEST/readme.txt"

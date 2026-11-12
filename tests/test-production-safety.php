@@ -315,6 +315,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $code, implode("\n", $output));
         $this->assertFileExists($dest . '/readme.txt');
         $this->assertFileExists($dest . '/LICENSE');
+        $this->assertFileExists($dest . '/assets/admin.css');
         $packed = file_get_contents($dest . '/readme.txt');
         $this->assertMatchesRegularExpression('/^License:\s*GPLv2 or later\s*$/m', $packed);
         $tag_workflow = file_get_contents($root . '/.github/workflows/tag-version.yml');
@@ -6097,6 +6098,23 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Generate a presenter face', $html);
         $this->assertStringContainsString('Talking host (avatar face)', $html);
         $this->assertStringContainsString('id="tr-reel-recipe-story"', $html);
+        $this->assertStringContainsString('tr-ai-wire-choice-card is-selected', $html);
+        $this->assertStringContainsString('function syncChoiceCards', $html);
+        $this->assertSame(10, has_action('admin_enqueue_scripts', array($this->plugin, 'enqueue_admin_assets')));
+        preg_match_all('/\sid="(tr-[^"]+)"/', $html, $id_matches);
+        $id_counts = array_count_values($id_matches[1]);
+        $duplicate_ids = array();
+        foreach ($id_counts as $control_id => $count) {
+            if ($count > 1) {
+                $duplicate_ids[] = $control_id . '=' . $count;
+            }
+        }
+        $this->assertSame(array(), $duplicate_ids);
+        ob_start();
+        $this->plugin->costs_page();
+        $costs = ob_get_clean();
+        $this->assertStringContainsString('Current recipe', $costs);
+        $this->assertStringContainsString('B-roll spoken Reel', $costs);
 
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
             'social_reel_daily_limit' => 2,

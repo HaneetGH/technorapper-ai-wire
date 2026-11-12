@@ -87,6 +87,7 @@ final class TechnoRapper_AI_Wire {
         global $wpdb;
         $this->table = $wpdb->prefix . self::TABLE_SUFFIX;
         add_action('admin_menu', array($this, 'admin_menu'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
         add_action('admin_init', array($this, 'register_settings'));
         add_filter('cron_schedules', array($this, 'cron_schedules'));
         add_action('update_option_' . self::OPTION, array($this, 'settings_updated'), 10, 2);

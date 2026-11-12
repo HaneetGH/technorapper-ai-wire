@@ -15,6 +15,18 @@ trait TechnoRapper_AI_Wire_Admin {
         add_submenu_page('tr-ai-wire', 'Price estimate', 'Price estimate', 'manage_options', 'tr-ai-wire-costs', array($this, 'costs_page'));
     }
 
+    public function enqueue_admin_assets($hook = '') {
+        if (strpos((string) $hook, 'tr-ai-wire') === false) {
+            return;
+        }
+        wp_enqueue_style(
+            'tr-ai-wire-admin',
+            plugins_url('assets/admin.css', TR_AI_WIRE_FILE),
+            array(),
+            self::VERSION
+        );
+    }
+
     public function settings_page() {
         if (!current_user_can('manage_options')) {
             return;
@@ -187,8 +199,15 @@ trait TechnoRapper_AI_Wire_Admin {
         $any_network = $x_on || $ig_on || $yt_on;
         $option = self::OPTION;
         ?>
-        <div class="wrap">
+        <div class="wrap tr-ai-wire-wrap">
             <h1>Social settings</h1>
+            <div class="tr-ai-wire-status">
+                <span class="tr-ai-wire-pill <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'is-on' : 'is-off'; ?>">X <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'posting' : ($x_ready ? 'connected' : 'off'); ?></span>
+                <span class="tr-ai-wire-pill <?php echo !empty($s['social_instagram_enabled']) && $ig_ready ? 'is-on' : 'is-off'; ?>">Instagram <?php echo !empty($s['social_instagram_enabled']) && $ig_ready ? 'posting' : ($ig_ready ? 'connected' : 'off'); ?></span>
+                <span class="tr-ai-wire-pill <?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'is-on' : 'is-off'; ?>">YouTube <?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'posting' : ($yt_ready ? 'connected' : 'off'); ?></span>
+                <span class="tr-ai-wire-pill <?php echo $reel_on ? 'is-on' : 'is-off'; ?>">Reels <?php echo $reel_on ? 'on' : 'off'; ?></span>
+                <a class="button button-small" href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Open Social queue</a>
+            </div>
             <?php if (!empty($_GET['social_credentials_saved'])) : ?><div class="notice notice-success is-dismissible"><p>Social settings saved.<?php
             $backfill = (int) ($_GET['social_backfill'] ?? 0);
             $backfill_platform = sanitize_key((string) ($_GET['social_backfill_platform'] ?? ''));
@@ -203,58 +222,58 @@ trait TechnoRapper_AI_Wire_Admin {
                 <input type="hidden" name="action" value="tr_ai_wire_save_social_credentials">
                 <input type="hidden" name="<?php echo esc_attr($option); ?>[social_platform_toggles]" value="1">
                 <?php wp_nonce_field('tr_ai_wire_save_social_credentials'); ?>
-                <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
-                    <h2>X</h2>
+                <div class="card tr-ai-wire-card">
+                    <div class="tr-ai-wire-card-head">
+                        <h2>X</h2>
+                        <span class="tr-ai-wire-pill <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'is-on' : 'is-off'; ?>"><?php echo !empty($s['social_x_enabled']) && $x_ready ? 'posting on' : ($x_ready ? 'connected' : 'not connected'); ?></span>
+                    </div>
                     <p>Status: <strong><?php echo esc_html(TechnoRapper_AI_Wire::x_status_text($social_credentials)); ?></strong> · posting is <strong><?php echo !empty($s['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready($social_credentials) ? 'on' : 'off'; ?></strong></p>
-                    <p class="description">From the developer portal → Keys and tokens, save all four values. App access must be Read and Write. The Access Token + Secret popup is OAuth 1.0a. Bearer is not needed.</p>
-                    <p><label for="tr-x-api-key">API Key</label><br><input id="tr-x-api-key" name="social[x_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_api_key']) ? esc_attr('Saved — enter a new key to replace it') : esc_attr('API Key / Consumer Key'); ?>"></p>
-                    <p><label for="tr-x-api-secret">API Key Secret</label><br><input id="tr-x-api-secret" name="social[x_api_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_api_secret']) ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('API Key Secret / Consumer Secret'); ?>"></p>
-                    <p><label for="tr-x-access-token">Access Token</label><br><input id="tr-x-access-token" name="social[x_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Access Token'); ?>"></p>
-                    <p><label for="tr-x-access-secret">Access Token Secret</label><br><input id="tr-x-access-secret" name="social[x_access_token_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_access_token_secret']) ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('Access Token Secret'); ?>"></p>
-                    <?php if ($x_ready) : ?><p><label><input type="checkbox" name="remove_x_oauth" value="1"> Remove saved X Keys and tokens</label></p><?php endif; ?>
                     <p><label><input id="tr-social-x-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_x_enabled]" value="1" <?php checked($x_on); ?>> <strong>Post to X</strong></label></p>
                     <p class="description">Leave this off to keep the four Keys and tokens saved without posting to X. Instagram can stay on.</p>
-                    <details style="margin:12px 0;">
-                        <summary>Advanced: OAuth 2.0 Bearer (optional, not needed)</summary>
-                        <p><label for="tr-x-token">OAuth 2.0 user token</label><br><input id="tr-x-token" name="social[x_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Only if you already have an OAuth 2.0 user access token'); ?>"></p>
-                        <?php if (!empty($social_credentials['x_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_x_user_access_token" value="1"> Remove saved X Bearer token</label></p><?php endif; ?>
+                    <details<?php echo $x_ready ? '' : ' open'; ?>>
+                        <summary><?php echo $x_ready ? 'Keys and tokens (saved)' : 'Keys and tokens'; ?></summary>
+                        <p class="description">From the developer portal → Keys and tokens, save all four values. App access must be Read and Write. The Access Token + Secret popup is OAuth 1.0a. Bearer is not needed.</p>
+                        <p><label for="tr-x-api-key">API Key</label><br><input id="tr-x-api-key" name="social[x_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_api_key']) ? esc_attr('Saved — enter a new key to replace it') : esc_attr('API Key / Consumer Key'); ?>"></p>
+                        <p><label for="tr-x-api-secret">API Key Secret</label><br><input id="tr-x-api-secret" name="social[x_api_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_api_secret']) ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('API Key Secret / Consumer Secret'); ?>"></p>
+                        <p><label for="tr-x-access-token">Access Token</label><br><input id="tr-x-access-token" name="social[x_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Access Token'); ?>"></p>
+                        <p><label for="tr-x-access-secret">Access Token Secret</label><br><input id="tr-x-access-secret" name="social[x_access_token_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_access_token_secret']) ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('Access Token Secret'); ?>"></p>
+                        <?php if ($x_ready) : ?><p><label><input type="checkbox" name="remove_x_oauth" value="1"> Remove saved X Keys and tokens</label></p><?php endif; ?>
+                        <details style="margin:12px 0;">
+                            <summary>Advanced: OAuth 2.0 Bearer (optional, not needed)</summary>
+                            <p><label for="tr-x-token">OAuth 2.0 user token</label><br><input id="tr-x-token" name="social[x_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['x_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Only if you already have an OAuth 2.0 user access token'); ?>"></p>
+                            <?php if (!empty($social_credentials['x_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_x_user_access_token" value="1"> Remove saved X Bearer token</label></p><?php endif; ?>
+                        </details>
                     </details>
                 </div>
-                <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
-                    <h2>Instagram</h2>
+                <div class="card tr-ai-wire-card">
+                    <div class="tr-ai-wire-card-head">
+                        <h2>Instagram</h2>
+                        <span class="tr-ai-wire-pill <?php echo !empty($s['social_instagram_enabled']) && $ig_ready ? 'is-on' : 'is-off'; ?>"><?php echo !empty($s['social_instagram_enabled']) && $ig_ready ? 'posting on' : ($ig_ready ? 'connected' : 'not connected'); ?></span>
+                    </div>
                     <p>Status: <?php echo $ig_ready ? '<strong>Page token and Professional account ID saved</strong>' : '<strong>not connected</strong>'; ?> · posting is <strong><?php echo !empty($s['social_instagram_enabled']) && $ig_ready ? 'on' : 'off'; ?></strong></p>
-                    <p><label for="tr-ig-token"><strong>Instagram Page access token</strong></label><br><input id="tr-ig-token" name="social[instagram_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['instagram_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Paste a Page token for the linked Professional account'); ?>"></p>
-                    <?php if (!empty($social_credentials['instagram_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_instagram_user_access_token" value="1"> Remove saved Instagram token</label></p><?php endif; ?>
-                    <p><label for="tr-ig-user-id"><strong>Instagram Professional account ID</strong></label><br><input id="tr-ig-user-id" name="social[instagram_user_id]" type="text" class="regular-text" inputmode="numeric" value="<?php echo esc_attr($social_credentials['instagram_user_id']); ?>"></p>
                     <p><label><input id="tr-social-ig-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_instagram_enabled]" value="1" <?php checked($ig_on); ?>> <strong>Post to Instagram</strong></label></p>
-                    <p class="description">Leave this off to keep the Instagram token saved without posting. X can stay on. Use the Facebook Page access token from Graph API Explorer GET me/accounts, not the User Token at the top of Explorer.</p>
+                    <p class="description">Leave this off to keep the Instagram token saved without posting. X can stay on.</p>
+                    <details<?php echo $ig_ready ? '' : ' open'; ?>>
+                        <summary><?php echo $ig_ready ? 'Connection (saved)' : 'Connect Instagram'; ?></summary>
+                        <p><label for="tr-ig-token"><strong>Instagram Page access token</strong></label><br><input id="tr-ig-token" name="social[instagram_user_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['instagram_user_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Paste a Page token for the linked Professional account'); ?>"></p>
+                        <?php if (!empty($social_credentials['instagram_user_access_token'])) : ?><p><label><input type="checkbox" name="remove_instagram_user_access_token" value="1"> Remove saved Instagram token</label></p><?php endif; ?>
+                        <p><label for="tr-ig-user-id"><strong>Instagram Professional account ID</strong></label><br><input id="tr-ig-user-id" name="social[instagram_user_id]" type="text" class="regular-text" inputmode="numeric" value="<?php echo esc_attr($social_credentials['instagram_user_id']); ?>"></p>
+                        <p class="description">Use the Facebook Page access token from Graph API Explorer GET me/accounts, not the User Token at the top of Explorer.</p>
+                    </details>
                 </div>
-                <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
-                    <h2>YouTube</h2>
+                <div class="card tr-ai-wire-card">
+                    <div class="tr-ai-wire-card-head">
+                        <h2>YouTube</h2>
+                        <span class="tr-ai-wire-pill <?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'is-on' : 'is-off'; ?>"><?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'posting on' : ($yt_ready ? 'connected' : 'not connected'); ?></span>
+                    </div>
                     <?php
                     $yt_oauth_ready = TechnoRapper_AI_Wire_YouTube_OAuth::configured($social_credentials);
                     $yt_channel = (string) ($social_credentials['youtube_channel_title'] ?? '');
                     ?>
                     <p>Status: <?php echo $yt_ready ? '<strong>channel connected' . ($yt_channel !== '' ? ' — ' . esc_html($yt_channel) : '') . '</strong>' : '<strong>not connected</strong>'; ?> · posting is <strong><?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'on' : 'off'; ?></strong></p>
-                    <p class="description">YouTube gets the same spoken 9:16 Short as the Instagram Reel — not a still image. The file uploads <strong>public immediately</strong>: title, description, tags, category, language, license, audience (not made for kids), and AI-content disclosure are all set in that API call. There is no YouTube draft or scheduled-publish step. Google does not charge per upload; default quota is 100 uploads/day.</p>
-                    <p><strong>Connect with Google sign-in.</strong> A YouTube or Google API key cannot upload. Google requires OAuth (Sign in with Google) so this site can post as your channel. The client ID/secret below identify this plugin; they are not the channel login.</p>
-                    <p><label for="tr-yt-client-id"><strong>Google OAuth client ID</strong></label><br><input id="tr-yt-client-id" name="social[youtube_client_id]" type="text" class="regular-text" autocomplete="off" placeholder="<?php echo TechnoRapper_AI_Wire_YouTube_OAuth::client_id($social_credentials) !== '' ? esc_attr('Saved — enter a new ID to replace it') : esc_attr('Google Cloud → APIs & Services → Credentials → OAuth client'); ?>" value=""></p>
-                    <p><label for="tr-yt-client-secret"><strong>Google OAuth client secret</strong></label><br><input id="tr-yt-client-secret" name="social[youtube_client_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo TechnoRapper_AI_Wire_YouTube_OAuth::client_secret($social_credentials) !== '' ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('OAuth client secret, not an API key'); ?>"></p>
-                    <p class="description">Create a Web application OAuth client, enable YouTube Data API v3, and add this redirect URI: <code><?php echo esc_html(TechnoRapper_AI_Wire_YouTube_OAuth::redirect_uri()); ?></code>. Or set <code>TR_AI_WIRE_GOOGLE_CLIENT_ID</code> and <code>TR_AI_WIRE_GOOGLE_CLIENT_SECRET</code> in wp-config.php.</p>
-                    <?php if ($yt_oauth_ready) : ?>
-                    <p><a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_youtube_oauth_start'), 'tr_ai_wire_youtube_oauth_start')); ?>"><?php echo $yt_ready ? 'Reconnect with Google' : 'Sign in with Google'; ?></a> <span class="description">Opens Google single sign-on, then returns a channel refresh token. That is the supported upload login.</span></p>
-                    <?php else : ?>
-                    <p class="description">Save the Google OAuth client ID and secret first, then a <strong>Sign in with Google</strong> button appears here.</p>
-                    <?php endif; ?>
-                    <details style="margin:12px 0;">
-                        <summary>Advanced: paste a Google refresh token instead</summary>
-                        <p class="description">Use this only if you already completed Google OAuth elsewhere. A YouTube Data API key will not work here. A refresh token stays valid; an access token expires in about an hour.</p>
-                        <p><label for="tr-yt-refresh"><strong>Google refresh token</strong></label><br><input id="tr-yt-refresh" name="social[youtube_refresh_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['youtube_refresh_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('OAuth refresh token for the channel'); ?>"></p>
-                        <p><label for="tr-yt-access"><strong>Google access token</strong> (optional)</label><br><input id="tr-yt-access" name="social[youtube_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['youtube_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Short-lived; leave blank to refresh automatically'); ?>"></p>
-                    </details>
-                    <?php if ($yt_ready) : ?><p><label><input type="checkbox" name="remove_youtube_oauth" value="1"> Remove saved YouTube channel</label></p><?php endif; ?>
                     <p><label><input id="tr-social-yt-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_youtube_enabled]" value="1" <?php checked($yt_on); ?>> <strong>Post to YouTube Shorts</strong></label></p>
                     <div data-tr-reveal="tr-social-yt-enabled"<?php echo $yt_on ? '' : ' hidden'; ?>>
+                    <p class="description">YouTube gets the same spoken 9:16 Short as the Instagram Reel — not a still image. The file uploads <strong>public immediately</strong>. Reels must also be enabled below — that quota gates the spoken file. Subscriber notifications are optional; the Short is public either way.</p>
                     <p><label for="tr-yt-category">YouTube category</label>
                     <select id="tr-yt-category" name="<?php echo esc_attr($option); ?>[social_youtube_category_id]">
                         <?php foreach (TechnoRapper_AI_Wire::youtube_video_categories() as $cat_id => $cat_label) : ?>
@@ -262,40 +281,186 @@ trait TechnoRapper_AI_Wire_Admin {
                         <?php endforeach; ?>
                     </select></p>
                     <p><label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_youtube_notify_subscribers]" value="1" <?php checked(!empty($s['social_youtube_notify_subscribers'])); ?>> Notify YouTube subscribers when a Short goes live</label></p>
-                    <p class="description">Leave posting off to keep the channel connected without uploading. Reels must also be enabled below — that quota gates the spoken file. X and Instagram stills are unchanged. Subscriber notifications are optional; the Short is public either way.</p>
                     </div>
+                    <?php if ($yt_oauth_ready) : ?>
+                    <p><a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_youtube_oauth_start'), 'tr_ai_wire_youtube_oauth_start')); ?>"><?php echo $yt_ready ? 'Reconnect with Google' : 'Sign in with Google'; ?></a></p>
+                    <?php endif; ?>
+                    <details<?php echo $yt_ready ? '' : ' open'; ?>>
+                        <summary><?php echo $yt_ready ? 'Google OAuth (saved)' : 'Connect with Google sign-in'; ?></summary>
+                        <p class="description">A YouTube or Google API key cannot upload. The client ID/secret below identify this plugin; they are not the channel login.</p>
+                        <p><label for="tr-yt-client-id"><strong>Google OAuth client ID</strong></label><br><input id="tr-yt-client-id" name="social[youtube_client_id]" type="text" class="regular-text" autocomplete="off" placeholder="<?php echo TechnoRapper_AI_Wire_YouTube_OAuth::client_id($social_credentials) !== '' ? esc_attr('Saved — enter a new ID to replace it') : esc_attr('Google Cloud → APIs & Services → Credentials → OAuth client'); ?>" value=""></p>
+                        <p><label for="tr-yt-client-secret"><strong>Google OAuth client secret</strong></label><br><input id="tr-yt-client-secret" name="social[youtube_client_secret]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo TechnoRapper_AI_Wire_YouTube_OAuth::client_secret($social_credentials) !== '' ? esc_attr('Saved — enter a new secret to replace it') : esc_attr('OAuth client secret, not an API key'); ?>"></p>
+                        <p class="description">Create a Web application OAuth client, enable YouTube Data API v3, and add this redirect URI: <code><?php echo esc_html(TechnoRapper_AI_Wire_YouTube_OAuth::redirect_uri()); ?></code>. Or set <code>TR_AI_WIRE_GOOGLE_CLIENT_ID</code> and <code>TR_AI_WIRE_GOOGLE_CLIENT_SECRET</code> in wp-config.php.</p>
+                        <?php if (!$yt_oauth_ready) : ?>
+                        <p class="description">Save the Google OAuth client ID and secret first, then a <strong>Sign in with Google</strong> button appears here.</p>
+                        <?php endif; ?>
+                        <details style="margin:12px 0;">
+                            <summary>Advanced: paste a Google refresh token instead</summary>
+                            <p class="description">Use this only if you already completed Google OAuth elsewhere. A YouTube Data API key will not work here. A refresh token stays valid; an access token expires in about an hour.</p>
+                            <p><label for="tr-yt-refresh"><strong>Google refresh token</strong></label><br><input id="tr-yt-refresh" name="social[youtube_refresh_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['youtube_refresh_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('OAuth refresh token for the channel'); ?>"></p>
+                            <p><label for="tr-yt-access"><strong>Google access token</strong> (optional)</label><br><input id="tr-yt-access" name="social[youtube_access_token]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo !empty($social_credentials['youtube_access_token']) ? esc_attr('Saved — enter a new token to replace it') : esc_attr('Short-lived; leave blank to refresh automatically'); ?>"></p>
+                        </details>
+                        <?php if ($yt_ready) : ?><p><label><input type="checkbox" name="remove_youtube_oauth" value="1"> Remove saved YouTube channel</label></p><?php endif; ?>
+                    </details>
                 </div>
-                <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+                <div class="card tr-ai-wire-card">
                     <h2>Distribution</h2>
                     <p class="description" data-tr-reveal-none="tr-social-x-enabled,tr-social-ig-enabled,tr-social-yt-enabled"<?php echo $any_network ? ' hidden' : ''; ?>>Turn on X, Instagram, or YouTube above to configure how many posts go out each day.</p>
                     <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled,tr-social-yt-enabled"<?php echo $any_network ? '' : ' hidden'; ?>>
                     <?php $mix_budget = min(20, max(1, (int) ($s['social_daily_limit'] ?? 10))); ?>
-                    <p><label for="tr-social-daily-limit">Social posts per day</label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr((string) $mix_budget); ?>"> <span class="description">This is the total. Split it below — 5 can be 2 carousels, 1 collage, and 2 singles. Each social post still goes to every network that is turned on.</span></p>
-                    <p class="description">Outbound captions, Reel scripts, YouTube titles/descriptions/tags, and on-image lines are scanned for profanity/slurs and sent through OpenAI Moderation before X, Instagram, or YouTube. A fail holds the job for review — it does not post.</p>
-                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
-                    <p><label for="tr-social-min-score">Minimum review score to post stills</label> <input id="tr-social-min-score" type="number" min="0" max="100" name="<?php echo esc_attr($option); ?>[social_min_review_score]" value="<?php echo esc_attr((int) ($s['social_min_review_score'] ?? 90)); ?>"> <span class="description">Only stories at or above this score get an Instagram or X graphic. 90 now means a complete original article (named change in the title, unique angle, takeaways, FAQ). A website-publishable 85–89 stays on the site. The writer aims at 90; a clustered 85–89 with no remaining defect is raised to 90, and one polish pass runs when the reviewer named fixes. 0 posts every published article. Default 90. Instagram captions never include a URL (link in bio instead), and stills are spaced at least 3 hours apart.</span></p>
-                    <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
-                    </div>
+                    <p><label for="tr-social-daily-limit"><strong>Social posts per day</strong></label> <input id="tr-social-daily-limit" type="number" min="1" max="20" name="<?php echo esc_attr($option); ?>[social_daily_limit]" value="<?php echo esc_attr((string) $mix_budget); ?>"> <span class="description">This is the total. Split it below — 5 can be 2 carousels, 1 collage, and 2 singles. Each social post still goes to every network that is turned on.</span></p>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_mix_saved]" value="1">
                     <h3 style="margin:16px 0 8px;">Split that total</h3>
                     <p class="description" id="tr-social-mix-remaining">Assign Reels, carousels, collages, and single-story posts so they add up to the total above. Set a type to 0 to turn it off. The job fills Reel quota first, then carousel, then collages, then singles.</p>
+                    <div class="tr-ai-wire-grid">
                     <div data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
+                    <p class="tr-ai-wire-tile"><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"></p>
+                    </div>
+                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
+                    <p class="tr-ai-wire-tile"><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 3); ?>"><span class="description">Swipeable Instagram posts.</span></p>
+                    </div>
+                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
+                    <p class="tr-ai-wire-tile"><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"><span class="description">Several articles in one grid.</span></p>
+                    </div>
+                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
+                    <p class="tr-ai-wire-tile"><label for="tr-social-single-daily">Normal / single-story posts per day</label> <input id="tr-social-single-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 2); ?>"><span class="description">One article, one post.</span></p>
+                    </div>
+                    </div>
+                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
+                    <div data-tr-reveal-any="tr-social-carousel-daily,tr-social-collage-daily"<?php echo ((int) ($s['social_carousel_daily_limit'] ?? 3) > 0 || (int) ($s['social_collage_daily_limit'] ?? 0) > 0) ? '' : ' hidden'; ?>>
+                    <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
+                    </div>
+                    <p><label for="tr-social-min-score">Minimum review score to post stills</label> <input id="tr-social-min-score" type="number" min="0" max="100" name="<?php echo esc_attr($option); ?>[social_min_review_score]" value="<?php echo esc_attr((int) ($s['social_min_review_score'] ?? 90)); ?>"> <span class="description">Default 90. Instagram captions never include a URL, and stills are spaced at least 3 hours apart.</span></p>
+                    <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
+                    <p class="description">Artwork is GPT Image 2 low; type is overlaid locally for stills. Image estimate $0.006 each. X API charges are separate. That file is a social asset only — it never becomes the article featured image.</p>
+                    </div>
+                    <p class="description">Outbound captions, Reel scripts, YouTube titles/descriptions/tags, and on-image lines are scanned for profanity/slurs and sent through OpenAI Moderation before X, Instagram, or YouTube. A fail holds the job for review — it does not post.</p>
+                    </div>
+                </div>
+                <div class="card tr-ai-wire-card" data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
+                    <h2>Reels / Shorts</h2>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="0">
                     <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X still gets the still poster.</span></p>
                     <div data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>
-                    <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"></p>
-                    <p><label for="tr-social-reel-weekly">Reel posts per week</label> <input id="tr-social-reel-weekly" type="number" min="0" max="14" name="<?php echo esc_attr($option); ?>[social_reel_weekly_limit]" value="<?php echo esc_attr((int) ($s['social_reel_weekly_limit'] ?? 0)); ?>"> <span class="description">0 means no weekly cap. Use 2 for a 1–2 Reels/week desk. The daily mix still applies.</span></p>
-                    <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label> <input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"> <span class="description">Default $10 covers about one 8s Veo Lite clip per day. Raise this before switching to Fast, full Veo, Kling, or a talking host. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
-                    <fieldset id="tr-social-reel-model">
-                        <legend>Reel motion model</legend>
-                        <p class="description">Suggested: <strong>Veo 3.1 Lite</strong> on a $10 budget. Click the info icon on a model for its price, or open the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> page.</p>
+                    <?php
+                    $clip_cost = $this->social_reel_video_estimate_usd($s);
+                    $reel_cost = $this->social_reel_total_estimate_usd($s);
+                    ?>
+                    <div class="tr-ai-wire-statbar">
+                        <p class="tr-ai-wire-stat"><span class="description">This recipe</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($reel_cost, 2)); ?></strong> per Reel</p>
+                        <p class="tr-ai-wire-stat"><span class="description">B-roll clip</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?></strong></p>
+                        <p class="tr-ai-wire-stat"><span class="description">Video budget</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n((float) ($s['social_video_budget_usd'] ?? 10), 2)); ?></strong> / month</p>
+                    </div>
+                    <p class="description"><?php echo esc_html($this->social_reel_recipe_summary($s)); ?></p>
+                    <div class="tr-ai-wire-row">
+                    <p><label for="tr-social-reel-weekly">Reel posts per week</label><br><input id="tr-social-reel-weekly" type="number" min="0" max="14" name="<?php echo esc_attr($option); ?>[social_reel_weekly_limit]" value="<?php echo esc_attr((int) ($s['social_reel_weekly_limit'] ?? 0)); ?>"><span class="description">0 means no weekly cap. Use 2 for a 1–2 Reels/week desk.</span></p>
+                    <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label><br><input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"><span class="description">Raise this before Fast, Kling, or a talking host. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
+                    <p><label for="tr-social-reel-target">Spoken length</label><br><select id="tr-social-reel-target" name="<?php echo esc_attr($option); ?>[social_reel_target_seconds]"><?php foreach (array(15 => '15 seconds', 18 => '18 seconds (default)', 30 => '30 seconds', 45 => '45 seconds') as $target_n => $target_label) : ?><option value="<?php echo esc_attr((string) $target_n); ?>" <?php selected((int) ($s['social_reel_target_seconds'] ?? 18), $target_n); ?>><?php echo esc_html($target_label); ?></option><?php endforeach; ?></select></p>
+                    <p><label for="tr-social-reel-voice">Voice</label><br><select id="tr-social-reel-voice" name="<?php echo esc_attr($option); ?>[social_reel_tts_voice]"><?php foreach ($this->social_reel_tts_voices() as $voice_id => $voice_label) : ?><option value="<?php echo esc_attr($voice_id); ?>" <?php selected((string) ($s['social_reel_tts_voice'] ?? 'cedar'), $voice_id); ?>><?php echo esc_html($voice_label); ?></option><?php endforeach; ?></select></p>
+                    </div>
+                    <h3>How the video is cut</h3>
+                    <p class="description">Default stays a spoken B-roll clip. Story edit is opt-in: a talking host, fact slides, B-roll, and a sting.</p>
+                    <div class="tr-ai-wire-choice">
+                        <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'broll') ? ' is-selected' : ''; ?>">
+                            <input id="tr-reel-recipe-broll" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="broll" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'broll'); ?>>
+                            <strong>B-roll spoken Reel</strong>
+                            <span class="description">One article, Fal motion, captions, last-frame hold, sting. Same as today.</span>
+                        </label>
+                        <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? ' is-selected' : ''; ?>">
+                            <input id="tr-reel-recipe-story" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="story" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'story'); ?>>
+                            <strong>Story edit</strong>
+                            <span class="description">Host close/medium, news slides, B-roll, sting. Turn each piece on below.</span>
+                        </label>
+                    </div>
+                    <div data-tr-reveal="tr-reel-recipe-story"<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? '' : ' hidden'; ?>>
+                        <p>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="0">
+                            <label><input id="tr-reel-include-host" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="1" <?php checked(!empty($s['social_reel_include_host'])); ?>> <strong>Talking host (avatar face)</strong></label>
+                            <span class="description">Optional upsell. Lip-syncs a still portrait to the voiceover.</span>
+                        </p>
+                        <div class="tr-ai-wire-panel" data-tr-reveal="tr-reel-include-host"<?php echo !empty($s['social_reel_include_host']) ? '' : ' hidden'; ?>>
+                            <?php
+                            $host_id = absint($s['social_reel_host_image_id'] ?? 0);
+                            $host_src = $host_id ? wp_get_attachment_image_url($host_id, 'medium') : '';
+                            ?>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_host_image_id]" value="<?php echo esc_attr((string) $host_id); ?>">
+                            <div class="tr-ai-wire-avatar">
+                                <div class="tr-ai-wire-avatar-preview">
+                                    <?php if ($host_src) : ?>
+                                    <img src="<?php echo esc_url($host_src); ?>" alt="Saved avatar face">
+                                    <?php else : ?>
+                                    <span>No avatar face yet. Upload a portrait or generate a presenter.</span>
+                                    <?php endif; ?>
+                                </div>
+                                <div>
+                                    <p><label for="tr-reel-host-image"><strong>Avatar face</strong></label><br>
+                                    <input id="tr-reel-host-image" name="social_reel_host_image" type="file" accept="image/jpeg,image/png,image/webp">
+                                    <span class="description">Front-facing adult portrait, head and shoulders, no logos.</span></p>
+                                    <?php if ($host_src) : ?>
+                                    <p><label><input type="checkbox" name="remove_reel_host_image" value="1"> Remove saved avatar face</label></p>
+                                    <?php elseif (!empty($s['social_reel_include_host']) && empty($s['social_reel_generate_host_face'])) : ?>
+                                    <div class="notice notice-warning inline"><p>Talking host is on but there is no avatar face yet. Upload a portrait or turn on Generate a presenter face.</p></div>
+                                    <?php endif; ?>
+                                    <p>
+                                        <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="0">
+                                        <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="1" <?php checked(!empty($s['social_reel_generate_host_face'])); ?>> Generate a presenter face if none is uploaded</label>
+                                        <span class="description">GPT Image 2 low (~$0.006, image budget). Saved and reused.</span>
+                                    </p>
+                                    <p>
+                                        <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="0">
+                                        <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="1" <?php checked(!empty($s['social_reel_enhance_host_face'])); ?>> <strong>Enhance avatar face</strong></label>
+                                        <span class="description">CodeFormer restore/upscale (~$0.01 once per face, video budget).</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="tr-ai-wire-row">
+                            <?php
+                            $selected_host = (string) ($s['social_reel_host_model'] ?? 'kling-avatar-pro');
+                            foreach ($this->social_reel_host_models() as $value => $spec) :
+                                $host_example = $this->social_reel_host_seconds($s);
+                                $host_cost = round($host_example * (float) $spec['usd_per_second'], 4);
+                                ?>
+                            <label class="tr-ai-wire-choice-card<?php echo $selected_host === $value ? ' is-selected' : ''; ?>">
+                                <input id="tr-reel-host-<?php echo esc_attr($value); ?>" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_host_model]" value="<?php echo esc_attr($value); ?>" <?php checked($selected_host, $value); ?>>
+                                <strong><?php echo esc_html((string) $spec['label']); ?></strong>
+                                <?php if (!empty($spec['recommended'])) : ?><span class="description">(suggested upsell)</span><?php endif; ?>
+                                <span class="description"><?php echo esc_html((string) $spec['short']); ?> · <?php echo esc_html((string) $host_example); ?>s ≈ $<?php echo esc_html(number_format_i18n($host_cost, 2)); ?></span>
+                            </label>
+                            <?php endforeach; ?>
+                            </div>
+                            <div class="tr-ai-wire-row">
+                            <p><label for="tr-reel-host-seconds">Host on-camera seconds</label><br><input id="tr-reel-host-seconds" type="number" min="8" max="45" name="<?php echo esc_attr($option); ?>[social_reel_host_seconds]" value="<?php echo esc_attr((int) ($s['social_reel_host_seconds'] ?? 20)); ?>"></p>
+                            <p class="tr-ai-wire-checks">
+                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_close_camera]" value="0">
+                                <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_close_camera]" value="1" <?php checked(!isset($s['social_reel_close_camera']) || !empty($s['social_reel_close_camera'])); ?>> Close-up camera</label>
+                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_medium_camera]" value="0">
+                                <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_medium_camera]" value="1" <?php checked(!isset($s['social_reel_medium_camera']) || !empty($s['social_reel_medium_camera'])); ?>> Medium camera</label>
+                            </p>
+                            </div>
+                        </div>
+                        <p class="tr-ai-wire-checks">
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="0">
+                            <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="1" <?php checked(!empty($s['social_reel_include_slides'])); ?>> Fact slides</label>
+                            <label for="tr-reel-fact-slides">Count</label>
+                            <select id="tr-reel-fact-slides" name="<?php echo esc_attr($option); ?>[social_reel_fact_slides]"><?php foreach (array(1, 2, 3, 4) as $slide_n) : ?><option value="<?php echo esc_attr((string) $slide_n); ?>" <?php selected((int) ($s['social_reel_fact_slides'] ?? 2), $slide_n); ?>><?php echo esc_html((string) $slide_n); ?></option><?php endforeach; ?></select>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="0">
+                            <label><input id="tr-reel-include-broll" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="1" <?php checked(!isset($s['social_reel_include_broll']) || !empty($s['social_reel_include_broll'])); ?>> B-roll motion</label>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_sting]" value="0">
+                            <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_sting]" value="1" <?php checked(!isset($s['social_reel_include_sting']) || !empty($s['social_reel_include_sting'])); ?>> Brand sting</label>
+                            <label for="tr-reel-sting-seconds">Seconds</label>
+                            <input id="tr-reel-sting-seconds" type="number" min="1" max="4" name="<?php echo esc_attr($option); ?>[social_reel_sting_seconds]" value="<?php echo esc_attr((int) ($s['social_reel_sting_seconds'] ?? 2)); ?>">
+                        </p>
+                    </div>
+                    <details id="tr-social-reel-model" class="tr-ai-wire-details">
+                        <summary>Motion model and Fal key</summary>
+                        <p class="description">Suggested: <strong>Veo 3.1 Lite</strong> on a $10 budget. Open the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> page for every model.</p>
                         <?php
                         $selected_model = (string) ($s['social_reel_video_model'] ?? 'veo-lite');
                         foreach ($this->social_reel_video_models() as $value => $spec) :
                             $info_id = 'tr-model-info-' . $value;
                             $clip_example = $this->social_reel_clip_seconds(array_merge($s, array('social_reel_video_model' => $value, 'social_reel_clip_seconds' => 8)));
-                            $clip_cost = round($clip_example * (float) $spec['usd_per_second'], 4);
-                            $month_cost = $clip_cost * 30;
+                            $model_clip_cost = round($clip_example * (float) $spec['usd_per_second'], 4);
+                            $month_cost = $model_clip_cost * 30;
                             ?>
                         <div style="margin:8px 0 12px;">
                             <label for="tr-reel-model-<?php echo esc_attr($value); ?>">
@@ -311,7 +476,7 @@ trait TechnoRapper_AI_Wire_Admin {
                                 </summary>
                                 <div class="notice notice-info inline" id="<?php echo esc_attr($info_id); ?>" style="margin:8px 0 0;padding:8px 12px;">
                                     <p><strong><?php echo esc_html((string) $spec['label']); ?></strong> — about $<?php echo esc_html(number_format_i18n((float) $spec['usd_per_second'], 3)); ?>/s silent.
-                                    <?php echo esc_html((string) $clip_example); ?>s ≈ $<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?>.
+                                    <?php echo esc_html((string) $clip_example); ?>s ≈ $<?php echo esc_html(number_format_i18n($model_clip_cost, 2)); ?>.
                                     One Reel/day ≈ $<?php echo esc_html(number_format_i18n($month_cost, 2)); ?>/month.
                                     <?php echo $month_cost <= 10 ? 'Fits the $10 default.' : 'Raise the video budget before using this daily.'; ?></p>
                                     <p><?php echo esc_html((string) $spec['blurb']); ?> Allowed lengths: <?php echo esc_html(implode('/', array_map('strval', (array) $spec['durations']))); ?>s.
@@ -321,124 +486,17 @@ trait TechnoRapper_AI_Wire_Admin {
                             </details>
                         </div>
                         <?php endforeach; ?>
-                    </fieldset>
-                    <p><label for="tr-social-reel-clip">Generated motion length</label> <select id="tr-social-reel-clip" name="<?php echo esc_attr($option); ?>[social_reel_clip_seconds]"><?php foreach (array(4, 5, 6, 8, 10, 15) as $clip_n) : ?><option value="<?php echo esc_attr((string) $clip_n); ?>" <?php selected((int) ($s['social_reel_clip_seconds'] ?? 8), $clip_n); ?>><?php echo esc_html((string) $clip_n); ?> seconds</option><?php endforeach; ?></select> <span class="description">Veo allows 4/6/8s. Kling allows 5–15s; the worker sends the nearest length that model accepts. Extra B-roll time holds the last frame, then the brand sting.</span></p>
-                    <p><label for="tr-social-reel-target">Spoken length</label> <select id="tr-social-reel-target" name="<?php echo esc_attr($option); ?>[social_reel_target_seconds]"><?php foreach (array(15 => '15 seconds', 18 => '18 seconds (default)', 30 => '30 seconds', 45 => '45 seconds') as $target_n => $target_label) : ?><option value="<?php echo esc_attr((string) $target_n); ?>" <?php selected((int) ($s['social_reel_target_seconds'] ?? 18), $target_n); ?>><?php echo esc_html($target_label); ?></option><?php endforeach; ?></select> <span class="description">The Writer script and Mini TTS follow this length. 45s needs a higher video budget if the host is on camera.</span></p>
-                    <p><label for="tr-social-reel-voice">Voice</label> <select id="tr-social-reel-voice" name="<?php echo esc_attr($option); ?>[social_reel_tts_voice]"><?php foreach ($this->social_reel_tts_voices() as $voice_id => $voice_label) : ?><option value="<?php echo esc_attr($voice_id); ?>" <?php selected((string) ($s['social_reel_tts_voice'] ?? 'cedar'), $voice_id); ?>><?php echo esc_html($voice_label); ?></option><?php endforeach; ?></select></p>
-                    <fieldset>
-                        <legend>Reel recipe</legend>
-                        <p class="description">Default stays a spoken B-roll clip. Story edit is opt-in: a talking host, fact slides, B-roll, and a sting, with camera changes.</p>
-                        <p>
-                            <label><input id="tr-reel-recipe-broll" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="broll" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'broll'); ?>> <strong>B-roll spoken Reel</strong></label>
-                            <span class="description"> — one article, Fal motion, captions, last-frame hold, sting. Same as today.</span>
-                        </p>
-                        <p>
-                            <label><input id="tr-reel-recipe-story" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="story" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'story'); ?>> <strong>Story edit</strong></label>
-                            <span class="description"> — host close/medium, news slides, B-roll, sting. Turn each piece on below.</span>
-                        </p>
-                    </fieldset>
-                    <div data-tr-reveal="tr-reel-recipe-story"<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? '' : ' hidden'; ?>>
-                        <p>
-                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="0">
-                            <label><input id="tr-reel-include-host" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="1" <?php checked(!empty($s['social_reel_include_host'])); ?>> <strong>Talking host (avatar face)</strong></label>
-                            <span class="description">Optional upsell. Lip-syncs a still portrait to the voiceover. Needs a face below.</span>
-                        </p>
-                        <div data-tr-reveal="tr-reel-include-host"<?php echo !empty($s['social_reel_include_host']) ? '' : ' hidden'; ?>>
-                            <?php
-                            $host_id = absint($s['social_reel_host_image_id'] ?? 0);
-                            $host_src = $host_id ? wp_get_attachment_image_url($host_id, 'medium') : '';
-                            ?>
-                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_host_image_id]" value="<?php echo esc_attr((string) $host_id); ?>">
-                            <p><label for="tr-reel-host-image"><strong>Avatar face</strong></label><br>
-                            <input id="tr-reel-host-image" name="social_reel_host_image" type="file" accept="image/jpeg,image/png,image/webp">
-                            <span class="description">Front-facing adult portrait, head and shoulders, no logos. This is the face Kling Avatar lip-syncs.</span></p>
-                            <?php if ($host_src) : ?>
-                            <p><img src="<?php echo esc_url($host_src); ?>" alt="Saved avatar face" style="max-width:160px;height:auto;border-radius:8px;">
-                            <br><label><input type="checkbox" name="remove_reel_host_image" value="1"> Remove saved avatar face</label></p>
-                            <?php elseif (!empty($s['social_reel_include_host']) && empty($s['social_reel_generate_host_face'])) : ?>
-                            <div class="notice notice-warning inline"><p>Talking host is on but there is no avatar face yet. Upload a portrait or turn on Generate a presenter face.</p></div>
-                            <?php endif; ?>
-                            <p>
-                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="0">
-                                <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="1" <?php checked(!empty($s['social_reel_generate_host_face'])); ?>> Generate a presenter face if none is uploaded</label>
-                                <span class="description">Uses GPT Image 2 low (~$0.006, image budget) for a fictional adult news presenter. Saved and reused.</span>
-                            </p>
-                            <p>
-                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="0">
-                                <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="1" <?php checked(!empty($s['social_reel_enhance_host_face'])); ?>> <strong>Enhance avatar face</strong></label>
-                                <span class="description">Optional upsell: CodeFormer restores and upscales the portrait before lip-sync (~$0.01 from the video budget, once per face).</span>
-                            </p>
-                            <fieldset>
-                                <legend>Avatar model</legend>
-                                <?php
-                                $selected_host = (string) ($s['social_reel_host_model'] ?? 'kling-avatar-pro');
-                                foreach ($this->social_reel_host_models() as $value => $spec) :
-                                    $host_example = $this->social_reel_host_seconds($s);
-                                    $host_cost = round($host_example * (float) $spec['usd_per_second'], 4);
-                                    ?>
-                                <div style="margin:8px 0 12px;">
-                                    <label for="tr-reel-host-<?php echo esc_attr($value); ?>">
-                                        <input id="tr-reel-host-<?php echo esc_attr($value); ?>" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_host_model]" value="<?php echo esc_attr($value); ?>" <?php checked($selected_host, $value); ?>>
-                                        <strong><?php echo esc_html((string) $spec['label']); ?></strong>
-                                        <?php if (!empty($spec['recommended'])) : ?><span class="description">(suggested upsell)</span><?php endif; ?>
-                                        — <?php echo esc_html((string) $spec['short']); ?>
-                                    </label>
-                                    <p class="description" style="margin:4px 0 0 24px;"><?php echo esc_html((string) $spec['blurb']); ?>
-                                    <?php echo esc_html((string) $host_example); ?>s ≈ $<?php echo esc_html(number_format_i18n($host_cost, 2)); ?>.
-                                    <a href="<?php echo esc_url((string) $spec['docs']); ?>" target="_blank" rel="noopener noreferrer">Fal page</a></p>
-                                </div>
-                                <?php endforeach; ?>
-                            </fieldset>
-                            <p><label for="tr-reel-host-seconds">Host on-camera seconds</label> <input id="tr-reel-host-seconds" type="number" min="8" max="45" name="<?php echo esc_attr($option); ?>[social_reel_host_seconds]" value="<?php echo esc_attr((int) ($s['social_reel_host_seconds'] ?? 20)); ?>"></p>
-                            <p>
-                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_close_camera]" value="0">
-                                <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_close_camera]" value="1" <?php checked(!isset($s['social_reel_close_camera']) || !empty($s['social_reel_close_camera'])); ?>> Close-up camera</label>
-                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_medium_camera]" value="0">
-                                <label style="margin-left:12px;"><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_medium_camera]" value="1" <?php checked(!isset($s['social_reel_medium_camera']) || !empty($s['social_reel_medium_camera'])); ?>> Medium camera</label>
-                            </p>
-                        </div>
-                        <p>
-                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="0">
-                            <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="1" <?php checked(!empty($s['social_reel_include_slides'])); ?>> Fact slides</label>
-                            <label for="tr-reel-fact-slides" style="margin-left:8px;">Count</label>
-                            <select id="tr-reel-fact-slides" name="<?php echo esc_attr($option); ?>[social_reel_fact_slides]"><?php foreach (array(1, 2, 3, 4) as $slide_n) : ?><option value="<?php echo esc_attr((string) $slide_n); ?>" <?php selected((int) ($s['social_reel_fact_slides'] ?? 2), $slide_n); ?>><?php echo esc_html((string) $slide_n); ?></option><?php endforeach; ?></select>
-                        </p>
-                        <p>
-                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="0">
-                            <label><input id="tr-reel-include-broll" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="1" <?php checked(!isset($s['social_reel_include_broll']) || !empty($s['social_reel_include_broll'])); ?>> B-roll motion</label>
-                        </p>
-                        <p>
-                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_sting]" value="0">
-                            <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_sting]" value="1" <?php checked(!isset($s['social_reel_include_sting']) || !empty($s['social_reel_include_sting'])); ?>> Brand sting</label>
-                            <label for="tr-reel-sting-seconds" style="margin-left:8px;">Seconds</label>
-                            <input id="tr-reel-sting-seconds" type="number" min="1" max="4" name="<?php echo esc_attr($option); ?>[social_reel_sting_seconds]" value="<?php echo esc_attr((int) ($s['social_reel_sting_seconds'] ?? 2)); ?>">
-                        </p>
-                    </div>
-                    <p><label for="tr-fal-key">Fal.ai API key</label><br><input id="tr-fal-key" name="social[fal_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo $this->fal_api_key() !== '' ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Required for Reel motion (Veo via Fal)'); ?>"></p>
-                    <?php if ($this->fal_api_key() !== '') : ?><p><label><input type="checkbox" name="remove_fal_api_key" value="1"> Remove saved Fal.ai key</label></p><?php endif; ?>
-                    <?php
-                    $clip_cost = $this->social_reel_video_estimate_usd($s);
-                    $reel_cost = $this->social_reel_total_estimate_usd($s);
-                    ?>
-                    <p class="description">B-roll clip estimate: $<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?>. This recipe estimate: $<?php echo esc_html(number_format_i18n($reel_cost, 2)); ?> per Reel (host + B-roll; Mini TTS is on the image budget). See <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> for every model.</p>
+                        <p><label for="tr-social-reel-clip">Generated motion length</label> <select id="tr-social-reel-clip" name="<?php echo esc_attr($option); ?>[social_reel_clip_seconds]"><?php foreach (array(4, 5, 6, 8, 10, 15) as $clip_n) : ?><option value="<?php echo esc_attr((string) $clip_n); ?>" <?php selected((int) ($s['social_reel_clip_seconds'] ?? 8), $clip_n); ?>><?php echo esc_html((string) $clip_n); ?> seconds</option><?php endforeach; ?></select> <span class="description">Veo allows 4/6/8s. Kling allows 5–15s.</span></p>
+                        <p><label for="tr-fal-key">Fal.ai API key</label><br><input id="tr-fal-key" name="social[fal_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo $this->fal_api_key() !== '' ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Required for Reel motion (Veo via Fal)'); ?>"></p>
+                        <?php if ($this->fal_api_key() !== '') : ?><p><label><input type="checkbox" name="remove_fal_api_key" value="1"> Remove saved Fal.ai key</label></p><?php endif; ?>
+                    </details>
                     <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->social_ffmpeg_path() === '') : ?>
                     <div class="notice notice-warning inline"><p>Reels need <code>ffmpeg</code> on this host. Until it is installed, Instagram Reel jobs will be held for review. The plugin will not fall back to a slideshow of posters.</p></div>
                     <?php endif; ?>
                     <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->fal_api_key() === '') : ?>
                     <div class="notice notice-warning inline"><p>Reels need a Fal.ai API key to generate motion. Until it is saved, Instagram Reel jobs will be held. The plugin will not Ken Burns the posters instead.</p></div>
                     <?php endif; ?>
-                    </div>
-                    </div>
-                    <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
-                    <p><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 3); ?>"> <span class="description">Swipeable Instagram posts. Each one uses several website articles and a curiosity slide so people keep swiping.</span></p>
-                    <p><label for="tr-social-collage-daily">Collage posts per day</label> <input id="tr-social-collage-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_collage_daily_limit]" value="<?php echo esc_attr($s['social_collage_daily_limit'] ?? 0); ?>"> <span class="description">Several website articles in one grid image.</span></p>
-                    <div data-tr-reveal-any="tr-social-carousel-daily,tr-social-collage-daily"<?php echo ((int) ($s['social_carousel_daily_limit'] ?? 3) > 0 || (int) ($s['social_collage_daily_limit'] ?? 0) > 0) ? '' : ' hidden'; ?>>
-                    <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
-                    </div>
-                    <p><label for="tr-social-single-daily">Normal / single-story posts per day</label> <input id="tr-social-single-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 2); ?>"> <span class="description">One website article, one social post.</span></p>
-                    <p class="description">Artwork is GPT Image 2 low; type is overlaid locally for stills. Image estimate $0.006 each. X API charges are separate. That file is a social asset only — it never becomes the article featured image.</p>
-                    </div>
-                    <p class="description" data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal models you selected, and ffmpeg to mux the edit. One article only — not a roundup of the day’s posts. Mini TTS about $0.004. Avatar Pro and face enhance are optional upsells on the video budget.</p>
+                    <p class="description">A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal models you selected, and ffmpeg to mux the edit. One article only. Mini TTS about $0.004. Avatar Pro and face enhance are optional upsells on the video budget.</p>
                     </div>
                 </div>
                 <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
@@ -458,11 +516,23 @@ trait TechnoRapper_AI_Wire_Admin {
         }
         $s = $this->settings();
         $clip = $this->social_reel_clip_seconds($s);
+        $reel_cost = $this->social_reel_total_estimate_usd($s);
+        $clip_cost = $this->social_reel_video_estimate_usd($s);
         ?>
-        <div class="wrap">
+        <div class="wrap tr-ai-wire-wrap">
             <h1>Price estimate</h1>
             <p>Local estimates the plugin uses to pause spend. They are not Fal or OpenAI invoices. Recheck provider pricing before raising a budget. Social stills stay on the <strong>$<?php echo esc_html(number_format_i18n((float) ($s['social_image_budget_usd'] ?? 5), 2)); ?></strong> image budget. Reel motion stays on the <strong>$<?php echo esc_html(number_format_i18n((float) ($s['social_video_budget_usd'] ?? 10), 2)); ?></strong> video budget.</p>
             <p><a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Back to Social settings</a></p>
+            <div class="card tr-ai-wire-card">
+                <h2>Current recipe</h2>
+                <div class="tr-ai-wire-statbar">
+                    <p class="tr-ai-wire-stat"><span class="description">This recipe</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($reel_cost, 2)); ?></strong> per Reel</p>
+                    <p class="tr-ai-wire-stat"><span class="description">B-roll clip</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?></strong></p>
+                    <p class="tr-ai-wire-stat"><span class="description">Video budget</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n((float) ($s['social_video_budget_usd'] ?? 10), 2)); ?></strong> / month</p>
+                </div>
+                <p><?php echo esc_html($this->social_reel_recipe_summary($s)); ?></p>
+                <p class="description">Change the cut, avatar face, and motion model on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>.</p>
+            </div>
             <h2>Suggested Reel model</h2>
             <p><strong>Veo 3.1 Lite</strong>, 8 seconds, silent 720p. About <strong>$0.24 per clip</strong> and <strong>$7/month</strong> at one Reel/day — that is what the $10 video budget is sized for. Switch models below only after traffic can pay for them.</p>
             <h2>Reel motion models (Fal.ai, silent)</h2>
@@ -545,17 +615,17 @@ trait TechnoRapper_AI_Wire_Admin {
             $groups[$group][$id] = $format;
         }
         ?>
-        <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
+        <div class="card tr-ai-wire-card">
             <h2>News graphics we can produce</h2>
             <p>Select every format you want in rotation. Unchecked formats are never generated. Sample posts you may have seen elsewhere are <strong>examples of look-and-feel only</strong> — they are not the options below, and we will not reuse those headlines, brands, or layouts as presets.</p>
             <?php foreach ($groups as $group => $formats) : ?>
                 <h3 style="margin:16px 0 8px;"><?php echo esc_html($group); ?></h3>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;">
+                <div class="tr-ai-wire-choice">
                     <?php foreach ($formats as $id => $format) : ?>
-                        <label for="tr-news-format-<?php echo esc_attr($id); ?>" style="display:block;margin:0;padding:12px 14px;border:1px solid #dcdcde;border-radius:4px;background:#fff;">
+                        <label for="tr-news-format-<?php echo esc_attr($id); ?>" class="tr-ai-wire-choice-card<?php echo in_array($id, $selected, true) ? ' is-selected' : ''; ?>">
                             <input id="tr-news-format-<?php echo esc_attr($id); ?>" type="checkbox" name="<?php echo esc_attr($option); ?>[social_news_formats][]" value="<?php echo esc_attr($id); ?>" <?php checked(in_array($id, $selected, true)); ?>>
                             <strong><?php echo esc_html((string) $format['label']); ?></strong>
-                            <span class="description" style="display:block;margin:6px 0 0;"><?php echo esc_html((string) $format['description']); ?></span>
+                            <span class="description"><?php echo esc_html((string) $format['description']); ?></span>
                         </label>
                     <?php endforeach; ?>
                 </div>
@@ -700,28 +770,38 @@ trait TechnoRapper_AI_Wire_Admin {
       });
     });
   }
+  function syncChoiceCards() {
+    document.querySelectorAll('.tr-ai-wire-choice-card').forEach(function (card) {
+      var input = card.querySelector('input[type="radio"], input[type="checkbox"]');
+      if (!input) {
+        card.classList.remove('is-selected');
+        return;
+      }
+      if (input.checked) card.classList.add('is-selected');
+      else card.classList.remove('is-selected');
+    });
+  }
   function bind() {
     var root = document.querySelector('.wrap');
     if (!root) return;
     root.addEventListener('change', function (e) {
       var t = e.target;
-      if (!t || !t.id) {
-        reveal();
-        return;
-      }
-      if (t.id === 'tr-social-reel-enabled') syncCount(t, document.getElementById('tr-social-reel-daily'));
-      if (t.id === 'tr-comic-enabled') syncCount(t, document.getElementById('tr-comic-daily'));
-      if (t.id === 'tr-social-daily-limit') capMixToTotal();
+      if (t && t.id === 'tr-social-reel-enabled') syncCount(t, document.getElementById('tr-social-reel-daily'));
+      if (t && t.id === 'tr-comic-enabled') syncCount(t, document.getElementById('tr-comic-daily'));
+      if (t && t.id === 'tr-social-daily-limit') capMixToTotal();
       reveal();
-      syncMixBudget(t.classList && t.classList.contains('tr-social-mix-count') ? t : null);
+      syncChoiceCards();
+      syncMixBudget(t && t.classList && t.classList.contains('tr-social-mix-count') ? t : null);
     });
     root.addEventListener('input', function (e) {
       reveal();
+      syncChoiceCards();
       var t = e.target;
       if (t && t.id === 'tr-social-daily-limit') capMixToTotal();
       syncMixBudget(t && t.classList && t.classList.contains('tr-social-mix-count') ? t : null);
     });
     reveal();
+    syncChoiceCards();
     syncMixBudget(null);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);

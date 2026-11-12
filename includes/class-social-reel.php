@@ -300,6 +300,43 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return round($motion + $this->social_reel_host_estimate_usd($settings), 4);
     }
 
+    private function social_reel_recipe_summary($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        $recipe = $this->social_reel_recipe($settings);
+        $models = $this->social_reel_video_models();
+        $model = $this->social_reel_video_model($settings);
+        $voices = $this->social_reel_tts_voices();
+        $voice = $this->social_reel_tts_voice($settings);
+        $parts = array();
+        if ($recipe === 'story') {
+            $parts[] = 'Story edit';
+            if (!empty($settings['social_reel_include_host'])) {
+                $hosts = $this->social_reel_host_models();
+                $host = $this->social_reel_host_model($settings);
+                $parts[] = (string) ($hosts[$host]['label'] ?? 'Talking host');
+                if (!empty($settings['social_reel_enhance_host_face'])) {
+                    $parts[] = 'face enhance';
+                }
+            } else {
+                $parts[] = 'no talking host';
+            }
+            if (!empty($settings['social_reel_include_slides'])) {
+                $parts[] = (string) $this->social_reel_fact_slides($settings) . ' fact slides';
+            }
+            if (!isset($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_broll'])) {
+                $parts[] = 'B-roll';
+            }
+            if (!isset($settings['social_reel_include_sting']) || !empty($settings['social_reel_include_sting'])) {
+                $parts[] = 'sting';
+            }
+        } else {
+            $parts[] = 'B-roll spoken Reel';
+        }
+        $parts[] = (string) ($models[$model]['label'] ?? $model);
+        $parts[] = (string) $this->social_reel_target_seconds($settings) . 's · ' . (string) ($voices[$voice] ?? $voice);
+        return implode(' · ', $parts);
+    }
+
     private function social_reel_video_model($settings = null) {
         $settings = is_array($settings) ? $settings : $this->settings();
         $model = sanitize_key((string) ($settings['social_reel_video_model'] ?? self::SOCIAL_REEL_VIDEO_DEFAULT));
