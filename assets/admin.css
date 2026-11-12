@@ -338,6 +338,13 @@
     font-size: 12px;
 }
 
+.tr-ai-wire-reel-downloads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0;
+}
+
 .tr-ai-wire-social-preview-video {
     display: block;
     width: 160px;

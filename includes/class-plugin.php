@@ -47,6 +47,7 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_INSTAGRAM_STILL_SPACING = 10800;
     const SOCIAL_REEL_VIDEO_DEFAULT = 'veo-lite';
     const SOCIAL_REEL_FACE_ENHANCE_USD = 0.01;
+    const SOCIAL_REEL_MUX_ENDPOINT = 'fal-ai/ffmpeg-api/compose';
     const INSTAGRAM_GRAPH_VERSION = 'v22.0';
     const SOCIAL_CONTEXT_TTL = 1209600;
     const TABLE_SUFFIX = 'tr_ai_wire_items';
@@ -109,6 +110,7 @@ final class TechnoRapper_AI_Wire {
         add_action('init', array($this, 'maybe_requeue_instagram_quota_field_failures'), 12);
         add_action('admin_post_tr_ai_wire_save_social_credentials', array($this, 'save_social_credentials'));
         add_action('admin_post_tr_ai_wire_retry_social_item', array($this, 'retry_social_item'));
+        add_action('admin_post_tr_ai_wire_upload_reel', array($this, 'upload_social_reel'));
         add_action('admin_post_tr_ai_wire_queue_missing_platform', array($this, 'queue_missing_platform_request'));
         add_action('admin_post_tr_ai_wire_refresh_site_context', array($this, 'refresh_site_context_request'));
         add_action('admin_post_tr_ai_wire_run_now', array($this, 'run_now'));

@@ -526,13 +526,12 @@ trait TechnoRapper_AI_Wire_Admin {
                         <p><label for="tr-fal-key">Fal.ai API key</label><br><input id="tr-fal-key" name="social[fal_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo $this->fal_api_key() !== '' ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Required for Reel motion (Veo via Fal)'); ?>"></p>
                         <?php if ($this->fal_api_key() !== '') : ?><p><label><input type="checkbox" name="remove_fal_api_key" value="1"> Remove saved Fal.ai key</label></p><?php endif; ?>
                     </details>
-                    <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->social_ffmpeg_path() === '') : ?>
-                    <div class="notice notice-warning inline"><p>Reels need <code>ffmpeg</code> on this host. Until it is installed, Instagram Reel jobs will be held for review. The plugin will not fall back to a slideshow of posters.</p></div>
-                    <?php endif; ?>
                     <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->fal_api_key() === '') : ?>
-                    <div class="notice notice-warning inline"><p>Reels need a Fal.ai API key to generate motion. Until it is saved, Instagram Reel jobs will be held. The plugin will not Ken Burns the posters instead.</p></div>
+                    <div class="notice notice-warning inline"><p>Reels need a Fal.ai API key to generate motion<?php echo $this->social_ffmpeg_path() === '' ? ' and to assemble the spoken MP4 (this host has no ffmpeg)' : ''; ?>. Until it is saved, Instagram Reel jobs will be held. The plugin will not Ken Burns the posters instead.</p></div>
+                    <?php elseif ($this->social_ffmpeg_path() === '' && $this->fal_api_key() !== '') : ?>
+                    <div class="notice notice-info inline"><p>This WordPress host has no <code>ffmpeg</code>. Fal still generates motion. If the spoken MP4 cannot be assembled here, Social queue gives you a <strong>Download</strong> of motion + voice so you can run ffmpeg on your laptop, then upload the finished Reel.</p></div>
                     <?php endif; ?>
-                    <p class="description">A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal models you selected, and ffmpeg to mux the edit. One article only. Mini TTS about $0.004. Avatar Pro and face enhance are optional upsells on the video budget.</p>
+                    <p class="description">A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, and the Fal models you selected. If this host has no ffmpeg, Fal also muxes the edit. One article only. Mini TTS about $0.004. Avatar Pro and face enhance are optional upsells on the video budget.</p>
                     </div>
                 </div>
                 <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>

@@ -89,6 +89,26 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return ($path && file_exists($path)) ? $video_id : 0;
     }
 
+    private function social_voice_id($post_id) {
+        $post_id = (int) $post_id;
+        $audio_id = (int) get_post_meta($post_id, '_tr_ai_wire_social_voice_id', true);
+        if ($audio_id < 1) {
+            return 0;
+        }
+        $path = get_attached_file($audio_id);
+        return ($path && file_exists($path)) ? $audio_id : 0;
+    }
+
+    private function social_reel_kit_id($post_id) {
+        $post_id = (int) $post_id;
+        $kit_id = (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_kit_id', true);
+        if ($kit_id < 1) {
+            return 0;
+        }
+        $path = get_attached_file($kit_id);
+        return ($path && file_exists($path)) ? $kit_id : 0;
+    }
+
     private function social_host_id($post_id) {
         $post_id = (int) $post_id;
         $video_id = (int) get_post_meta($post_id, '_tr_ai_wire_social_host_id', true);
@@ -756,11 +776,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($this->social_reel_recipe($settings) === 'story') {
             return $this->ensure_social_reel_story($post, $settings, $copy, $broll_path);
         }
-        if ($this->social_ffmpeg_path() === '') {
-            return new WP_Error(
-                'tr_ai_wire_reel_ffmpeg',
-                'Instagram Reels need ffmpeg on this WordPress host. Install ffmpeg, or switch Instagram back to a still format. The plugin will not Ken Burns the posters into a slideshow.'
-            );
+        if (!$this->social_reel_can_mux()) {
+            return $this->social_reel_mux_error();
         }
         if (!is_string($broll_path) || $broll_path === '' || !file_exists($broll_path)) {
             return new WP_Error('tr_ai_wire_reel_broll', 'A text-free 9:16 B-roll frame is required before rendering the Reel.');
@@ -790,6 +807,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (is_wp_error($audio)) {
             return $audio;
         }
+        $this->store_social_voice($post, $audio, $copy);
         $photo = file_get_contents($broll_path);
         if (!is_string($photo) || $photo === '') {
             return new WP_Error('tr_ai_wire_reel_broll', 'The Reel B-roll file could not be read.');
@@ -841,7 +859,15 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $muxed = $this->compose_social_reel_motion($motion['path'], $overlays, $end_path, $voice_path, $out_path, $duration);
         if (is_wp_error($muxed)) {
+            $kit = $this->store_social_reel_laptop_kit($post, array(
+                'motion.mp4' => $motion['path'],
+                'voice.mp3' => $voice_path,
+                'end.jpg' => $end_path,
+            ), $duration, $copy);
             $this->social_reel_cleanup($tmp);
+            if (!is_wp_error($kit) && $this->social_ffmpeg_path() === '') {
+                return $this->social_reel_laptop_hold_error();
+            }
             return $muxed;
         }
         $bytes = file_get_contents($out_path);
@@ -904,11 +930,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function ensure_social_reel_story($post, $settings, $copy, $broll_path) {
-        if ($this->social_ffmpeg_path() === '') {
-            return new WP_Error(
-                'tr_ai_wire_reel_ffmpeg',
-                'Instagram Reels need ffmpeg on this WordPress host. Install ffmpeg, or switch Instagram back to a still format.'
-            );
+        if (!$this->social_reel_can_mux()) {
+            return $this->social_reel_mux_error();
         }
         $want_host = !empty($settings['social_reel_include_host']);
         $want_slides = !empty($settings['social_reel_include_slides']);
@@ -953,6 +976,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (is_wp_error($audio)) {
             return $audio;
         }
+        $this->store_social_voice($post, $audio, $copy);
         $host = null;
         if ($want_host) {
             $host = $this->generate_social_reel_host($post, $settings, $copy, $audio);
@@ -1045,7 +1069,24 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $muxed = $this->compose_social_reel_story($clips, $voice_path, $out_path);
         if (is_wp_error($muxed)) {
+            $kit_files = array('voice.mp3' => $voice_path);
+            if ($host && !empty($host['path'])) {
+                $kit_files['host.mp4'] = $host['path'];
+            }
+            if ($motion && !empty($motion['path'])) {
+                $kit_files['motion.mp4'] = $motion['path'];
+            }
+            foreach ($clips as $clip) {
+                if (($clip['kind'] ?? '') === 'end' && !empty($clip['path'])) {
+                    $kit_files['end.jpg'] = $clip['path'];
+                    break;
+                }
+            }
+            $kit = $this->store_social_reel_laptop_kit($post, $kit_files, $duration, $copy);
             $this->social_reel_cleanup($tmp);
+            if (!is_wp_error($kit) && $this->social_ffmpeg_path() === '') {
+                return $this->social_reel_laptop_hold_error();
+            }
             return $muxed;
         }
         $bytes = file_get_contents($out_path);
@@ -1500,10 +1541,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     private function compose_social_reel_story($clips, $audio_path, $out_path) {
         $ffmpeg = $this->social_ffmpeg_path();
         if ($ffmpeg === '') {
-            return new WP_Error(
-                'tr_ai_wire_reel_ffmpeg',
-                'Instagram Reels need ffmpeg on this WordPress host. The plugin will not fall back to a slideshow of stills.'
-            );
+            return $this->compose_social_reel_story_fal($clips, $audio_path, $out_path);
         }
         $clips = array_values((array) $clips);
         if (count($clips) < 2) {
@@ -1672,6 +1710,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!is_array($result)) {
             return '';
         }
+        foreach (array('video_url', 'image_url') as $key) {
+            $url = (string) ($result[$key] ?? '');
+            if ($url !== '') {
+                return $url;
+            }
+        }
         foreach (array('video', 'image') as $key) {
             $url = (string) ($result[$key]['url'] ?? '');
             if ($url !== '') {
@@ -1788,6 +1832,136 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return array('id' => (int) $attachment_id, 'path' => $path);
     }
 
+    private function store_social_voice($post, $bytes, $copy) {
+        if (!is_string($bytes) || $bytes === '') {
+            return new WP_Error('tr_ai_wire_reel_tts', 'A spoken Reel script is required.');
+        }
+        $name = 'technorapper-social-voice-' . (int) $post->ID . '.mp3';
+        $upload = wp_upload_bits($name, null, $bytes);
+        if (!empty($upload['error'])) {
+            return new WP_Error('tr_ai_wire_social_video_upload', sanitize_text_field($upload['error']));
+        }
+        $attachment_id = wp_insert_attachment(array(
+            'post_mime_type' => 'audio/mpeg',
+            'post_title' => sanitize_text_field((string) ($copy['hook'] ?? $post->post_title) . ' — reel voice'),
+            'post_status' => 'inherit',
+            'post_parent' => 0,
+        ), $upload['file'], 0, true);
+        if (is_wp_error($attachment_id)) {
+            return $attachment_id;
+        }
+        update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+        update_post_meta($post->ID, '_tr_ai_wire_social_voice_id', (int) $attachment_id);
+        return array('id' => (int) $attachment_id, 'path' => (string) $upload['file']);
+    }
+
+    private function social_reel_laptop_hold_error() {
+        return new WP_Error(
+            'tr_ai_wire_reel_kit',
+            'This WordPress host has no ffmpeg, so the MP4 cannot be finished here. Download the Reel files on this row, install ffmpeg on your laptop, run make-reel, then upload reel.mp4 and click Publish.'
+        );
+    }
+
+    private function social_reel_laptop_readme($duration) {
+        $duration = max(8, (int) round((float) $duration));
+        return "AI Wire Reel kit\n"
+            . "================\n\n"
+            . "This WordPress host cannot run ffmpeg. Finish the spoken Reel on your laptop.\n\n"
+            . "1. Install ffmpeg:\n"
+            . "   Windows: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip\n"
+            . "            Unzip and put ffmpeg.exe in this folder (or add it to PATH).\n"
+            . "   Mac:     https://evermeet.cx/ffmpeg/getrelease/zip\n"
+            . "            or: brew install ffmpeg\n"
+            . "   Official: https://ffmpeg.org/download.html\n\n"
+            . "2. Put motion.mp4, voice.mp3, and end.jpg in one folder with make-reel.bat (Windows) or make-reel.sh (Mac/Linux).\n\n"
+            . "3. Run make-reel.bat or: bash make-reel.sh\n"
+            . "   Spoken length used: {$duration} seconds.\n\n"
+            . "4. Upload reel.mp4 on the Social queue row, then Publish.\n";
+    }
+
+    private function social_reel_laptop_script($duration, $windows = false) {
+        $duration = max(8, (int) round((float) $duration));
+        $trim = number_format((float) $duration, 2, '.', '');
+        $cmd = 'ffmpeg -y -stream_loop -1 -i motion.mp4 -i voice.mp3 -loop 1 -t 2 -i end.jpg'
+            . ' -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p,trim=duration=' . $trim . ',setpts=PTS-STARTPTS[base];'
+            . '[2:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p[end];'
+            . '[base][end]concat=n=2:v=1:a=0[v]"'
+            . ' -map "[v]" -map 1:a -c:v libx264 -pix_fmt yuv420p -profile:v high -level 4.0 -c:a aac -b:a 128k -ar 44100 -shortest -movflags +faststart reel.mp4';
+        if ($windows) {
+            return "@echo off\r\n"
+                . "REM Install ffmpeg first: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip\r\n"
+                . $cmd . "\r\n"
+                . "echo Created reel.mp4 — upload it on the Social queue, then Publish.\r\n"
+                . "pause\r\n";
+        }
+        return "#!/bin/bash\nset -euo pipefail\n"
+            . "# brew install ffmpeg   OR   https://evermeet.cx/ffmpeg/getrelease/zip\n"
+            . $cmd . "\n"
+            . "echo \"Created reel.mp4 — upload it on the Social queue, then Publish.\"\n";
+    }
+
+    private function store_social_reel_laptop_kit($post, $files, $duration, $copy) {
+        $files = is_array($files) ? $files : array();
+        $usable = array();
+        foreach ($files as $name => $path) {
+            $name = sanitize_file_name((string) $name);
+            if ($name === '' || !is_string($path) || $path === '' || !file_exists($path)) {
+                continue;
+            }
+            $usable[$name] = $path;
+        }
+        if (empty($usable['motion.mp4']) && empty($usable['host.mp4'])) {
+            return new WP_Error('tr_ai_wire_reel_kit', 'Reel motion was not stored for laptop download.');
+        }
+        if (empty($usable['voice.mp3']) && $this->social_voice_id($post->ID) > 0) {
+            $voice_path = get_attached_file($this->social_voice_id($post->ID));
+            if ($voice_path && file_exists($voice_path)) {
+                $usable['voice.mp3'] = $voice_path;
+            }
+        }
+        update_post_meta($post->ID, '_tr_ai_wire_reel_audio_seconds', (string) max(8, (int) round((float) $duration)));
+        if (!class_exists('ZipArchive')) {
+            return new WP_Error('tr_ai_wire_reel_kit', 'PHP ZipArchive is not available to pack the laptop kit. Download motion.mp4 and voice.mp3 from this row instead.');
+        }
+        $tmp = get_temp_dir() . 'tr-ai-wire-kit-' . wp_generate_password(8, false, false) . '.zip';
+        $zip = new ZipArchive();
+        if ($zip->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            return new WP_Error('tr_ai_wire_reel_kit', 'Could not create the laptop Reel zip.');
+        }
+        foreach ($usable as $name => $path) {
+            $zip->addFile($path, $name);
+        }
+        $zip->addFromString('README.txt', $this->social_reel_laptop_readme($duration));
+        $zip->addFromString('make-reel.sh', $this->social_reel_laptop_script($duration, false));
+        $zip->addFromString('make-reel.bat', $this->social_reel_laptop_script($duration, true));
+        $zip->close();
+        if (!file_exists($tmp) || filesize($tmp) < 64) {
+            @unlink($tmp);
+            return new WP_Error('tr_ai_wire_reel_kit', 'The laptop Reel zip was empty.');
+        }
+        $bytes = file_get_contents($tmp);
+        @unlink($tmp);
+        if (!is_string($bytes) || $bytes === '') {
+            return new WP_Error('tr_ai_wire_reel_kit', 'The laptop Reel zip could not be read.');
+        }
+        $upload = wp_upload_bits('technorapper-reel-kit-' . (int) $post->ID . '.zip', null, $bytes);
+        if (!empty($upload['error'])) {
+            return new WP_Error('tr_ai_wire_social_video_upload', sanitize_text_field($upload['error']));
+        }
+        $attachment_id = wp_insert_attachment(array(
+            'post_mime_type' => 'application/zip',
+            'post_title' => sanitize_text_field((string) ($copy['hook'] ?? $post->post_title) . ' — reel kit'),
+            'post_status' => 'inherit',
+            'post_parent' => 0,
+        ), $upload['file'], 0, true);
+        if (is_wp_error($attachment_id)) {
+            return $attachment_id;
+        }
+        update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+        update_post_meta($post->ID, '_tr_ai_wire_social_reel_kit_id', (int) $attachment_id);
+        return (int) $attachment_id;
+    }
+
     private function render_social_reel_caption_overlay($copy, $caption) {
         if (!function_exists('imagecreatetruecolor') || !function_exists('imagepng')) {
             return new WP_Error('tr_ai_wire_social_gd', 'PHP GD is required to render Reel captions.');
@@ -1823,13 +1997,219 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $result ? $result : new WP_Error('tr_ai_wire_social_image_render', 'Could not render a Reel caption overlay.');
     }
 
+    private function social_reel_can_mux() {
+        return $this->social_ffmpeg_path() !== '' || $this->fal_api_key() !== '';
+    }
+
+    private function social_reel_mux_error() {
+        return new WP_Error(
+            'tr_ai_wire_reel_ffmpeg',
+            'Instagram Reels need a Fal.ai API key to assemble the video on this host (no local ffmpeg). Save it on Social settings. The plugin will not fall back to a slideshow of posters.'
+        );
+    }
+
+    private function social_reel_file_data_url($path, $mime, $error_code, $message) {
+        if (!is_string($path) || $path === '' || !file_exists($path)) {
+            return new WP_Error($error_code, $message);
+        }
+        $uploads = wp_upload_dir();
+        $basedir = (string) ($uploads['basedir'] ?? '');
+        $baseurl = (string) ($uploads['baseurl'] ?? '');
+        if ($basedir !== '' && $baseurl !== '' && strpos($path, $basedir) === 0) {
+            $url = $baseurl . str_replace('\\', '/', substr($path, strlen($basedir)));
+            if (is_string($url) && $url !== '' && wp_http_validate_url($url) && strpos($url, 'https://') === 0) {
+                return $url;
+            }
+        }
+        $bytes = file_get_contents($path);
+        if (!is_string($bytes) || $bytes === '') {
+            return new WP_Error($error_code, $message);
+        }
+        $detected = function_exists('mime_content_type') ? (string) mime_content_type($path) : '';
+        if ($detected !== '' && strpos($detected, '/') !== false) {
+            $mime = $detected;
+        }
+        return 'data:' . $mime . ';base64,' . base64_encode($bytes);
+    }
+
+    private function social_fal_loop_keyframes($url, $source_seconds, $need_seconds, $start_seconds = 0) {
+        $source_seconds = max(1.0, (float) $source_seconds);
+        $need_seconds = max(0.4, (float) $need_seconds);
+        $start_seconds = max(0.0, (float) $start_seconds);
+        $frames = array();
+        $clock = 0.0;
+        while ($clock < $need_seconds - 0.05) {
+            $chunk = min($source_seconds, $need_seconds - $clock);
+            if ($chunk < 0.4) {
+                break;
+            }
+            $frames[] = array(
+                'timestamp' => (int) round(($start_seconds + $clock) * 1000),
+                'duration' => (int) round($chunk * 1000),
+                'url' => $url,
+            );
+            $clock += $chunk;
+        }
+        return $frames;
+    }
+
+    private function social_fal_compose_video($tracks) {
+        if ($this->fal_api_key() === '') {
+            return $this->social_reel_mux_error();
+        }
+        $submitted = $this->social_fal_submit(self::SOCIAL_REEL_MUX_ENDPOINT, array(
+            'tracks' => array_values((array) $tracks),
+        ));
+        if (is_wp_error($submitted)) {
+            return $submitted;
+        }
+        $polled = $this->social_fal_await(self::SOCIAL_REEL_MUX_ENDPOINT, (string) ($submitted['request_id'] ?? ''));
+        if (is_wp_error($polled)) {
+            return $polled;
+        }
+        if (!is_string($polled) || strlen($polled) < 512) {
+            return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not return a usable Reel video.');
+        }
+        return $polled;
+    }
+
+    private function compose_social_reel_motion_fal($motion_path, $end_path, $audio_path, $out_path, $audio_duration) {
+        if (!is_string($motion_path) || $motion_path === '' || !file_exists($motion_path)) {
+            return new WP_Error('tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
+        }
+        if (!is_string($end_path) || $end_path === '' || !file_exists($end_path)) {
+            return new WP_Error('tr_ai_wire_reel_frames', 'A Reel must end on a brand sting.');
+        }
+        if (!is_string($audio_path) || $audio_path === '' || !file_exists($audio_path)) {
+            return new WP_Error('tr_ai_wire_reel_tts', 'A spoken voiceover is required. Silent poster clips are a slideshow.');
+        }
+        $audio_duration = max(8.0, (float) $audio_duration);
+        $end = 2.0;
+        $motion_url = $this->social_reel_file_data_url($motion_path, 'video/mp4', 'tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
+        if (is_wp_error($motion_url)) {
+            return $motion_url;
+        }
+        $end_url = $this->social_reel_file_data_url($end_path, 'image/jpeg', 'tr_ai_wire_reel_frames', 'A Reel must end on a brand sting.');
+        if (is_wp_error($end_url)) {
+            return $end_url;
+        }
+        $audio_url = $this->social_reel_file_data_url($audio_path, 'audio/mpeg', 'tr_ai_wire_reel_tts', 'A spoken voiceover is required. Silent poster clips are a slideshow.');
+        if (is_wp_error($audio_url)) {
+            return $audio_url;
+        }
+        $source = $this->social_video_duration($motion_path);
+        $visual = $this->social_fal_loop_keyframes($motion_url, $source, $audio_duration, 0);
+        $visual[] = array(
+            'timestamp' => (int) round($audio_duration * 1000),
+            'duration' => (int) round($end * 1000),
+            'url' => $end_url,
+        );
+        $bytes = $this->social_fal_compose_video(array(
+            array(
+                'id' => 'visual',
+                'type' => 'video',
+                'keyframes' => $visual,
+            ),
+            array(
+                'id' => 'voice',
+                'type' => 'audio',
+                'keyframes' => array(
+                    array(
+                        'timestamp' => 0,
+                        'duration' => (int) round($audio_duration * 1000),
+                        'url' => $audio_url,
+                    ),
+                ),
+            ),
+        ));
+        if (is_wp_error($bytes)) {
+            return $bytes;
+        }
+        if (!is_string($out_path) || $out_path === '' || file_put_contents($out_path, $bytes) === false) {
+            return new WP_Error('tr_ai_wire_reel_temp', 'Could not write the Fal-assembled Reel.');
+        }
+        if (!file_exists($out_path) || filesize($out_path) < 1024) {
+            return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not produce a usable Reel video.');
+        }
+        return $out_path;
+    }
+
+    private function compose_social_reel_story_fal($clips, $audio_path, $out_path) {
+        $clips = array_values((array) $clips);
+        if (count($clips) < 2) {
+            return new WP_Error('tr_ai_wire_reel_frames', 'A story Reel needs at least two shots.');
+        }
+        if (!is_string($audio_path) || $audio_path === '' || !file_exists($audio_path)) {
+            return new WP_Error('tr_ai_wire_reel_tts', 'A spoken voiceover is required. Silent poster clips are a slideshow.');
+        }
+        $audio_url = $this->social_reel_file_data_url($audio_path, 'audio/mpeg', 'tr_ai_wire_reel_tts', 'A spoken voiceover is required. Silent poster clips are a slideshow.');
+        if (is_wp_error($audio_url)) {
+            return $audio_url;
+        }
+        $visual = array();
+        $clock = 0.0;
+        $total = 0.0;
+        foreach ($clips as $clip) {
+            if (empty($clip['path']) || !file_exists($clip['path'])) {
+                return new WP_Error('tr_ai_wire_reel_frames', 'A Reel story shot file is missing.');
+            }
+            $duration = max(0.8, (float) ($clip['duration'] ?? 2));
+            $kind = (string) ($clip['kind'] ?? '');
+            $mime = ($kind === 'end') ? 'image/jpeg' : 'video/mp4';
+            $url = $this->social_reel_file_data_url((string) $clip['path'], $mime, 'tr_ai_wire_reel_frames', 'A Reel story shot file is missing.');
+            if (is_wp_error($url)) {
+                return $url;
+            }
+            if ($kind === 'end') {
+                $visual[] = array(
+                    'timestamp' => (int) round($clock * 1000),
+                    'duration' => (int) round($duration * 1000),
+                    'url' => $url,
+                );
+            } else {
+                $source = $this->social_video_duration((string) $clip['path']);
+                $visual = array_merge($visual, $this->social_fal_loop_keyframes($url, $source, $duration, $clock));
+            }
+            $clock += $duration;
+            $total += $duration;
+        }
+        if (!$visual) {
+            return new WP_Error('tr_ai_wire_reel_frames', 'A story Reel needs at least two shots.');
+        }
+        $bytes = $this->social_fal_compose_video(array(
+            array(
+                'id' => 'visual',
+                'type' => 'video',
+                'keyframes' => $visual,
+            ),
+            array(
+                'id' => 'voice',
+                'type' => 'audio',
+                'keyframes' => array(
+                    array(
+                        'timestamp' => 0,
+                        'duration' => (int) round(max(8.0, $total) * 1000),
+                        'url' => $audio_url,
+                    ),
+                ),
+            ),
+        ));
+        if (is_wp_error($bytes)) {
+            return $bytes;
+        }
+        if (!is_string($out_path) || $out_path === '' || file_put_contents($out_path, $bytes) === false) {
+            return new WP_Error('tr_ai_wire_reel_temp', 'Could not write the Fal-assembled Reel.');
+        }
+        if (!file_exists($out_path) || filesize($out_path) < 1024) {
+            return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not produce a usable Reel video.');
+        }
+        return $out_path;
+    }
+
     private function compose_social_reel_motion($motion_path, $overlays, $end_path, $audio_path, $out_path, $audio_duration) {
         $ffmpeg = $this->social_ffmpeg_path();
         if ($ffmpeg === '') {
-            return new WP_Error(
-                'tr_ai_wire_reel_ffmpeg',
-                'Instagram Reels need ffmpeg on this WordPress host. The plugin will not fall back to a slideshow of stills.'
-            );
+            return $this->compose_social_reel_motion_fal($motion_path, $end_path, $audio_path, $out_path, $audio_duration);
         }
         if (!is_string($motion_path) || $motion_path === '' || !file_exists($motion_path)) {
             return new WP_Error('tr_ai_wire_reel_video', 'Generated Reel motion is missing.');

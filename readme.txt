@@ -110,7 +110,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Optional YouTube Shorts: the same spoken Reel MP4 uploads through YouTube Data API v3 and goes live as public immediately (not a draft). Title, description, tags, category, language, license, audience, and AI-content disclosure are set in that API call. Still images are not posted to YouTube. Off until you connect a channel and turn posting on.
 
 = 0.2.53 =
-* Optional spoken Instagram Reels, off until you set Reels per day above 0. Writer GPT writes the 15–18s script; Fal motion (suggested Veo 3.1 Lite) animates the photo; Mini TTS and ffmpeg mux captions. A local profanity/slur list plus OpenAI Moderation hold unsafe copy. X still gets the still graphic.
+* Optional spoken Instagram Reels, off until you set Reels per day above 0. Writer GPT writes the 15–18s script; Fal motion (suggested Veo 3.1 Lite) animates the photo; Mini TTS speaks it. Local ffmpeg muxes captions when present; otherwise Fal assembles the MP4. A local profanity/slur list plus OpenAI Moderation hold unsafe copy. X still gets the still graphic.
 
 = 0.2.52 =
 * Social copy is written like a newsroom growth desk: clickbait that is true, a curiosity gap, and a photo built to stop the thumb. Operators set how many carousel, collage, and single-story posts go out each day. Carousels add a swipe cue on the cover and one curiosity slide before the last story. Image prompts refuse nudity, sexualized bodies, children, gore, and other policy violations before the image API is called. Unsafe captions are held for review.
@@ -187,7 +187,7 @@ If OpenAI blocks a prompt, AI Wire retries a shorter excerpt and can fall back t
 Adds optional YouTube Shorts. The spoken Reel file is uploaded with title, description, and tags set through the YouTube API. Still posters stay on X and Instagram.
 
 = 0.2.53 =
-Adds optional spoken Instagram Reels you can turn on or off. Writer GPT writes the script; Fal motion and ffmpeg mux the rest. Policy holds block unsafe copy.
+Adds optional spoken Instagram Reels you can turn on or off. Writer GPT writes the script; Fal motion and Mini TTS do the rest. Local ffmpeg is optional. Policy holds block unsafe copy.
 
 = 0.2.52 =
 Social posts now use scroll-stopping copy and photos. Set how many carousel, collage, and single-story posts go out each day. Violating image briefs are dropped at prompt level; unsafe captions stay in the social queue for review.
