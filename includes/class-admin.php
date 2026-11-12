@@ -228,6 +228,10 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p><label for="tr-ig-user-id"><strong>Instagram Professional account ID</strong></label><br><input id="tr-ig-user-id" name="social[instagram_user_id]" type="text" class="regular-text" inputmode="numeric" value="<?php echo esc_attr($social_credentials['instagram_user_id']); ?>"></p>
                     <p><label><input id="tr-social-ig-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_instagram_enabled]" value="1" <?php checked($ig_on); ?>> <strong>Post to Instagram</strong></label></p>
                     <p class="description">Leave this off to keep the Instagram token saved without posting. X can stay on. Use the Facebook Page access token from Graph API Explorer GET me/accounts, not the User Token at the top of Explorer.</p>
+                    <div data-tr-reveal="tr-social-ig-enabled"<?php echo $ig_on ? '' : ' hidden'; ?>>
+                    <p><label><input id="tr-social-smart-post" type="checkbox" name="<?php echo esc_attr($option); ?>[social_smart_post]" value="1" <?php checked(!empty($s['social_smart_post'])); ?>> <strong>Smart post</strong></label></p>
+                    <p class="description">Learn from the last 7 days of Instagram views, then tweak the next mix, captions, and stills. Off by default. The Page token must include <code>instagram_manage_insights</code> — a publish-only token (<code>instagram_content_publish</code>) cannot read views. Reels are never raised automatically (those spend Fal). If Graph fails, mix stays as-is and views are not invented. See Last 7 days on the Social queue.</p>
+                    </div>
                 </div>
                 <div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;">
                     <h2>YouTube</h2>

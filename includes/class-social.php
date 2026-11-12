@@ -1809,6 +1809,10 @@ trait TechnoRapper_AI_Wire_Social {
         if ($profile) {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }
+        $review_brief = $this->social_review_prompt_brief();
+        if ($review_brief !== '') {
+            $user .= 'Last 7 days of Instagram views (follow this for the next still and caption): ' . $review_brief . ' ';
+        }
         $user .= "Article JSON:\n" . wp_json_encode($snapshot)
             . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array), reel_script, reel_captions (array), youtube_title, youtube_description, youtube_tags (array).";
         return $user;
@@ -2221,6 +2225,10 @@ trait TechnoRapper_AI_Wire_Social {
             $prompt .= ' This is regeneration attempt ' . $revision . '. Use a different camera angle, tighter crop, and stronger lighting than a generic stock photo. Prefer dusk, night, or dramatic rim light if it still matches the story. Still no text in the photograph.';
         }
         $prompt .= ' ' . $this->social_image_safety_clause();
+        $review_brief = $this->social_review_prompt_brief();
+        if ($review_brief !== '') {
+            $prompt .= ' Last 7-day Instagram review: ' . $review_brief;
+        }
         return $prompt;
     }
 
@@ -2377,6 +2385,7 @@ trait TechnoRapper_AI_Wire_Social {
             'collage' => $collage,
             'single' => $single,
         ), (int) ($settings['social_daily_limit'] ?? 10));
+        $mix = $this->social_review_apply_mix_limits($mix, $settings);
         return array(
             'carousel' => $mix['carousel'],
             'collage' => $mix['collage'],
@@ -4869,6 +4878,22 @@ trait TechnoRapper_AI_Wire_Social {
         if ($status_copy !== '') {
             echo '<p class="description">' . esc_html($status_copy) . '</p>';
         }
+        $insights = $this->social_review_row_views($row);
+        if ($insights && (string) ($row['platform'] ?? '') === 'instagram' && $status === 'published') {
+            if (!empty($insights['error']) && empty($insights['views'])) {
+                echo '<p class="description">Instagram views: not available. ' . esc_html((string) $insights['error']) . '</p>';
+            } elseif (isset($insights['views'])) {
+                $source = (string) ($insights['view_source'] ?? 'impressions');
+                echo '<p class="description">Instagram ' . esc_html($source) . ': ' . esc_html(number_format_i18n((int) $insights['views']));
+                if (!empty($insights['saved'])) {
+                    echo ' · saves ' . esc_html(number_format_i18n((int) $insights['saved']));
+                }
+                if (!empty($insights['site_reads'])) {
+                    echo ' · site reads ' . esc_html(number_format_i18n((int) $insights['site_reads'])) . ' (not Instagram)';
+                }
+                echo '</p>';
+            }
+        }
         if (!empty($row['remote_url'])) {
             echo '<p><a href="' . esc_url($row['remote_url']) . '" target="_blank" rel="noopener">View live post</a></p>';
         } elseif (!empty($row['remote_id'])) {
@@ -4895,6 +4920,8 @@ trait TechnoRapper_AI_Wire_Social {
         ?>
         <div class="wrap">
             <h1>Social queue</h1>
+            <?php if (isset($_GET['social_review'])) : ?><div class="notice notice-info is-dismissible"><p>Refreshing last 7 days of Instagram views. Stay on this page so the progress bar can finish. This does not generate a new graphic.</p></div><?php endif; ?>
+            <?php $this->render_social_review_card(); ?>
             <style>
                 .tr-ai-wire-social-item{display:flex;gap:16px;align-items:flex-start;max-width:920px;}
                 .tr-ai-wire-social-preview{flex:0 0 132px;}

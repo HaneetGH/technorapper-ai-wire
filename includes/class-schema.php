@@ -18,6 +18,9 @@ trait TechnoRapper_AI_Wire_Schema {
             if (!wp_next_scheduled(self::SOCIAL_CONTEXT_CRON_HOOK)) {
                 wp_schedule_single_event(time() + 15, self::SOCIAL_CONTEXT_CRON_HOOK);
             }
+            if (!empty($settings['social_smart_post']) && self::instagram_credentials_ready() && !wp_next_scheduled(self::SOCIAL_REVIEW_CRON_HOOK)) {
+                wp_schedule_event(time() + 900, 'daily', self::SOCIAL_REVIEW_CRON_HOOK);
+            }
         }
         self::enable_auto_publish_once();
         self::enable_detailed_output_once();
@@ -90,6 +93,8 @@ trait TechnoRapper_AI_Wire_Schema {
             remote_id varchar(128) NOT NULL DEFAULT '',
             remote_url text NULL,
             error_text text NULL,
+            insights_json longtext NULL,
+            insights_at datetime NULL,
             created_at datetime NOT NULL,
             updated_at datetime NOT NULL,
             PRIMARY KEY  (id),
@@ -133,6 +138,7 @@ trait TechnoRapper_AI_Wire_Schema {
         wp_clear_scheduled_hook(self::CRON_HOOK);
         wp_clear_scheduled_hook(self::SOCIAL_CRON_HOOK);
         wp_clear_scheduled_hook(self::SOCIAL_CONTEXT_CRON_HOOK);
+        wp_clear_scheduled_hook(self::SOCIAL_REVIEW_CRON_HOOK);
         wp_clear_scheduled_hook(self::JOB_HOOK);
     }
 

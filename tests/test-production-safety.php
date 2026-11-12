@@ -107,6 +107,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_MIX_OPTION . '_' . gmdate('Ymd'));
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION);
         delete_option(TechnoRapper_AI_Wire::SOCIAL_IDEAS_OPTION);
+        delete_option(TechnoRapper_AI_Wire::SOCIAL_REVIEW_OPTION);
         delete_option('tr_ai_wire_usage_' . gmdate('Ym'));
         delete_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'));
         delete_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'));
@@ -117,6 +118,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('tr_ai_wire_youtube_poll_seconds');
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK);
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::SOCIAL_REVIEW_CRON_HOOK);
         parent::tear_down();
     }
 
@@ -334,8 +336,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         foreach ($expected as $table) {
             $this->assert_plugin_table_exists($table);
         }
-        $this->assertSame('10', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame(TechnoRapper_AI_Wire::SCHEMA_VERSION, get_option('tr_ai_wire_schema_version'));
         $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_social LIKE 'copy_json'"));
+        $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_social LIKE 'insights_json'"));
+        $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_social LIKE 'insights_at'"));
         $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_items LIKE 'source_published_at'"));
         $this->assertNotEmpty($wpdb->get_var("SHOW COLUMNS FROM {$wpdb->prefix}tr_ai_wire_items LIKE 'voice'"));
     }
@@ -402,7 +406,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $row = $wpdb->get_row($wpdb->prepare("SELECT id, source_title FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
         $this->assertSame((string) $id, (string) $row['id']);
         $this->assertSame('Source title', $row['source_title']);
-        $this->assertSame('10', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame(TechnoRapper_AI_Wire::SCHEMA_VERSION, get_option('tr_ai_wire_schema_version'));
         $this->assert_plugin_table_exists($wpdb->prefix . 'tr_ai_wire_view_limits');
         $this->assert_plugin_table_exists($wpdb->prefix . 'tr_ai_wire_quarantine');
     }
@@ -566,7 +570,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         update_option('tr_ai_wire_schema_version', '4');
         $this->plugin->maybe_upgrade_schema();
-        $this->assertSame('10', get_option('tr_ai_wire_schema_version'));
+        $this->assertSame(TechnoRapper_AI_Wire::SCHEMA_VERSION, get_option('tr_ai_wire_schema_version'));
         $this->assertNotFalse(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args));
         wp_unschedule_event(wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK, $args), TechnoRapper_AI_Wire::CRON_HOOK, $args);
     }
@@ -982,6 +986,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(2, $settings['social_single_daily_limit']);
         $this->assertSame(0, $settings['social_reel_daily_limit']);
         $this->assertSame(90, (int) $settings['social_min_review_score']);
+        $this->assertSame(0, (int) $settings['social_smart_post']);
         $this->assertSame(0, (int) $settings['social_mix_saved']);
         $this->assertSame(array_keys(TechnoRapper_AI_Wire::social_news_formats()), $settings['social_news_formats']);
         $this->assertArrayNotHasKey('social_pack_wait_minutes', $settings);
@@ -997,6 +1002,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('manual', $saved['cron_frequency']);
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK));
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_REVIEW_CRON_HOOK));
     }
 
     public function test_existing_installs_turn_auto_publish_on_once() {
@@ -3203,6 +3209,280 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('Wait for it', $copy['reel_script']);
         $this->assertStringContainsString('Qualcomm is chasing AI servers', $copy['reel_script']);
         $this->assertStringContainsString('memory bandwidth is the story', $copy['reel_script']);
+    }
+
+    private function social_review_sample($mode, $views, $source = 'impressions') {
+        return array(
+            'id' => 1,
+            'post_id' => 1,
+            'mode' => $mode,
+            'variant' => 'photo-first',
+            'views' => (int) $views,
+            'view_source' => $source,
+            'saved' => 0,
+            'site_reads' => 0,
+            'error' => $source === 'unavailable' ? 'Instagram did not return insights.' : '',
+        );
+    }
+
+    private function social_review_mix_settings() {
+        return array(
+            'social_reel_daily_limit' => 0,
+            'social_carousel_daily_limit' => 3,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+            'social_daily_limit' => 10,
+        );
+    }
+
+    public function test_social_review_keeps_mix_when_fewer_than_three_posts() {
+        $samples = array(
+            $this->social_review_sample('single', 4),
+            $this->social_review_sample('single', 8),
+        );
+        $review = $this->invoke_private('social_review_decide', array($samples, $this->social_review_mix_settings()));
+        $this->assertSame(2, $review['posts']);
+        $this->assertSame(2, $review['measured']);
+        $this->assertSame(0, (int) $review['tweaks']['mix_changed']);
+        $this->assertSame(2, (int) $review['tweaks']['single']);
+        $this->assertSame(3, (int) $review['tweaks']['carousel']);
+        $this->assertSame(0, (int) $review['tweaks']['reel']);
+        $this->assertStringContainsString('too few to change the mix', implode(' ', $review['verdicts']));
+    }
+
+    public function test_social_review_does_not_treat_missing_insights_as_zero_views() {
+        $samples = array(
+            $this->social_review_sample('single', 0, 'unavailable'),
+            $this->social_review_sample('single', 0, 'unavailable'),
+            $this->social_review_sample('single', 0, 'unavailable'),
+        );
+        $review = $this->invoke_private('social_review_decide', array($samples, $this->social_review_mix_settings()));
+        $this->assertSame(3, $review['posts']);
+        $this->assertSame(0, $review['measured']);
+        $this->assertSame(0, (int) $review['tweaks']['mix_changed']);
+        $this->assertSame(2, (int) $review['tweaks']['single']);
+        $this->assertSame(0, (int) $review['tweaks']['reel']);
+        $this->assertStringContainsString('did not return views', implode(' ', $review['verdicts']));
+        $this->assertStringContainsString('not treat site reads as Instagram views', $review['source_note']);
+    }
+
+    public function test_social_review_moves_failing_stills_into_carousels() {
+        $samples = array(
+            $this->social_review_sample('single', 4),
+            $this->social_review_sample('single', 8),
+            $this->social_review_sample('single', 12),
+        );
+        $review = $this->invoke_private('social_review_decide', array($samples, $this->social_review_mix_settings()));
+        $this->assertSame(8.0, $review['medians']['single']);
+        $this->assertSame(1, (int) $review['tweaks']['mix_changed']);
+        $this->assertSame(0, (int) $review['tweaks']['single']);
+        $this->assertSame(5, (int) $review['tweaks']['carousel']);
+        $this->assertSame(0, (int) $review['tweaks']['reel']);
+        $this->assertStringContainsString('photo-first', $review['tweaks']['caption']);
+    }
+
+    public function test_social_review_prefers_carousels_when_they_double_stills() {
+        $samples = array(
+            $this->social_review_sample('single', 40),
+            $this->social_review_sample('single', 40),
+            $this->social_review_sample('carousel', 100),
+            $this->social_review_sample('carousel', 120),
+        );
+        $review = $this->invoke_private('social_review_decide', array($samples, $this->social_review_mix_settings()));
+        $this->assertSame(1, (int) $review['tweaks']['mix_changed']);
+        $this->assertSame(1, (int) $review['tweaks']['single']);
+        $this->assertSame(4, (int) $review['tweaks']['carousel']);
+        $this->assertSame(0, (int) $review['tweaks']['reel']);
+    }
+
+    public function test_social_review_never_auto_raises_reels() {
+        $samples = array(
+            $this->social_review_sample('single', 50),
+            $this->social_review_sample('single', 60),
+            $this->social_review_sample('reel', 400),
+            $this->social_review_sample('reel', 500),
+        );
+        $review = $this->invoke_private('social_review_decide', array($samples, $this->social_review_mix_settings()));
+        $this->assertSame(0, (int) $review['tweaks']['reel']);
+        $this->assertSame(0, (int) $review['tweaks']['mix_changed']);
+        $this->assertStringContainsString('Not applied automatically', implode(' ', $review['verdicts']));
+    }
+
+    public function test_social_review_parse_insights_prefers_impressions_for_stills_and_plays_for_reels() {
+        $still = $this->invoke_private('social_review_parse_insights', array(array(
+            'data' => array(
+                array('name' => 'impressions', 'values' => array(array('value' => 18))),
+                array('name' => 'reach', 'values' => array(array('value' => 11))),
+                array('name' => 'saved', 'values' => array(array('value' => 2))),
+            ),
+        ), 'single'));
+        $this->assertSame(18, $still['views']);
+        $this->assertSame('impressions', $still['view_source']);
+        $this->assertSame(2, $still['saved']);
+        $reel = $this->invoke_private('social_review_parse_insights', array(array(
+            'data' => array(
+                array('name' => 'plays', 'values' => array(array('value' => 220))),
+                array('name' => 'views', 'values' => array(array('value' => 90))),
+                array('name' => 'impressions', 'values' => array(array('value' => 40))),
+            ),
+        ), 'reel'));
+        $this->assertSame(220, $reel['views']);
+        $this->assertSame('plays', $reel['view_source']);
+    }
+
+    public function test_social_review_apply_mix_never_raises_reels_and_ignores_stale_reviews() {
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), $this->social_review_mix_settings(), array(
+            'social_instagram_enabled' => 1,
+            'social_smart_post' => 1,
+            'social_mix_saved' => 1,
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        update_option(TechnoRapper_AI_Wire::SOCIAL_REVIEW_OPTION, array(
+            'generated_at' => time(),
+            'tweaks' => array(
+                'reel' => 5,
+                'carousel' => 5,
+                'collage' => 0,
+                'single' => 0,
+                'mix_changed' => 1,
+            ),
+        ), false);
+        $mix = $this->invoke_private('social_daily_mix_limits', array($settings));
+        $this->assertSame(0, $mix['reel']);
+        $this->assertSame(5, $mix['carousel']);
+        $this->assertSame(0, $mix['single']);
+
+        update_option(TechnoRapper_AI_Wire::SOCIAL_REVIEW_OPTION, array(
+            'generated_at' => time() - (9 * DAY_IN_SECONDS),
+            'tweaks' => array(
+                'reel' => 0,
+                'carousel' => 5,
+                'collage' => 0,
+                'single' => 0,
+                'mix_changed' => 1,
+            ),
+        ), false);
+        $stale = $this->invoke_private('social_daily_mix_limits', array($settings));
+        $this->assertSame(3, $stale['carousel']);
+        $this->assertSame(2, $stale['single']);
+        $this->assertSame(0, $stale['reel']);
+    }
+
+    public function test_social_review_prompt_brief_is_empty_until_a_fresh_review() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_smart_post' => 1,
+        )), false);
+        $this->assertSame('', $this->invoke_private('social_review_prompt_brief'));
+        update_option(TechnoRapper_AI_Wire::SOCIAL_REVIEW_OPTION, array(
+            'generated_at' => time(),
+            'verdicts' => array('Single stills median 8 views. Instagram is treating them as a news-card dump.'),
+            'tweaks' => array(
+                'caption' => 'Last week’s stills got almost no distribution. Keep photo-first overlays.',
+            ),
+        ), false);
+        $brief = $this->invoke_private('social_review_prompt_brief');
+        $this->assertStringContainsString('photo-first', $brief);
+        $this->assertStringContainsString('news-card dump', $brief);
+        $this->assertLessThanOrEqual(280, strlen($brief));
+        $user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news')));
+        $this->assertStringContainsString('Last 7 days of Instagram views', $user);
+        $this->assertStringContainsString('photo-first', $user);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Chip news'));
+        $image = $this->invoke_private('social_image_prompt', array(get_post($post_id), array()));
+        $this->assertStringContainsString('Last 7-day Instagram review', $image);
+    }
+
+    public function test_social_smart_post_off_does_not_tweak_or_call_instagram() {
+        $this->onboard_social(array('instagram'));
+        $http = 0;
+        add_filter('pre_http_request', function () use (&$http) {
+            $http++;
+            return new WP_Error('blocked', 'Smart post is off.');
+        }, 10, 3);
+        update_option(TechnoRapper_AI_Wire::SOCIAL_REVIEW_OPTION, array(
+            'generated_at' => time(),
+            'verdicts' => array('Single stills median 8 views.'),
+            'tweaks' => array(
+                'reel' => 0,
+                'carousel' => 5,
+                'collage' => 0,
+                'single' => 0,
+                'mix_changed' => 1,
+                'caption' => 'Keep photo-first overlays.',
+            ),
+        ), false);
+        $this->assertSame(array(), $this->plugin->process_social_review());
+        $this->assertSame(0, $http);
+        $this->assertSame('', $this->invoke_private('social_review_prompt_brief'));
+        $mix = $this->invoke_private('social_daily_mix_limits', array(array_merge(
+            TechnoRapper_AI_Wire::defaults(),
+            $this->social_review_mix_settings(),
+            array(
+                'social_instagram_enabled' => 1,
+                'social_smart_post' => 0,
+                'social_mix_saved' => 1,
+            )
+        )));
+        $this->assertSame(3, $mix['carousel']);
+        $this->assertSame(2, $mix['single']);
+        $this->assertSame(0, $mix['reel']);
+    }
+
+    public function test_social_review_stores_instagram_insights_without_touching_updated_at() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_smart_post' => 1,
+        )), false);
+        global $wpdb;
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Reviewed still',
+        ));
+        $published_at = gmdate('Y-m-d H:i:s', time() - 7200);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'remote_id' => '18000000000000001',
+            'created_at' => $published_at,
+            'updated_at' => $published_at,
+        ), array('%d', '%s', '%s', '%s', '%s', '%s'));
+        $row_id = (int) $wpdb->insert_id;
+        $this->assertGreaterThan(0, $row_id);
+        $wpdb->replace($wpdb->prefix . 'tr_ai_wire_views', array(
+            'post_id' => $post_id,
+            'view_date' => gmdate('Y-m-d'),
+            'views' => 7,
+        ), array('%d', '%s', '%d'));
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            $url = (string) $url;
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, '/insights') !== false) {
+                return $this->mock_http_ok(array(
+                    'data' => array(
+                        array('name' => 'impressions', 'values' => array(array('value' => 12))),
+                        array('name' => 'reach', 'values' => array(array('value' => 9))),
+                        array('name' => 'saved', 'values' => array(array('value' => 1))),
+                    ),
+                ));
+            }
+            return new WP_Error('blocked', 'Unexpected Instagram request: ' . $url);
+        }, 10, 3);
+        $review = $this->plugin->process_social_review();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT updated_at, insights_json, insights_at FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $row_id), ARRAY_A);
+        $this->assertSame($published_at, $row['updated_at']);
+        $this->assertNotEmpty($row['insights_at']);
+        $insights = json_decode((string) $row['insights_json'], true);
+        $this->assertSame(12, (int) $insights['views']);
+        $this->assertSame('impressions', $insights['view_source']);
+        $this->assertSame(7, (int) $insights['site_reads']);
+        $this->assertSame(1, (int) $review['posts']);
+        $this->assertSame(1, (int) $review['measured']);
+        $this->assertSame(0, (int) $review['tweaks']['mix_changed']);
+        $this->assertSame(0, (int) $review['tweaks']['reel']);
     }
 
     public function test_weak_review_scores_do_not_queue_instagram_stills() {
@@ -6375,6 +6655,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     public function test_context_and_social_hooks_are_registered() {
         $this->assertSame(10, has_action(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_CRON_HOOK, array($this->plugin, 'process_site_context')));
         $this->assertSame(10, has_action(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK, array($this->plugin, 'process_social_queue')));
+        $this->assertSame(10, has_action(TechnoRapper_AI_Wire::SOCIAL_REVIEW_CRON_HOOK, array($this->plugin, 'process_social_review')));
+        $this->assertSame(13, has_action('init', array($this->plugin, 'maybe_schedule_social_review')));
         $this->assertSame(10, has_action('transition_post_status', array($this->plugin, 'queue_social_for_post')));
         $this->assertFalse(has_action('wp_after_insert_post', array($this->plugin, 'queue_social_for_post')));
         $this->assertSame(12, has_action('init', array($this->plugin, 'maybe_requeue_instagram_quota_field_failures')));

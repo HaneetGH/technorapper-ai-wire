@@ -49,6 +49,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_single_daily_limit' => 2,
             'social_reel_daily_limit' => 0,
             'social_min_review_score' => 90,
+            'social_smart_post' => 0,
             'social_mix_saved' => 0,
             'social_news_formats' => array_keys(self::social_news_formats()),
             'seo_min_score' => 50,
@@ -96,6 +97,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_single_daily_limit',
             'social_reel_daily_limit',
             'social_min_review_score',
+            'social_smart_post',
             'social_mix_saved',
             'social_news_formats',
         );
@@ -157,6 +159,7 @@ trait TechnoRapper_AI_Wire_Settings {
                 $this->enqueue_missing_platform_posts('youtube');
             }
         }
+        $this->maybe_schedule_social_review();
     }
 
     public function sanitize_settings($input) {
@@ -316,6 +319,7 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_collage_daily_limit'] = $mix['collage'];
         $out['social_single_daily_limit'] = $mix['single'];
         $out['social_min_review_score'] = min(100, max(0, absint($input['social_min_review_score'] ?? $defaults['social_min_review_score'])));
+        $out['social_smart_post'] = empty($input['social_smart_post']) ? 0 : 1;
         $out['social_mix_saved'] = empty($input['social_mix_saved']) ? 0 : 1;
         if ($out['social_mix_saved']) {
             if ($out['social_reel_daily_limit'] > 0 && $out['social_carousel_daily_limit'] < 1 && $out['social_collage_daily_limit'] < 1 && $out['social_single_daily_limit'] < 1) {
