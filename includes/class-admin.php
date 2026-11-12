@@ -342,12 +342,21 @@ trait TechnoRapper_AI_Wire_Admin {
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="0">
                     <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X still gets the still poster. Use <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Generate Reel now</a> on Social queue to build one, review it, then click Post. Raise Reel posts per day when you want the worker to post Reels on its own.</span></p>
                     <div data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>
+                    <div class="tr-ai-wire-panel" style="border-left:4px solid #d63638;margin-bottom:12px;">
+                        <h3 style="margin-top:0;">Dev — cheap test</h3>
+                        <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_dev_cheap]" value="0">
+                        <p><label><input id="tr-reel-dev-cheap" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_dev_cheap]" value="1" <?php checked(!empty($s['social_reel_dev_cheap'])); ?>> <strong>Use cheapest models while testing</strong></label></p>
+                        <p class="description">Forces Avatar Standard + Veo Lite 4s + 15s voice. Face enhance and per-Reel scene restyle stay off. Your production picks below stay saved and are used again when you uncheck this.</p>
+                        <?php if (!empty($s['social_reel_dev_cheap'])) : ?>
+                        <div class="notice notice-warning inline"><p><?php echo esc_html($this->social_reel_dev_cheap_summary($s)); ?></p></div>
+                        <?php endif; ?>
+                    </div>
                     <?php
                     $clip_cost = $this->social_reel_video_estimate_usd($s);
                     $reel_cost = $this->social_reel_total_estimate_usd($s);
                     ?>
                     <div class="tr-ai-wire-statbar">
-                        <p class="tr-ai-wire-stat"><span class="description">This recipe</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($reel_cost, 2)); ?></strong> per Reel</p>
+                        <p class="tr-ai-wire-stat"><span class="description"><?php echo !empty($s['social_reel_dev_cheap']) ? 'Dev cheap estimate' : 'This recipe'; ?></span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($reel_cost, 2)); ?></strong> per Reel</p>
                         <p class="tr-ai-wire-stat"><span class="description">B-roll clip</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?></strong></p>
                         <p class="tr-ai-wire-stat"><span class="description">Video budget</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n((float) ($s['social_video_budget_usd'] ?? 10), 2)); ?></strong> / month</p>
                     </div>

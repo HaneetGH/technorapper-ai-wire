@@ -20,7 +20,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.2.76';
+    const VERSION = '0.2.77';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -113,6 +113,7 @@ final class TechnoRapper_AI_Wire {
         add_action('admin_post_tr_ai_wire_upload_reel', array($this, 'upload_social_reel'));
         add_action('admin_post_tr_ai_wire_download_reel', array($this, 'download_social_reel'));
         add_action('admin_post_tr_ai_wire_resume_reel', array($this, 'resume_social_reel'));
+        add_action('admin_post_tr_ai_wire_reel_dev_cheap', array($this, 'toggle_reel_dev_cheap'));
         add_action('wp_ajax_tr_ai_wire_reel_tick', array($this, 'ajax_reel_tick'));
         add_action('admin_post_tr_ai_wire_queue_missing_platform', array($this, 'queue_missing_platform_request'));
         add_action('admin_post_tr_ai_wire_refresh_site_context', array($this, 'refresh_site_context_request'));
