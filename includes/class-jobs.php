@@ -383,10 +383,14 @@ trait TechnoRapper_AI_Wire_Jobs {
                     $this->finish_background_job('Queued a ' . (int) $queued . '-article ' . $kind . '. Processed ' . (int) $processed . ' social post' . ((int) $processed === 1 ? '' : 's') . '.', 'done');
                 }
             } elseif ($job['kind'] === 'social_review') {
-                $this->note_background_progress(20, 'Reading last 7 days of Instagram views');
-                $review = $this->process_social_review();
-                $posts = (int) ($review['posts'] ?? 0);
-                $this->finish_background_job('Reviewed ' . $posts . ' Instagram post' . ($posts === 1 ? '' : 's') . ' from the last 7 days.', 'done');
+                if (!$this->social_smart_post_enabled()) {
+                    $this->finish_background_job('Smart post is off. Turn it on in Social settings. The Page token needs instagram_manage_insights.', 'done');
+                } else {
+                    $this->note_background_progress(20, 'Reading last 7 days of Instagram views');
+                    $review = $this->process_social_review();
+                    $posts = (int) ($review['posts'] ?? 0);
+                    $this->finish_background_job('Reviewed ' . $posts . ' Instagram post' . ($posts === 1 ? '' : 's') . ' from the last 7 days.', 'done');
+                }
             } elseif ($job['kind'] === 'social_retry') {
                 $this->note_background_progress(20, 'Requeueing social post');
                 $ok = $this->requeue_social_item((int) $job['item_id'], !empty($job['regenerate']));

@@ -57,7 +57,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.2.70 =
-* Social queue reviews the last 7 days of Instagram views, decides whether stills or carousels earned distribution, and can move failing still slots into carousels. It never raises Reels (those spend Fal). Site reads stay labeled separately.
+* Social settings has Smart post (off by default). When on, it reads the last 7 days of Instagram views and tweaks the next mix, captions, and stills. The Page token needs instagram_manage_insights. Reels are never raised automatically. Site reads stay labeled separately.
 
 = 0.2.69 =
 * Instagram stills are photo-first: a story-specific photograph, a 3–6 word overlay, and a caption whose first line is the feed preview. Queued posters on the older news-card layout regenerate. Carousel covers name the stories instead of empty “don’t skip” teases.
@@ -140,7 +140,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.2.70 =
-Social queue now shows last-7-day Instagram views and can shift failing still slots into carousels. Reels stay off unless you raise them.
+Turn on Smart post in Social settings to learn from last week’s Instagram views. The Page token needs instagram_manage_insights. Reels stay off unless you raise them.
 
 = 0.2.69 =
 Next Instagram stills use a photo-first overlay and a named hook as the caption’s first line. Queued graphics on the old news-card layout rebuild before they post.

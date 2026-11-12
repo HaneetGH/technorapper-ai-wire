@@ -9,7 +9,7 @@ if (!defined('ABSPATH')) {
  */
 trait TechnoRapper_AI_Wire_Social_Review {
     public function process_social_review() {
-        if (!$this->social_distribution_ready()) {
+        if (!$this->social_smart_post_enabled() || !$this->social_distribution_ready()) {
             return array();
         }
         $this->social_review_refresh_insights();
@@ -17,12 +17,18 @@ trait TechnoRapper_AI_Wire_Social_Review {
     }
 
     public function maybe_schedule_social_review() {
-        if (!$this->social_distribution_ready() || !TechnoRapper_AI_Wire::instagram_credentials_ready()) {
+        if (!$this->social_smart_post_enabled() || !$this->social_distribution_ready() || !TechnoRapper_AI_Wire::instagram_credentials_ready()) {
+            wp_clear_scheduled_hook(self::SOCIAL_REVIEW_CRON_HOOK);
             return;
         }
         if (!wp_next_scheduled(self::SOCIAL_REVIEW_CRON_HOOK)) {
             wp_schedule_event(time() + 600, 'daily', self::SOCIAL_REVIEW_CRON_HOOK);
         }
+    }
+
+    private function social_smart_post_enabled($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        return !empty($settings['social_smart_post']) && !empty($settings['social_instagram_enabled']);
     }
 
     public function run_social_review_now() {
@@ -409,7 +415,7 @@ trait TechnoRapper_AI_Wire_Social_Review {
     private function social_review_apply_mix_limits($mix, $settings = array()) {
         $mix = is_array($mix) ? $mix : array();
         $settings = is_array($settings) ? $settings : array();
-        if (empty($settings['social_review_apply_mix'])) {
+        if (!$this->social_smart_post_enabled($settings)) {
             return $mix;
         }
         $review = $this->social_review_load();
@@ -427,6 +433,9 @@ trait TechnoRapper_AI_Wire_Social_Review {
     }
 
     private function social_review_prompt_brief() {
+        if (!$this->social_smart_post_enabled()) {
+            return '';
+        }
         $review = $this->social_review_load();
         if (!$this->social_review_is_fresh($review)) {
             return '';
@@ -461,9 +470,15 @@ trait TechnoRapper_AI_Wire_Social_Review {
         $review = $this->social_review_load();
         $settings = $this->settings();
         $fresh = $this->social_review_is_fresh($review);
-        $apply = !empty($settings['social_review_apply_mix']);
+        $smart = $this->social_smart_post_enabled($settings);
         echo '<div class="card" style="max-width:920px;margin:16px 0;padding:16px 20px;">';
-        echo '<h2 style="margin-top:0;">Last 7 days</h2>';
+        echo '<h2 style="margin-top:0;">Smart post · last 7 days</h2>';
+        if (!$smart) {
+            echo '<p>Smart post is off. Turn it on in Social settings to learn from previous Instagram views and tweak the next mix, captions, and stills.</p>';
+            echo '<p class="description">Needs a Page token with <code>instagram_manage_insights</code>. A publish-only token cannot read views. Reels are never raised automatically.</p>';
+            echo '</div>';
+            return;
+        }
         if (!$fresh) {
             echo '<p>No review yet. Refresh after Instagram posts have been live long enough for Graph insights (often a few hours).</p>';
         } else {
@@ -492,9 +507,7 @@ trait TechnoRapper_AI_Wire_Social_Review {
                     . esc_html((string) ((int) ($tweaks['carousel'] ?? 0))) . ' carousels, '
                     . esc_html((string) ((int) ($tweaks['collage'] ?? 0))) . ' collages, '
                     . esc_html((string) ((int) ($tweaks['single'] ?? 0))) . ' singles.';
-                echo $apply
-                    ? ' Applied to today’s queue (Reels were not raised).'
-                    : ' Not applied — turn on “Apply last-7-day mix tweaks” in Social settings.';
+                echo ' Applied to today’s queue (Reels were not raised).';
                 echo '</p>';
             }
             if (!empty($review['source_note'])) {
@@ -509,7 +522,7 @@ trait TechnoRapper_AI_Wire_Social_Review {
         echo '<input type="hidden" name="action" value="tr_ai_wire_run_social_review">';
         wp_nonce_field('tr_ai_wire_run_social_review');
         submit_button('Refresh last 7 days now', 'secondary', 'submit', false);
-        echo ' <span class="description">Pulls Instagram insights for published posts, then decides mix and caption tweaks for the next stills. Does not spend image budget.</span>';
+        echo ' <span class="description">Pulls Instagram insights for published posts, then decides mix and caption tweaks for the next stills. Needs <code>instagram_manage_insights</code>. Does not spend image budget.</span>';
         echo '</form></div>';
     }
 }

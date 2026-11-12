@@ -179,7 +179,7 @@ Keep three measurements distinct:
 2. **Social delivery:** queued, published, needs_review, retry, destination, local cost estimates.
 3. **Social performance:** Instagram Graph insights for the last 7 days (`impressions` / `plays` / `views`, plus reach and saves). Stored on the social row and summarized on the Social queue. **Not** merged into the editorial quality score. First-party `tr_ai_wire_views` counts are shown as **site reads** only.
 
-Daily cron `tr_ai_wire_review_social` (and **Refresh last 7 days now**) pulls insights, then a deterministic decide step:
+**Smart post** (`social_smart_post`, default **off**) is the operator toggle. When it is off, the plugin does not call Graph insights, does not change the mix, and does not inject a 7-day brief into copy/image prompts. When it is on, daily cron `tr_ai_wire_review_social` (and **Refresh last 7 days now**) pulls insights, then a deterministic decide step:
 
 - Fewer than three posts, or no measured Graph insights: keep the current mix. Say so.
 - Single stills median under 30: move those daily still slots into carousels; keep photo-first overlay/caption notes.
@@ -187,7 +187,7 @@ Daily cron `tr_ai_wire_review_social` (and **Refresh last 7 days now**) pulls in
 - Reels 3× better than stills: recommend raising Reels on Social settings. **Never auto-apply** — Reels spend Fal.
 - Caption/image prompts get a ≤280 character 7-day brief when the review is fresh.
 
-Setting `social_review_apply_mix` (default on) applies still/carousel tweaks to today’s mix. It never raises the Reel count.
+Those still/carousel tweaks apply to today’s mix while Smart post is on. It never raises the Reel count. The Page token needs `instagram_manage_insights`.
 
 ## Observability and acceptance
 
