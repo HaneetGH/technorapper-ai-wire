@@ -6099,8 +6099,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Talking host (avatar face)', $html);
         $this->assertStringContainsString('id="tr-reel-recipe-story"', $html);
         $this->assertStringContainsString('tr-ai-wire-choice-card is-selected', $html);
-        $this->assertStringContainsString('function syncChoiceCards', $html);
         $this->assertSame(10, has_action('admin_enqueue_scripts', array($this->plugin, 'enqueue_admin_assets')));
+        $admin_php = file_get_contents(dirname(__DIR__) . '/includes/class-admin.php');
+        $this->assertStringContainsString('function syncChoiceCards', $admin_php);
         preg_match_all('/\sid="(tr-[^"]+)"/', $html, $id_matches);
         $id_counts = array_count_values($id_matches[1]);
         $duplicate_ids = array();
