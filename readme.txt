@@ -57,7 +57,8 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.2.71 =
-* Social queue has a Download video button on the Reel row. It saves the MP4 to your computer. Publish to Instagram is unchanged.
+* Social queue has a Download video button on the Reel row. It saves the MP4 to your computer.
+* After you review a Reel, Post to Instagram (or YouTube) sits next to that download. Tick "I reviewed this video", then click Post.
 
 = 0.2.70 =
 * Hosts without ffmpeg can still make Reels: Fal assembles the spoken MP4 when possible, otherwise Social queue offers Download motion/voice/kit so you can run ffmpeg on a laptop, upload reel.mp4, and Publish to Instagram.
@@ -145,7 +146,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.2.71 =
-Social queue Reels now have Download video, which saves the MP4 file.
+Social queue Reels now have Download video and a Post button after review.
 
 = 0.2.70 =
 If this WordPress host has no ffmpeg, Generate Reel still builds motion and voice. Download the kit, mux on your laptop, upload the MP4, then Publish to Instagram.

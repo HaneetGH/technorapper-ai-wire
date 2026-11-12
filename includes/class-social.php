@@ -2880,7 +2880,7 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_reel_hold_copy($row) {
         $platform = self::social_platform_label((string) ($row['platform'] ?? ''));
-        return 'Held: Watch this Reel, then click Publish to ' . $platform . '. It has not been posted yet.';
+        return 'Held: Watch this Reel, then click Post to ' . $platform . '. It has not been posted yet.';
     }
 
     private function social_reel_preview_id($post_id) {
@@ -2990,7 +2990,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $waiting = $this->social_held_reel_pending_post_id();
         if ($waiting > 0) {
-            return new WP_Error('tr_ai_wire_social_reel', 'A Reel is already waiting for review on Social queue. Watch it, then click Publish. It has not been posted yet.');
+            return new WP_Error('tr_ai_wire_social_reel', 'A Reel is already waiting for review on Social queue. Watch it, then click Post. It has not been posted yet.');
         }
         $ids = $this->social_force_reel_candidates();
         if (!$ids) {
@@ -4916,7 +4916,7 @@ trait TechnoRapper_AI_Wire_Social {
         echo '<video class="tr-ai-wire-social-preview-video" controls playsinline preload="metadata" src="' . esc_url($url) . '"></video>';
         $download = $this->social_reel_download_url($row);
         if ($download !== '') {
-            echo '<p class="tr-ai-wire-reel-downloads"><a class="button button-primary" href="' . esc_url($download) . '">Download video</a></p>';
+            echo '<p class="tr-ai-wire-reel-downloads"><a class="button" href="' . esc_url($download) . '">Download video</a></p>';
         }
         if ($reel_id < 1 && $motion_id > 0) {
             echo '<p class="description">This is the generated motion clip. Click Download video to save the MP4.</p>';
@@ -4929,7 +4929,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $download = $this->social_reel_download_url($row);
         if ($download !== '') {
-            echo '<p class="tr-ai-wire-reel-downloads"><a class="button button-primary" href="' . esc_url($download) . '">Download video</a></p>';
+            echo '<p class="tr-ai-wire-reel-downloads"><a class="button" href="' . esc_url($download) . '">Download video</a></p>';
         }
         $reel_id = $this->social_reel_preview_id($post->ID);
         $voice_id = $this->social_voice_id($post->ID);
@@ -4950,6 +4950,31 @@ trait TechnoRapper_AI_Wire_Social {
         if ($extra && $reel_id < 1) {
             echo '<p class="description">Also: ' . implode(' · ', $extra) . '</p>';
         }
+    }
+
+    private function render_social_reel_post_form($row) {
+        $id = (int) ($row['id'] ?? 0);
+        $post_id = (int) ($row['post_id'] ?? 0);
+        $platform = (string) ($row['platform'] ?? '');
+        $status = sanitize_key((string) ($row['status'] ?? ''));
+        if ($id < 1 || $post_id < 1 || $status !== 'needs_review' || !$this->social_row_holds_reel_for_review($row)) {
+            return;
+        }
+        if ($this->social_reel_preview_id($post_id) < 1) {
+            return;
+        }
+        $platform_label = self::social_platform_label($platform);
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="tr-ai-wire-reel-post">';
+        echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
+        echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+        wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
+        echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I reviewed this video</label>';
+        if (in_array($platform, array('instagram', 'youtube'), true)) {
+            echo '<button class="button button-primary">Post to ' . esc_html($platform_label) . '</button>';
+        } else {
+            echo '<button class="button button-primary">Post still to ' . esc_html($platform_label) . '</button>';
+        }
+        echo '</form>';
     }
 
     private function render_social_reel_upload_form($row) {
@@ -4980,20 +5005,7 @@ trait TechnoRapper_AI_Wire_Social {
         $held_reel = !$published && $this->social_row_holds_reel_for_review($row);
         $reel_ready = $held_reel && $this->social_reel_preview_id($post_id) > 0;
         if ($held_reel) {
-            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
-            echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
-            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
-            wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
             if ($reel_ready) {
-                echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I reviewed this Reel and want it live</label><br>';
-                if (in_array($platform, array('instagram', 'youtube'), true)) {
-                    echo '<p class="description">This posts the video on this row. It does not generate a new one.</p>';
-                    echo '<button class="button button-primary">Publish Reel to ' . esc_html($platform_label) . '</button>';
-                } else {
-                    echo '<p class="description">X still gets the poster. Publish after you have reviewed the Reel.</p>';
-                    echo '<button class="button button-primary">Publish still to ' . esc_html($platform_label) . '</button>';
-                }
-                echo '</form>';
                 if (in_array($platform, array('instagram', 'youtube'), true)) {
                     echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
                     echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
@@ -5006,6 +5018,10 @@ trait TechnoRapper_AI_Wire_Social {
                 }
                 return;
             }
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+            wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
             echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> Retry building this Reel and hold it for review</label><br>';
             echo '<input type="hidden" name="regenerate_image" value="1">';
             echo '<button class="button button-secondary">Retry building this Reel</button>';
@@ -5158,6 +5174,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $this->render_social_reel_preview_video($row, $post);
         echo '</div><div class="tr-ai-wire-social-copy">';
+        $this->render_social_reel_post_form($row);
         $this->render_social_reel_downloads($row, $post);
         if (!empty($copy['on_image_headline'])) {
             echo '<p class="tr-ai-wire-social-headline"><strong>' . esc_html($copy['on_image_headline']) . '</strong></p>';
@@ -5186,9 +5203,9 @@ trait TechnoRapper_AI_Wire_Social {
             $status_copy = 'Queued in a ' . $pack_format . '. The worker generates these graphics and posts them together. This does not wait out the gap between single Instagram posts.';
         }
         if ($this->social_row_holds_reel_for_review($row)) {
-            $status_copy = 'Held for review. Watch the video, then click Publish. It is not live yet.';
+            $status_copy = 'Held for review. Watch the video, tick the box, then click Post. It is not live yet.';
             if ($post instanceof WP_Post && $this->social_reel_preview_id($post->ID) < 1 && ($this->social_reel_kit_id($post->ID) > 0 || $this->social_motion_id($post->ID) > 0)) {
-                $status_copy = 'Held for review. This host has no ffmpeg. Download the Reel files, finish the MP4 on your laptop, upload it here, then Publish.';
+                $status_copy = 'Held for review. This host has no ffmpeg. Download the video, finish the MP4 on your laptop, upload it here, then Post.';
             }
         }
         if ($status_copy !== '') {
@@ -5230,7 +5247,7 @@ trait TechnoRapper_AI_Wire_Social {
             <?php if (isset($_GET['social_pack'])) : ?><div class="notice notice-info is-dismissible"><p><?php
             $pack_kind = $this->social_manual_pack_kind($_GET['social_pack'] ?? '');
             echo $pack_kind === 'reel'
-                ? esc_html('Building a Reel for review. Stay on this page — then watch it below and click Publish. It is not posted yet.')
+                ? esc_html('Building a Reel for review. Stay on this page — then watch it below and click Post. It is not posted yet.')
                 : esc_html('Generating a ' . $pack_kind . ' now. Stay on this page — the progress bar tracks the graphics and the post.');
             ?></p></div><?php endif; ?>
             <?php if (isset($_GET['social_backfill'])) : ?><div class="notice notice-success is-dismissible"><p><?php
@@ -5331,7 +5348,7 @@ trait TechnoRapper_AI_Wire_Social {
                 <?php submit_button('Generate collage now', 'primary', 'submit', false); ?>
             </form>
             </div>
-            <p class="description"><strong>Generate Reel now</strong> builds one spoken video and holds it on this page. Watch it, then click Publish — it does not go live until you do. Auto Reels still post on their own when Reel posts per day is above 0. Carousel and collage skip the daily mix and that wait. Each of those packs at least 2 stories that have not already been posted. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. Single Instagram posts still wait 3 hours after the last Instagram post.</p>
+            <p class="description"><strong>Generate Reel now</strong> builds one spoken video and holds it on this page. Watch it, then click Post — it does not go live until you do. Auto Reels still post on their own when Reel posts per day is above 0. Carousel and collage skip the daily mix and that wait. Each of those packs at least 2 stories that have not already been posted. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. Single Instagram posts still wait 3 hours after the last Instagram post.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);

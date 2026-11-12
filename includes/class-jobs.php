@@ -372,7 +372,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                         break;
                     }
                     if ($kind === 'reel') {
-                        $this->finish_background_job('Built a spoken Reel for review. Watch it on Social queue, then click Publish. It is not live yet.', 'done');
+                        $this->finish_background_job('Built a spoken Reel for review. Watch it on Social queue, then click Post. It is not live yet.', 'done');
                     } else {
                         $this->finish_background_job('Queued a ' . (int) $queued . '-article ' . $kind . '. Processed ' . (int) $processed . ' social post' . ((int) $processed === 1 ? '' : 's') . '.', 'done');
                     }
