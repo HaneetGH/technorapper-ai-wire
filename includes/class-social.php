@@ -5009,7 +5009,7 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
         if ($partial_kind === 'broll') {
-            echo '<p class="description"><strong>B-roll piece only</strong> (usually ~8s, silent). Not the finished story Reel. Voice, host opening, news details, and sting are assembled next.</p>';
+            echo '<p class="description"><strong>B-roll piece only</strong> (usually ~4–8s, silent). Not the finished story Reel. Voice, on-screen hooks, news-detail beats, and sting are assembled next.</p>';
             return;
         }
         echo '<p class="description">Preview of one finished piece only. The finished Reel is still being assembled, then Download video and Post appear here.</p>';
@@ -5611,7 +5611,7 @@ trait TechnoRapper_AI_Wire_Social {
             <h1>Social queue</h1>
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. Single Instagram posts still wait 3 hours between each other.'); ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
-            <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use Avatar Standard + Veo Lite 4s. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>
+            <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use no talking face + Veo Lite 4s hooks. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>
             <?php if ($this->social_reel_dev_cheap_on($settings)) : ?><div class="notice notice-warning"><p><strong>Dev cheap test is on.</strong> <?php echo esc_html($this->social_reel_dev_cheap_summary($settings)); ?> Turn it off before real publishing spend.</p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <?php if (isset($_GET['social_ran'])) : ?><div class="notice notice-success is-dismissible"><p><?php echo ((int) $_GET['social_ran'] > 0) ? 'Processed queued social posts. Refresh in a minute if a graphic is still generating.' : 'No queued social post could be processed now. If items are still waiting, check the daily limit, image budget, and WP-Cron.'; ?></p></div><?php endif; ?>
@@ -5721,7 +5721,7 @@ trait TechnoRapper_AI_Wire_Social {
                     <button class="button button-primary"><?php echo $this->social_reel_dev_cheap_on($settings) ? 'Switch to production config' : 'Production config already on'; ?></button>
                 </form>
                 </div>
-                <p class="description" style="margin:8px 0 0;">Cheap test forces Avatar Standard + Veo Lite 4s. Production picks (Pro / Fast / longer clips) stay saved and apply when you switch back.</p>
+                <p class="description" style="margin:8px 0 0;">Cheap test forces no talking face + story hooks + Veo Lite 4s. Production picks (including host / Pro / Fast) stay saved and apply when you switch back.</p>
             </div>
             <div class="tr-ai-wire-actions">
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
