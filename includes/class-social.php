@@ -5208,6 +5208,19 @@ trait TechnoRapper_AI_Wire_Social {
         exit;
     }
 
+    public function toggle_reel_dev_cheap() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to change Reel Dev mode.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_reel_dev_cheap');
+        $enabled = !empty($_POST['enabled']) ? 1 : 0;
+        $stored = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        $stored['social_reel_dev_cheap'] = $enabled;
+        update_option(self::OPTION, $stored, false);
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&reel_dev_cheap=' . (string) $enabled));
+        exit;
+    }
+
     public function ajax_reel_tick() {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => 'You are not allowed to do that.'), 403);
@@ -5598,6 +5611,8 @@ trait TechnoRapper_AI_Wire_Social {
             <h1>Social queue</h1>
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. Single Instagram posts still wait 3 hours between each other.'); ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
+            <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use Avatar Standard + Veo Lite 4s. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>
+            <?php if ($this->social_reel_dev_cheap_on($settings)) : ?><div class="notice notice-warning"><p><strong>Dev cheap test is on.</strong> <?php echo esc_html($this->social_reel_dev_cheap_summary($settings)); ?> Turn it off before real publishing spend.</p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <?php if (isset($_GET['social_ran'])) : ?><div class="notice notice-success is-dismissible"><p><?php echo ((int) $_GET['social_ran'] > 0) ? 'Processed queued social posts. Refresh in a minute if a graphic is still generating.' : 'No queued social post could be processed now. If items are still waiting, check the daily limit, image budget, and WP-Cron.'; ?></p></div><?php endif; ?>
             <?php if (isset($_GET['social_pack'])) : ?><div class="notice notice-info is-dismissible"><p><?php
@@ -5684,6 +5699,30 @@ trait TechnoRapper_AI_Wire_Social {
                 echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' for the next pack of ' . esc_html((string) $wanted);
             }
             ?>. Change the counts under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Automatic carousels and collages wait until 4, 5, or 6 articles are held and a daily slot is left. Reels fill first, then carousels, then collages. Collage posts per day defaults to 0, so a collage does not start on its own. One leftover article stays held for the next pack.</p>
+            <div class="tr-ai-wire-panel" style="border-left:4px solid #d63638;margin:12px 0;padding:8px 12px;">
+                <p style="margin:0 0 8px;"><strong>Dev — cheap test</strong>
+                    <?php if ($this->social_reel_dev_cheap_on($settings)) : ?>
+                    <span class="description"> · ON now · <?php echo esc_html('~$' . number_format((float) $this->social_reel_total_estimate_usd($settings), 2)); ?> / Reel</span>
+                    <?php else : ?>
+                    <span class="description"> · off · production config active</span>
+                    <?php endif; ?>
+                </p>
+                <div class="tr-ai-wire-actions" style="margin:0;">
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
+                    <input type="hidden" name="action" value="tr_ai_wire_reel_dev_cheap">
+                    <input type="hidden" name="enabled" value="1">
+                    <?php wp_nonce_field('tr_ai_wire_reel_dev_cheap'); ?>
+                    <button class="button"><?php echo $this->social_reel_dev_cheap_on($settings) ? 'Keep Dev cheap on' : 'Turn on Dev cheap test'; ?></button>
+                </form>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;">
+                    <input type="hidden" name="action" value="tr_ai_wire_reel_dev_cheap">
+                    <input type="hidden" name="enabled" value="0">
+                    <?php wp_nonce_field('tr_ai_wire_reel_dev_cheap'); ?>
+                    <button class="button button-primary"><?php echo $this->social_reel_dev_cheap_on($settings) ? 'Switch to production config' : 'Production config already on'; ?></button>
+                </form>
+                </div>
+                <p class="description" style="margin:8px 0 0;">Cheap test forces Avatar Standard + Veo Lite 4s. Production picks (Pro / Fast / longer clips) stay saved and apply when you switch back.</p>
+            </div>
             <div class="tr-ai-wire-actions">
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_generate_social_pack">

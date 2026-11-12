@@ -6121,6 +6121,43 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('female news presenter', $female);
     }
 
+
+    public function test_dev_cheap_mode_forces_standard_and_veo_lite_without_erasing_prod_picks() {
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 1,
+            'social_reel_include_broll' => 1,
+            'social_reel_host_model' => 'kling-avatar-pro',
+            'social_reel_video_model' => 'veo-fast',
+            'social_reel_clip_seconds' => 8,
+            'social_reel_enhance_host_face' => 1,
+            'social_reel_vary_host_scene' => 1,
+            'social_reel_host_seconds' => 24,
+            'social_reel_target_seconds' => 45,
+            'social_reel_dev_cheap' => 0,
+        ));
+        $this->assertSame('kling-avatar-pro', $this->invoke_private('social_reel_host_model', array($settings)));
+        $this->assertSame('veo-fast', $this->invoke_private('social_reel_video_model', array($settings)));
+        $cheap = array_merge($settings, array('social_reel_dev_cheap' => 1));
+        $this->assertTrue($this->invoke_private('social_reel_dev_cheap_on', array($cheap)));
+        $this->assertSame('kling-avatar-std', $this->invoke_private('social_reel_host_model', array($cheap)));
+        $this->assertSame('veo-lite', $this->invoke_private('social_reel_video_model', array($cheap)));
+        $this->assertSame(4, $this->invoke_private('social_reel_clip_seconds', array($cheap)));
+        $this->assertSame(15, $this->invoke_private('social_reel_target_seconds', array($cheap)));
+        $this->assertSame(8, $this->invoke_private('social_reel_host_seconds', array($cheap)));
+        $effective = $this->invoke_private('social_reel_effective_settings', array($cheap));
+        $this->assertSame(0, (int) $effective['social_reel_enhance_host_face']);
+        $this->assertSame(0, (int) $effective['social_reel_vary_host_scene']);
+        $this->assertStringContainsString('DEV CHEAP TEST', $this->invoke_private('social_reel_recipe_summary', array($cheap)));
+        $this->assertLessThan(
+            $this->invoke_private('social_reel_total_estimate_usd', array($settings)),
+            $this->invoke_private('social_reel_total_estimate_usd', array($cheap))
+        );
+        // Saved production picks are untouched in the settings array the UI stores.
+        $this->assertSame('kling-avatar-pro', $settings['social_reel_host_model']);
+        $this->assertSame('veo-fast', $settings['social_reel_video_model']);
+    }
+
     public function test_host_scene_keeps_the_same_face_but_changes_place_per_reel() {
         $jpeg = $this->tiny_jpeg_bytes();
         if ($jpeg === '') {

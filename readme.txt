@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.76
+Stable tag: 0.2.77
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.77 =
+* Dev cheap test mode: one button/checkbox forces Avatar Standard + Veo Lite 4s + short voice while your production model picks stay saved. Turn it off to spend the configured Pro/Fast recipe again.
 
 = 0.2.76 =
 * Reels stop sounding like a robot readout: punchier spoken hooks, creator-style TTS delivery, and a cold-open story cut (news video/photos first, short host hook, then detail beats). Partial previews are labeled so the full talking-host take is not mistaken for the finished Reel.
@@ -164,6 +167,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.77 =
+On Social queue use Dev — cheap test while credits are low. Switch to production config when the pipeline looks right.
 
 = 0.2.76 =
 Update, then Start over on a stuck/boring Reel so the voiceover and assemble use the new hook style. Resume alone keeps the old script.

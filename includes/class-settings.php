@@ -52,6 +52,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_reel_generate_host_face' => 0,
             'social_reel_enhance_host_face' => 0,
             'social_reel_vary_host_scene' => 1,
+            'social_reel_dev_cheap' => 0,
             'social_reel_host_seconds' => 20,
             'social_reel_close_camera' => 1,
             'social_reel_medium_camera' => 1,
@@ -117,6 +118,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_reel_generate_host_face',
             'social_reel_enhance_host_face',
             'social_reel_vary_host_scene',
+            'social_reel_dev_cheap',
             'social_reel_host_seconds',
             'social_reel_close_camera',
             'social_reel_medium_camera',
@@ -355,6 +357,7 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_reel_vary_host_scene'] = array_key_exists('social_reel_vary_host_scene', $input)
             ? (empty($input['social_reel_vary_host_scene']) ? 0 : 1)
             : 1;
+        $out['social_reel_dev_cheap'] = empty($input['social_reel_dev_cheap']) ? 0 : 1;
         $out['social_reel_host_seconds'] = min(45, max(8, absint($input['social_reel_host_seconds'] ?? $defaults['social_reel_host_seconds'])));
         $out['social_reel_close_camera'] = array_key_exists('social_reel_close_camera', $input)
             ? (empty($input['social_reel_close_camera']) ? 0 : 1)

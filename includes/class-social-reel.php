@@ -336,14 +336,48 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             . ' Emphasize the named change and the stake. Speak so they can repeat the takeaway.';
     }
 
-    private function social_reel_recipe($settings = null) {
+    private function social_reel_dev_cheap_on($settings = null) {
         $settings = is_array($settings) ? $settings : $this->settings();
+        return !empty($settings['social_reel_dev_cheap']);
+    }
+
+    /**
+     * Production picks stay saved. Dev cheap mode temporarily forces the lowest-cost
+     * Fal path so you can test the pipeline without burning Avatar Pro / Veo Fast.
+     */
+    private function social_reel_effective_settings($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        if (!$this->social_reel_dev_cheap_on($settings)) {
+            return $settings;
+        }
+        return array_merge($settings, array(
+            'social_reel_host_model' => 'kling-avatar-std',
+            'social_reel_video_model' => 'veo-lite',
+            'social_reel_clip_seconds' => 4,
+            'social_reel_enhance_host_face' => 0,
+            'social_reel_vary_host_scene' => 0,
+            'social_reel_host_seconds' => 8,
+            'social_reel_target_seconds' => 15,
+            'social_reel_sting_seconds' => 1,
+        ));
+    }
+
+    private function social_reel_dev_cheap_summary($settings = null) {
+        $settings = $this->social_reel_effective_settings($settings);
+        $est = $this->social_reel_total_estimate_usd($settings);
+        return 'Dev cheap test: Avatar Standard + Veo Lite 4s + 15s voice + no face enhance/scene restyle. About $'
+            . number_format((float) $est, 2)
+            . ' estimated for this recipe. Production model picks stay saved and apply when you turn Dev off.';
+    }
+
+    private function social_reel_recipe($settings = null) {
+        $settings = $this->social_reel_effective_settings($settings);
         $recipe = sanitize_key((string) ($settings['social_reel_recipe'] ?? 'broll'));
         return $recipe === 'story' ? 'story' : 'broll';
     }
 
     private function social_reel_host_model($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         $model = sanitize_key((string) ($settings['social_reel_host_model'] ?? 'kling-avatar-pro'));
         $models = $this->social_reel_host_models();
         return isset($models[$model]) ? $model : 'kling-avatar-pro';
@@ -357,7 +391,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function social_reel_target_seconds($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         $target = absint($settings['social_reel_target_seconds'] ?? 18);
         return in_array($target, array(15, 18, 30, 45), true) ? $target : 18;
     }
@@ -378,12 +412,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function social_reel_host_seconds($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         return min(45, max(8, absint($settings['social_reel_host_seconds'] ?? 20)));
     }
 
     private function social_reel_sting_seconds($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         return min(4, max(1, absint($settings['social_reel_sting_seconds'] ?? 2)));
     }
 
@@ -397,7 +431,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function social_reel_host_estimate_usd($settings = null, $seconds = 0.0) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         if ($this->social_reel_recipe($settings) !== 'story' || empty($settings['social_reel_include_host'])) {
             return 0.0;
         }
@@ -410,15 +444,16 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function social_reel_host_signature($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         return $this->social_reel_host_model($settings)
             . '|' . (!empty($settings['social_reel_enhance_host_face']) ? 'enhance' : 'raw')
             . '|' . absint($settings['social_reel_host_image_id'] ?? 0)
-            . '|' . (!empty($settings['social_reel_generate_host_face']) ? 'gen' : 'upload');
+            . '|' . (!empty($settings['social_reel_generate_host_face']) ? 'gen' : 'upload')
+            . '|' . ($this->social_reel_dev_cheap_on($settings) ? 'devcheap' : 'prod');
     }
 
     private function social_reel_total_estimate_usd($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         $motion = 0.0;
         if (!empty($this->social_reel_plan($settings)['motion'])) {
             $motion = $this->social_reel_video_estimate_usd($settings);
@@ -427,7 +462,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function social_reel_recipe_summary($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         $recipe = $this->social_reel_recipe($settings);
         $models = $this->social_reel_video_models();
         $model = $this->social_reel_video_model($settings);
@@ -459,20 +494,23 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         } else {
             $parts[] = 'B-roll spoken Reel';
         }
+        if ($this->social_reel_dev_cheap_on($settings)) {
+            array_unshift($parts, 'DEV CHEAP TEST');
+        }
         $parts[] = (string) ($models[$model]['label'] ?? $model);
         $parts[] = (string) $this->social_reel_target_seconds($settings) . 's · ' . $this->social_reel_tts_voice_label($voice);
         return implode(' · ', $parts);
     }
 
     private function social_reel_video_model($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         $model = sanitize_key((string) ($settings['social_reel_video_model'] ?? self::SOCIAL_REEL_VIDEO_DEFAULT));
         $models = $this->social_reel_video_models();
         return isset($models[$model]) ? $model : self::SOCIAL_REEL_VIDEO_DEFAULT;
     }
 
     private function social_reel_clip_seconds($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         $wanted = absint($settings['social_reel_clip_seconds'] ?? 8);
         $model = $this->social_reel_video_model($settings);
         $models = $this->social_reel_video_models();
@@ -773,7 +811,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function social_reel_plan($settings = null) {
-        $settings = is_array($settings) ? $settings : $this->settings();
+        $settings = $this->social_reel_effective_settings($settings);
         $local = $this->social_ffmpeg_path() !== '';
         if ($this->social_reel_recipe($settings) !== 'story') {
             return array(
@@ -1306,6 +1344,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!$post instanceof WP_Post) {
             return new WP_Error('tr_ai_wire_social_post', 'The source article is no longer published.');
         }
+        $settings = $this->social_reel_effective_settings($settings);
+        if ($this->social_reel_dev_cheap_on($settings)) {
+            $this->social_reel_progress_note($post->ID, 'Dev cheap test is on — using Avatar Standard + Veo Lite 4s.');
+        }
         $copy = is_array($copy) ? $copy : array();
         $script = (string) ($copy['reel_script'] ?? '');
         if ($script === '') {
@@ -1470,6 +1512,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function ensure_social_reel_story($post, $settings, $copy, $broll_path, $script = '') {
+        $settings = $this->social_reel_effective_settings($settings);
         if (!$this->social_reel_can_mux()) {
             return $this->social_reel_mux_error();
         }
