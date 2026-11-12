@@ -951,39 +951,18 @@ trait TechnoRapper_AI_Wire_Social {
                 $prepared = $this->prepare_social_delivery($row, $settings);
                 $this->social_active_row_id = 0;
                 if (is_wp_error($prepared)) {
-                    if ($prepared->get_error_code() === 'tr_ai_wire_social_image_busy') {
-                        $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
-                        $this->kick_social_queue(30);
-                        break;
-                    }
-                    if ($prepared->get_error_code() === 'tr_ai_wire_reel_video_wait' || $this->social_reel_error_is_transient($prepared, (int) $row['post_id'])) {
-                        $wpdb->update($table, array(
-                            'status' => 'queued',
-                            'error_text' => $prepared->get_error_message(),
-                            'updated_at' => current_time('mysql', true),
-                        ), array('id' => (int) $row['id']));
-                        $this->kick_social_queue(30, true);
-                        break;
-                    }
-                    if ($prepared->get_error_code() === 'tr_ai_wire_yt_video_wait') {
-                        $wpdb->update($table, array(
-                            'status' => 'queued',
-                            'error_text' => $prepared->get_error_message(),
-                            'remote_id' => is_string($prepared->get_error_data()) ? sanitize_text_field($prepared->get_error_data()) : '',
-                            'updated_at' => current_time('mysql', true),
-                        ), array('id' => (int) $row['id']));
-                        $this->kick_social_queue(45, true);
-                        break;
+                    if ($this->social_defer_unready_row($row, $prepared)) {
+                        continue;
                     }
                     $this->finish_social_item($row['id'], 'needs_review', '', '', $prepared->get_error_message());
-                    break;
+                    continue;
                 }
                 delete_post_meta((int) $row['post_id'], '_tr_ai_wire_reel_auto_retries');
                 $this->finish_social_item($row['id'], 'needs_review', '', '', $this->social_reel_hold_copy($row));
                 if ($this->social_finishable_queued_count() > 0) {
                     $this->kick_social_queue(5);
                 }
-                break;
+                continue;
             }
             $pack = array($row);
             $explicit = $this->social_row_explicit_pack($row);
@@ -1018,42 +997,30 @@ trait TechnoRapper_AI_Wire_Social {
             }
             $result = $this->publish_social_item($row, $credentials, $settings);
             if (is_wp_error($result)) {
-                if ($result->get_error_code() === 'tr_ai_wire_social_image_busy') {
-                    $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
-                    wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
-                    break;
-                }
-                if ($result->get_error_code() === 'tr_ai_wire_reel_video_wait' || $result->get_error_code() === 'tr_ai_wire_yt_video_wait') {
-                    $wait_fields = array(
-                        'status' => 'queued',
-                        'error_text' => $result->get_error_message(),
-                        'updated_at' => current_time('mysql', true),
-                    );
-                    if ($result->get_error_code() === 'tr_ai_wire_yt_video_wait') {
-                        $pending_id = $result->get_error_data();
-                        if (is_string($pending_id) && $pending_id !== '') {
-                            $wait_fields['remote_id'] = sanitize_text_field($pending_id);
-                        }
-                    }
-                    $wpdb->update($table, $wait_fields, array('id' => (int) $row['id']));
-                    $this->kick_social_queue(30, true);
-                    break;
+                if ($this->social_defer_unready_row($row, $result)) {
+                    continue;
                 }
                 if ($result->get_error_code() === 'tr_ai_wire_ig_quota_full' || $result->get_error_code() === 'tr_ai_wire_yt_quota') {
                     $wpdb->update($table, array('status' => 'queued', 'error_text' => $result->get_error_message(), 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
                     wp_schedule_single_event(strtotime('+1 hour'), self::SOCIAL_CRON_HOOK);
+                    if ($result->get_error_code() === 'tr_ai_wire_yt_quota') {
+                        continue;
+                    }
                     break;
                 }
                 // Do not auto-retry an ambiguous publish response: the platform
                 // may have accepted the post before the connection failed.
                 $this->finish_social_item($row['id'], 'needs_review', '', '', $result->get_error_message());
+                if ($this->social_row_is_reel($row)) {
+                    continue;
+                }
                 if ($this->social_finishable_queued_count() > 0) {
                     $this->kick_social_queue(5);
                 }
                 break;
             }
             $this->finish_social_item($row['id'], 'published', $result['id'], $result['url'], '');
-            if ((string) ($row['platform'] ?? '') === 'instagram') {
+            if ((string) ($row['platform'] ?? '') === 'instagram' && !$this->social_row_is_reel($row)) {
                 $instagram_spacing_wait = max($instagram_spacing_wait, $this->instagram_stills_spacing_seconds());
             }
             break;
@@ -1063,15 +1030,48 @@ trait TechnoRapper_AI_Wire_Social {
         $finishable = $this->social_finishable_queued_count();
         if ($remaining > 0 && !$this->social_queue_waiting_for_pack_mate() && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0 || $this->social_queued_forced_pack_count() > 0)) {
             $delay = $finishable > 0 ? 5 : 60;
-            if ($instagram_spacing_wait > 0) {
+            if ($instagram_spacing_wait > 0 && !$this->social_queued_has_spacing_exempt()) {
                 $delay = max($delay, $instagram_spacing_wait);
             }
             $this->kick_social_queue($delay);
         }
     }
 
+    private function social_defer_unready_row($row, $error) {
+        if (!is_wp_error($error)) {
+            return false;
+        }
+        $code = $error->get_error_code();
+        $post_id = (int) ($row['post_id'] ?? 0);
+        $is_wait = $code === 'tr_ai_wire_reel_video_wait'
+            || $code === 'tr_ai_wire_yt_video_wait'
+            || $code === 'tr_ai_wire_social_image_busy'
+            || $this->social_reel_error_is_transient($error, $post_id);
+        if (!$is_wait) {
+            return false;
+        }
+        global $wpdb;
+        $fields = array(
+            'status' => 'queued',
+            'updated_at' => current_time('mysql', true),
+        );
+        if ($code !== 'tr_ai_wire_social_image_busy') {
+            $fields['error_text'] = $error->get_error_message();
+        }
+        if ($code === 'tr_ai_wire_yt_video_wait') {
+            $pending_id = $error->get_error_data();
+            if (is_string($pending_id) && $pending_id !== '') {
+                $fields['remote_id'] = sanitize_text_field($pending_id);
+            }
+        }
+        $wpdb->update($this->social_table(), $fields, array('id' => (int) $row['id']));
+        $kick = ($code === 'tr_ai_wire_yt_video_wait') ? 45 : 30;
+        $this->kick_social_queue($kick, true);
+        return true;
+    }
+
     private function social_row_skips_instagram_spacing($row) {
-        if ($this->social_row_is_forced_pack($row)) {
+        if ($this->social_row_is_forced_pack($row) || $this->social_row_is_reel($row)) {
             return true;
         }
         return $this->social_row_explicit_pack($row) !== '';
@@ -1083,7 +1083,17 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function instagram_spacing_wait_seconds() {
         global $wpdb;
-        $last = $wpdb->get_var("SELECT updated_at FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'instagram' AND status = 'published' ORDER BY updated_at DESC LIMIT 1");
+        $last = $wpdb->get_var(
+            "SELECT s.updated_at FROM {$wpdb->prefix}tr_ai_wire_social s
+             WHERE s.platform = 'instagram' AND s.status = 'published'
+               AND NOT EXISTS (
+                    SELECT 1 FROM {$wpdb->postmeta} m
+                    WHERE m.post_id = s.post_id
+                      AND m.meta_key = '_tr_ai_wire_social_mode'
+                      AND m.meta_value = 'reel'
+               )
+             ORDER BY s.updated_at DESC LIMIT 1"
+        );
         if (!is_string($last) || $last === '') {
             return 0;
         }
@@ -1094,6 +1104,28 @@ trait TechnoRapper_AI_Wire_Social {
         $need = $this->instagram_stills_spacing_seconds();
         $elapsed = time() - $ts;
         return $elapsed >= $need ? 0 : ($need - $elapsed);
+    }
+
+    private function social_queued_has_spacing_exempt() {
+        global $wpdb;
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social q
+             WHERE q.status = 'queued'
+               AND (
+                    EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} m
+                        WHERE m.post_id = q.post_id
+                          AND m.meta_key = '_tr_ai_wire_social_mode'
+                          AND m.meta_value IN ('reel', 'pack', 'carousel', 'collage')
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} f
+                        WHERE f.post_id = q.post_id
+                          AND f.meta_key = '_tr_ai_wire_social_force_pack'
+                          AND f.meta_value IN ('carousel', 'collage', 'reel')
+                    )
+               )"
+        ) > 0;
     }
 
     private function social_queued_rows_for_worker($limit) {
@@ -1258,12 +1290,13 @@ trait TechnoRapper_AI_Wire_Social {
             if (empty($credentials['instagram_user_access_token']) || empty($credentials['instagram_user_id'])) {
                 return new WP_Error('tr_ai_wire_ig_missing_token', 'The Instagram access token or account ID is no longer configured.');
             }
+            $video_url = $this->social_row_is_reel($row) ? (string) ($prepared['video_url'] ?? '') : '';
             return $this->publish_instagram_post(
                 $prepared['copy']['instagram'],
                 $prepared['copy']['instagram_alt'],
                 $prepared['image_url'],
                 $credentials,
-                (string) ($prepared['video_url'] ?? '')
+                $video_url
             );
         }
         if ($row['platform'] === 'youtube') {
@@ -2908,6 +2941,14 @@ trait TechnoRapper_AI_Wire_Social {
         return $value === 'carousel' || $value === 'collage' || $value === 'reel';
     }
 
+    private function social_row_is_reel($row) {
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if ($post_id < 1) {
+            return false;
+        }
+        return sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true)) === 'reel';
+    }
+
     private function social_row_holds_reel_for_review($row) {
         $post_id = (int) ($row['post_id'] ?? 0);
         if ($post_id < 1) {
@@ -2916,7 +2957,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ((string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true) !== '1') {
             return false;
         }
-        return sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true)) === 'reel';
+        return $this->social_row_is_reel($row);
     }
 
     private function social_reel_hold_copy($row) {

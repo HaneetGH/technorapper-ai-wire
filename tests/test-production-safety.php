@@ -1026,6 +1026,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $settings['social_collage_daily_limit']);
         $this->assertSame(2, $settings['social_single_daily_limit']);
         $this->assertSame(0, $settings['social_reel_daily_limit']);
+        $this->assertSame(0, (int) $settings['social_reel_enabled']);
         $this->assertSame(90, (int) $settings['social_min_review_score']);
         $this->assertSame(0, (int) $settings['social_mix_saved']);
         $this->assertSame(array_keys(TechnoRapper_AI_Wire::social_news_formats()), $settings['social_news_formats']);
@@ -3429,6 +3430,159 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertSame(1, $carousel_parents);
         $this->assertSame('published', (string) $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $already)));
+    }
+
+    public function test_instagram_stills_do_not_wait_on_a_recent_reel() {
+        $this->onboard_social(array('instagram'));
+        global $wpdb;
+        $reel_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Recent Reel should not block stills',
+        ));
+        update_post_meta($reel_id, '_tr_ai_wire_social_mode', 'reel');
+        $now = current_time('mysql', true);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $reel_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'remote_id' => 'ig-recent-reel',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s', '%s'));
+        $this->assertSame(0, $this->invoke_private('instagram_spacing_wait_seconds'));
+        $this->assertTrue($this->invoke_private('social_row_skips_instagram_spacing', array(array(
+            'post_id' => $reel_id,
+            'platform' => 'instagram',
+        ))));
+    }
+
+    public function test_unready_reel_does_not_block_instagram_stills() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required for the Instagram still publish path.');
+        }
+        $this->onboard_social(array('instagram'));
+        delete_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION);
+        add_filter('tr_ai_wire_ffmpeg_path', function () {
+            return '/tmp/tr-ai-wire-missing-ffmpeg';
+        });
+        $reel_image = $this->create_social_jpeg_attachment();
+        $still_image = $this->create_social_jpeg_attachment();
+        if ($reel_image < 1 || $still_image < 1) {
+            $this->markTestSkipped('GD and uploads are required for the Instagram still publish path.');
+        }
+        $reel_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Stuck Reel should not steal the still',
+            'post_excerpt' => 'This Reel cannot mux without Fal or ffmpeg.',
+        ));
+        $still_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Normal Instagram still',
+            'post_excerpt' => 'This still should still publish.',
+        ));
+        update_post_meta($reel_id, '_tr_ai_wire_queue_id', 971);
+        update_post_meta($still_id, '_tr_ai_wire_queue_id', 972);
+        update_post_meta($reel_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($still_id, '_tr_ai_wire_social_mode', 'single');
+        update_post_meta($reel_id, '_tr_ai_wire_social_image_id', $reel_image);
+        update_post_meta($reel_id, '_tr_ai_wire_social_broll_id', $reel_image);
+        update_post_meta($still_id, '_tr_ai_wire_social_image_id', $still_image);
+        $copy = array(
+            'hook' => 'Your next phone chip has a server cousin',
+            'on_image_headline' => 'Qualcomm wants the rack',
+            'x' => 'Qualcomm wants the rack',
+            'instagram' => 'Qualcomm wants the rack',
+            'instagram_alt' => 'Qualcomm wants the rack',
+            'reel_script' => 'Qualcomm is chasing data-center silicon, not just phones, and that shift is why memory bandwidth is the story.',
+            'cta' => 'Read the full story on TechnoRapper',
+        );
+        update_post_meta($reel_id, '_tr_ai_wire_social_copy', wp_json_encode($copy));
+        update_post_meta($still_id, '_tr_ai_wire_social_copy', wp_json_encode($copy));
+        global $wpdb;
+        $earlier = gmdate('Y-m-d H:i:s', time() - 120);
+        $later = gmdate('Y-m-d H:i:s', time() - 60);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $reel_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'image_attachment_id' => $reel_image,
+            'created_at' => $earlier,
+            'updated_at' => $earlier,
+        ), array('%d', '%s', '%s', '%d', '%s', '%s'));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $still_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'image_attachment_id' => $still_image,
+            'created_at' => $later,
+            'updated_at' => $later,
+        ), array('%d', '%s', '%s', '%d', '%s', '%s'));
+        $image_containers = 0;
+        $reel_containers = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$image_containers, &$reel_containers) {
+            $url = (string) $url;
+            if (strpos($url, 'api.openai.com') !== false || strpos($url, 'queue.fal.run') !== false) {
+                return new WP_Error('blocked', 'Still publish should not need OpenAI or Fal.');
+            }
+            if (strpos($url, 'fields=id,username') !== false) {
+                return $this->instagram_account_probe_ok();
+            }
+            if (strpos($url, 'content_publishing_limit') !== false) {
+                return $this->mock_http_ok(array('quota_usage' => 1, 'config' => array('quota_total' => 100)));
+            }
+            if (strpos($url, '/media_publish') !== false) {
+                return $this->mock_http_ok(array('id' => 'ig-still-media'));
+            }
+            if (strpos($url, '/media') !== false) {
+                $body = is_array($args['body'] ?? null) ? $args['body'] : array();
+                if (($body['media_type'] ?? '') === 'REELS') {
+                    $reel_containers++;
+                } elseif (!empty($body['image_url'])) {
+                    $image_containers++;
+                }
+                return $this->mock_http_ok(array('id' => 'ig-still-container'));
+            }
+            if (strpos($url, 'fields=status_code') !== false) {
+                return $this->mock_http_ok(array('status_code' => 'FINISHED'));
+            }
+            if (strpos($url, 'fields=permalink') !== false) {
+                return $this->mock_http_ok(array('permalink' => 'https://www.instagram.com/p/normal-still/'));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $reel_row = $wpdb->get_row($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $reel_id), ARRAY_A);
+        $still_row = $wpdb->get_row($wpdb->prepare("SELECT status, remote_id, remote_url FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $still_id), ARRAY_A);
+        $this->assertSame('needs_review', $reel_row['status']);
+        $this->assertSame('published', $still_row['status']);
+        $this->assertSame('ig-still-media', $still_row['remote_id']);
+        $this->assertSame('https://www.instagram.com/p/normal-still/', $still_row['remote_url']);
+        $this->assertSame(1, $image_containers);
+        $this->assertSame(0, $reel_containers);
+    }
+
+    public function test_enable_reels_tools_do_not_auto_queue_reels() {
+        $this->onboard_social(array('instagram'));
+        $settings = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_instagram_enabled' => 1,
+            'social_reel_enabled' => 1,
+            'social_reel_daily_limit' => 0,
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 4,
+        ));
+        $this->assertSame(0, (int) $settings['social_reel_daily_limit']);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Still stays a still when Reels tools are on',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 973);
+        $this->invoke_private('collect_social_article', array($post_id, $settings));
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertFalse($this->invoke_private('social_wants_reel', array($settings, $post_id)));
     }
 
     public function test_social_queue_page_starts_a_stuck_carousel() {
@@ -7128,14 +7282,21 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'social_mix_saved' => 1,
         ));
         $this->assertSame(0, (int) $off['social_reel_daily_limit']);
+        $this->assertSame(0, (int) $off['social_reel_enabled']);
 
         $on = $this->plugin->sanitize_settings(array(
             'social_platform_toggles' => 1,
             'social_reel_enabled' => 1,
             'social_reel_daily_limit' => 0,
             'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 5,
         ));
-        $this->assertSame(1, (int) $on['social_reel_daily_limit']);
+        $this->assertSame(0, (int) $on['social_reel_daily_limit']);
+        $this->assertSame(1, (int) $on['social_reel_enabled']);
+        $this->assertSame('single', $on['social_post_format']);
+        $this->assertSame(array('carousel' => 0, 'collage' => 0, 'single' => 5, 'reel' => 0), $this->invoke_private('social_daily_mix_limits', array($on)));
 
         $comic_off = $this->plugin->sanitize_settings(array(
             'comic_enabled' => 0,

@@ -61,6 +61,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_reel_sting_seconds' => 2,
             'social_reel_tts_voice' => 'cedar',
             'social_reel_weekly_limit' => 0,
+            'social_reel_enabled' => 0,
             'social_post_format' => 'single',
             'social_slide_count' => 5,
             'social_carousel_daily_limit' => 3,
@@ -127,6 +128,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_reel_sting_seconds',
             'social_reel_tts_voice',
             'social_reel_weekly_limit',
+            'social_reel_enabled',
             'social_post_format',
             'social_slide_count',
             'social_carousel_daily_limit',
@@ -386,9 +388,12 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_single_daily_limit'] = min($mix_budget, max(0, absint($input['social_single_daily_limit'] ?? $defaults['social_single_daily_limit'])));
         $out['social_reel_daily_limit'] = min($mix_budget, max(0, absint($input['social_reel_daily_limit'] ?? $defaults['social_reel_daily_limit'])));
         if (!empty($input['social_platform_toggles']) && array_key_exists('social_reel_enabled', $input)) {
-            $out['social_reel_daily_limit'] = empty($input['social_reel_enabled'])
-                ? 0
-                : min($mix_budget, max(1, $out['social_reel_daily_limit'] > 0 ? $out['social_reel_daily_limit'] : 1));
+            $out['social_reel_enabled'] = empty($input['social_reel_enabled']) ? 0 : 1;
+            if (empty($out['social_reel_enabled'])) {
+                $out['social_reel_daily_limit'] = 0;
+            }
+        } else {
+            $out['social_reel_enabled'] = ((int) ($current['social_reel_enabled'] ?? 0) === 1 || $out['social_reel_daily_limit'] > 0) ? 1 : 0;
         }
         $mix = $this->clamp_social_mix_counts(array(
             'reel' => $out['social_reel_daily_limit'],

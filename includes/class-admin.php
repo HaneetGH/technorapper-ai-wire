@@ -194,7 +194,7 @@ trait TechnoRapper_AI_Wire_Admin {
         $x_on = !empty($s['social_x_enabled']) || !$x_ready;
         $ig_on = !empty($s['social_instagram_enabled']) || !$ig_ready;
         $yt_on = !empty($s['social_youtube_enabled']) || !$yt_ready;
-        $reel_on = (int) ($s['social_reel_daily_limit'] ?? 0) > 0;
+        $reel_on = !empty($s['social_reel_enabled']) || (int) ($s['social_reel_daily_limit'] ?? 0) > 0;
         $stills_on = $x_on || $ig_on;
         $any_network = $x_on || $ig_on || $yt_on;
         $option = self::OPTION;
@@ -340,7 +340,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <div class="card tr-ai-wire-card" data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
                     <h2>Reels / Shorts</h2>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="0">
-                    <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X still gets the still poster. Use <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Generate Reel now</a> on Social queue to build one, review it, then click Post. Raise Reel posts per day when you want the worker to post Reels on its own.</span></p>
+                    <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X and Instagram stills keep posting on their own mix. Use <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Generate Reel now</a> on Social queue to build one, review it, then click Post. Leave <strong>Reel posts per day</strong> at 0 unless you want the worker to auto-post Reels. Checking this box does not steal still slots.</span></p>
                     <div data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>
                     <div class="tr-ai-wire-panel" style="border-left:4px solid #d63638;margin-bottom:12px;">
                         <h3 style="margin-top:0;">Dev — cheap test</h3>
