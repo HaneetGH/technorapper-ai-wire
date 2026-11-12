@@ -832,27 +832,51 @@ trait TechnoRapper_AI_Wire_Social {
         $this->collect_social_article((int) $post->ID, $settings);
     }
 
+    private $social_lock_token = '';
+    private $social_active_row_id = 0;
+
+    private function social_heartbeat() {
+        if ($this->social_lock_token !== '') {
+            $lock = get_option('tr_ai_wire_social_worker_lock', array());
+            if (is_array($lock) && (string) ($lock['token'] ?? '') === $this->social_lock_token) {
+                update_option('tr_ai_wire_social_worker_lock', array('token' => $this->social_lock_token, 'time' => time()), false);
+            }
+        }
+        if ($this->social_active_row_id > 0) {
+            global $wpdb;
+            $wpdb->update(
+                $this->social_table(),
+                array('updated_at' => current_time('mysql', true)),
+                array('id' => $this->social_active_row_id, 'status' => 'processing')
+            );
+        }
+    }
+
     public function process_social_queue() {
         $lock_name = 'tr_ai_wire_social_worker_lock';
         $lock_token = wp_generate_password(32, false, false);
         if (!add_option($lock_name, array('token' => $lock_token, 'time' => time()), '', false)) {
             $existing = get_option($lock_name, array());
             $lock_time = is_array($existing) ? (int) ($existing['time'] ?? 0) : (int) $existing;
-            if ($lock_time && $lock_time < time() - 900) {
+            if ($lock_time && $lock_time < time() - 240) {
                 delete_option($lock_name);
             }
             if (!add_option($lock_name, array('token' => $lock_token, 'time' => time()), '', false)) {
-                return;
+                return false;
             }
         }
+        $this->social_lock_token = $lock_token;
         try {
             $this->process_social_queue_locked();
         } finally {
+            $this->social_lock_token = '';
+            $this->social_active_row_id = 0;
             $existing = get_option($lock_name, array());
             if (is_array($existing) && ($existing['token'] ?? '') === $lock_token) {
                 delete_option($lock_name);
             }
         }
+        return true;
     }
 
     private function process_social_queue_locked() {
@@ -864,7 +888,7 @@ trait TechnoRapper_AI_Wire_Social {
             $this->queue_site_context_job(false);
         }
         if (($this->social_wants_reel($settings) || (int) ($settings['social_reel_daily_limit'] ?? 0) > 0) && function_exists('set_time_limit')) {
-            set_time_limit(480);
+            set_time_limit(300);
         }
         $credentials = $this->social_credentials();
         $limit = $this->social_article_daily_limit($settings);
@@ -881,6 +905,7 @@ trait TechnoRapper_AI_Wire_Social {
 
         global $wpdb;
         $table = $this->social_table();
+        $wpdb->query("UPDATE {$wpdb->prefix}tr_ai_wire_social s SET s.status = 'queued', s.error_text = 'Resuming the Reel build where it stopped.' WHERE s.status = 'processing' AND s.updated_at < UTC_TIMESTAMP() - INTERVAL 4 MINUTE AND EXISTS (SELECT 1 FROM {$wpdb->postmeta} h WHERE h.post_id = s.post_id AND h.meta_key = '_tr_ai_wire_social_hold_reel' AND h.meta_value = '1') AND EXISTS (SELECT 1 FROM {$wpdb->postmeta} m WHERE m.post_id = s.post_id AND m.meta_key = '_tr_ai_wire_social_mode' AND m.meta_value = 'reel')");
         $wpdb->query("UPDATE {$wpdb->prefix}tr_ai_wire_social SET status = 'needs_review', error_text = 'The worker stopped before recording an outcome. Check the platform before retrying.' WHERE status = 'processing' AND updated_at < UTC_TIMESTAMP() - INTERVAL 15 MINUTE");
         $this->requeue_instagram_prepublish_quota_failures();
         $rows = $this->social_queued_rows_for_worker($limit);
@@ -920,32 +945,40 @@ trait TechnoRapper_AI_Wire_Social {
             }
             if ($this->social_row_holds_reel_for_review($row)) {
                 if (function_exists('set_time_limit')) {
-                    set_time_limit(480);
+                    set_time_limit(180);
                 }
+                $this->social_active_row_id = (int) $row['id'];
                 $prepared = $this->prepare_social_delivery($row, $settings);
+                $this->social_active_row_id = 0;
                 if (is_wp_error($prepared)) {
                     if ($prepared->get_error_code() === 'tr_ai_wire_social_image_busy') {
                         $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
-                        wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
+                        $this->kick_social_queue(30);
                         break;
                     }
-                    if ($prepared->get_error_code() === 'tr_ai_wire_reel_video_wait' || $prepared->get_error_code() === 'tr_ai_wire_yt_video_wait') {
-                        $wait_fields = array(
+                    if ($prepared->get_error_code() === 'tr_ai_wire_reel_video_wait' || $this->social_reel_error_is_transient($prepared, (int) $row['post_id'])) {
+                        $wpdb->update($table, array(
                             'status' => 'queued',
                             'error_text' => $prepared->get_error_message(),
                             'updated_at' => current_time('mysql', true),
-                        );
-                        $pending_id = $prepared->get_error_data();
-                        if ($prepared->get_error_code() === 'tr_ai_wire_yt_video_wait' && is_string($pending_id) && $pending_id !== '') {
-                            $wait_fields['remote_id'] = sanitize_text_field($pending_id);
-                        }
-                        $wpdb->update($table, $wait_fields, array('id' => (int) $row['id']));
-                        wp_schedule_single_event(time() + 45, self::SOCIAL_CRON_HOOK);
+                        ), array('id' => (int) $row['id']));
+                        $this->kick_social_queue(30, true);
+                        break;
+                    }
+                    if ($prepared->get_error_code() === 'tr_ai_wire_yt_video_wait') {
+                        $wpdb->update($table, array(
+                            'status' => 'queued',
+                            'error_text' => $prepared->get_error_message(),
+                            'remote_id' => is_string($prepared->get_error_data()) ? sanitize_text_field($prepared->get_error_data()) : '',
+                            'updated_at' => current_time('mysql', true),
+                        ), array('id' => (int) $row['id']));
+                        $this->kick_social_queue(45, true);
                         break;
                     }
                     $this->finish_social_item($row['id'], 'needs_review', '', '', $prepared->get_error_message());
                     break;
                 }
+                delete_post_meta((int) $row['post_id'], '_tr_ai_wire_reel_auto_retries');
                 $this->finish_social_item($row['id'], 'needs_review', '', '', $this->social_reel_hold_copy($row));
                 if ($this->social_finishable_queued_count() > 0) {
                     $this->kick_social_queue(5);
@@ -1003,7 +1036,7 @@ trait TechnoRapper_AI_Wire_Social {
                         }
                     }
                     $wpdb->update($table, $wait_fields, array('id' => (int) $row['id']));
-                    wp_schedule_single_event(time() + 45, self::SOCIAL_CRON_HOOK);
+                    $this->kick_social_queue(30, true);
                     break;
                 }
                 if ($result->get_error_code() === 'tr_ai_wire_ig_quota_full' || $result->get_error_code() === 'tr_ai_wire_yt_quota') {
@@ -3012,6 +3045,27 @@ trait TechnoRapper_AI_Wire_Social {
         return $post_id;
     }
 
+    private function social_reel_job_message() {
+        $post_id = $this->social_held_reel_pending_post_id();
+        if ($post_id < 1) {
+            return 'The Reel was queued. Open Social queue to follow it.';
+        }
+        if ($this->social_reel_preview_id($post_id) > 0) {
+            return 'Your Reel is ready. Watch it on Social queue, then click Post. It is not live yet.';
+        }
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform IN ('instagram', 'youtube') ORDER BY id ASC LIMIT 1",
+            $post_id
+        ), ARRAY_A);
+        if (is_array($row) && (string) ($row['status'] ?? '') === 'needs_review') {
+            return 'The Reel build stopped: ' . $this->social_error_copy((string) ($row['error_text'] ?? '')) . ' Click Resume on the row.';
+        }
+        $progress = $this->social_reel_progress($post_id);
+        $detail = !empty($progress['detail']) ? (' ' . (string) $progress['detail']) : '';
+        return 'Your Reel is building.' . $detail . ' Social queue shows each step and keeps itself up to date. Nothing is posted until you click Post.';
+    }
+
     private function social_held_reel_pending_post_id() {
         global $wpdb;
         return (int) $wpdb->get_var(
@@ -3405,6 +3459,19 @@ trait TechnoRapper_AI_Wire_Social {
         delete_post_meta($post_id, '_tr_ai_wire_social_motion_id');
         delete_post_meta($post_id, '_tr_ai_wire_fal_request');
         delete_post_meta($post_id, '_tr_ai_wire_social_reel_id');
+        foreach (array(
+            '_tr_ai_wire_social_host_id',
+            '_tr_ai_wire_social_voice_id',
+            '_tr_ai_wire_social_endcard_id',
+            '_tr_ai_wire_fal_host_request',
+            '_tr_ai_wire_fal_compose_request',
+            '_tr_ai_wire_reel_no_sting',
+            '_tr_ai_wire_reel_progress',
+            '_tr_ai_wire_reel_ledger',
+            '_tr_ai_wire_reel_auto_retries',
+        ) as $reel_meta) {
+            delete_post_meta($post_id, $reel_meta);
+        }
         $revision = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true);
         update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision + 1);
         update_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', '1');
@@ -4454,6 +4521,7 @@ trait TechnoRapper_AI_Wire_Social {
             if ($code === 'ERROR' || $code === 'EXPIRED') {
                 return new WP_Error('tr_ai_wire_ig_processing', 'Instagram could not prepare the media container.');
             }
+            $this->social_heartbeat();
             sleep($sleep);
         }
         return new WP_Error('tr_ai_wire_ig_processing', 'Instagram media processing did not finish in time. Check the Social distribution queue before retrying.');
@@ -4883,11 +4951,7 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function social_reel_downloadable_id($post_id) {
-        $reel_id = $this->social_reel_preview_id($post_id);
-        if ($reel_id > 0) {
-            return $reel_id;
-        }
-        return $this->social_motion_id($post_id);
+        return $this->social_reel_preview_id($post_id);
     }
 
     private function social_reel_download_url($row) {
@@ -4907,49 +4971,319 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
         $reel_id = $this->social_reel_preview_id($post->ID);
-        $motion_id = $reel_id > 0 ? 0 : $this->social_motion_id($post->ID);
-        $video_id = $reel_id > 0 ? $reel_id : $motion_id;
+        $partial_id = 0;
+        if ($reel_id < 1) {
+            $partial_id = $this->social_host_id($post->ID);
+            if ($partial_id < 1) {
+                $partial_id = $this->social_motion_id($post->ID);
+            }
+        }
+        $video_id = $reel_id > 0 ? $reel_id : $partial_id;
         $url = $video_id > 0 ? wp_get_attachment_url($video_id) : '';
         if (!$url) {
             return;
         }
         echo '<video class="tr-ai-wire-social-preview-video" controls playsinline preload="metadata" src="' . esc_url($url) . '"></video>';
-        $download = $this->social_reel_download_url($row);
-        if ($download !== '') {
-            echo '<p class="tr-ai-wire-reel-downloads"><a class="button" href="' . esc_url($download) . '">Download video</a></p>';
+        if ($reel_id > 0) {
+            $download = $this->social_reel_download_url($row);
+            if ($download !== '') {
+                echo '<p class="tr-ai-wire-reel-downloads"><a class="button" href="' . esc_url($download) . '">Download video</a></p>';
+            }
+            return;
         }
-        if ($reel_id < 1 && $motion_id > 0) {
-            echo '<p class="description">This is the generated motion clip. Click Download video to save the MP4.</p>';
-        }
+        echo '<p class="description">Preview of one finished piece only. The finished Reel (voice, cuts and end card) is still being assembled, then Download video and Post appear here.</p>';
     }
 
     private function render_social_reel_downloads($row, $post) {
         if (!$post instanceof WP_Post || !in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true) || !$this->social_wants_reel(null, $post->ID)) {
             return;
         }
-        $download = $this->social_reel_download_url($row);
-        if ($download !== '') {
-            echo '<p class="tr-ai-wire-reel-downloads"><a class="button" href="' . esc_url($download) . '">Download video</a></p>';
+        if ($this->social_reel_preview_id($post->ID) > 0) {
+            return;
         }
-        $reel_id = $this->social_reel_preview_id($post->ID);
-        $voice_id = $this->social_voice_id($post->ID);
-        $kit_id = $this->social_reel_kit_id($post->ID);
-        $extra = array();
-        if ($kit_id > 0) {
-            $url = wp_get_attachment_url($kit_id);
+        $parts = array(
+            'talking host clip' => $this->social_host_id($post->ID),
+            'B-roll clip (silent)' => $this->social_motion_id($post->ID),
+            'voice MP3' => $this->social_voice_id($post->ID),
+            'kit zip' => $this->social_reel_kit_id($post->ID),
+        );
+        $links = array();
+        foreach ($parts as $label => $attachment_id) {
+            $url = $attachment_id > 0 ? wp_get_attachment_url((int) $attachment_id) : '';
             if ($url) {
-                $extra[] = '<a href="' . esc_url($url) . '" download="reel-kit.zip">kit zip</a>';
+                $links[] = '<a href="' . esc_url($url) . '" target="_blank" rel="noopener">' . esc_html($label) . '</a>';
             }
         }
-        if ($voice_id > 0) {
-            $url = wp_get_attachment_url($voice_id);
-            if ($url) {
-                $extra[] = '<a href="' . esc_url($url) . '" download="voice.mp3">voice MP3</a>';
+        if ($links) {
+            echo '<p class="description">Saved pieces: ' . implode(' · ', $links) . '</p>';
+        }
+    }
+
+    private function social_reel_panel_applies($row, $post) {
+        return $post instanceof WP_Post
+            && in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true)
+            && in_array(sanitize_key((string) ($row['status'] ?? '')), array('queued', 'processing', 'needs_review'), true)
+            && $this->social_row_holds_reel_for_review($row)
+            && $this->social_reel_preview_id($post->ID) < 1;
+    }
+
+    private function social_reel_row_is_live($row) {
+        return in_array(sanitize_key((string) ($row['status'] ?? '')), array('queued', 'processing'), true);
+    }
+
+    private function render_social_reel_build_panel($row, $post) {
+        if (!$this->social_reel_panel_applies($row, $post)) {
+            return;
+        }
+        echo '<div class="tr-ai-wire-reel-build' . ($this->social_reel_row_is_live($row) ? ' is-live' : '') . '" data-row="' . esc_attr((string) (int) $row['id']) . '" data-live="' . ($this->social_reel_row_is_live($row) ? '1' : '0') . '">';
+        echo '<div class="tr-ai-wire-reel-build-body">';
+        $this->render_social_reel_build_body($row, $post);
+        echo '</div></div>';
+    }
+
+    private function render_social_reel_build_body($row, $post) {
+        $id = (int) ($row['id'] ?? 0);
+        $live = $this->social_reel_row_is_live($row);
+        $status = sanitize_key((string) ($row['status'] ?? ''));
+        $steps = $this->social_reel_build_steps($post->ID);
+        $progress = $this->social_reel_progress($post->ID);
+        $plan = $this->social_reel_plan();
+        if ($live) {
+            echo '<p class="tr-ai-wire-reel-build-title"><strong>Building your Reel.</strong> <span class="tr-ai-wire-reel-build-pulse" aria-hidden="true"></span> You can leave this page open or come back later. It keeps going and nothing is posted until you click Post.</p>';
+        } else {
+            echo '<p class="tr-ai-wire-reel-build-title"><strong>The Reel build stopped.</strong> Nothing was posted. Finished steps are saved and are not paid for again.</p>';
+            $error = $this->social_error_copy((string) ($row['error_text'] ?? ''));
+            if ($error !== '') {
+                echo '<p class="tr-ai-wire-social-error">' . esc_html($error) . '</p>';
             }
         }
-        if ($extra && $reel_id < 1) {
-            echo '<p class="description">Also: ' . implode(' · ', $extra) . '</p>';
+        echo '<ol class="tr-ai-wire-reel-steps">';
+        foreach ($steps as $step) {
+            $state = (string) $step['state'];
+            $mark = $state === 'done' ? '✓' : ($state === 'active' ? '…' : '○');
+            echo '<li class="is-' . esc_attr($state) . '"><span class="tr-ai-wire-reel-step-mark">' . esc_html($mark) . '</span> ' . esc_html((string) $step['label']);
+            if ((string) $step['detail'] !== '') {
+                echo ' <span class="description">' . esc_html((string) $step['detail']) . '</span>';
+            }
+            echo '</li>';
         }
+        echo '</ol>';
+        if ($live && !empty($progress['detail'])) {
+            echo '<p class="description tr-ai-wire-reel-build-detail">' . esc_html((string) $progress['detail']) . '</p>';
+        }
+        if (!empty($plan['cutaways_skipped'])) {
+            echo '<p class="description">This WordPress host has no ffmpeg, so the presenter plays unbroken and B-roll cutaways are skipped. That keeps the lips in step with the voice and saves the B-roll cost.</p>';
+        }
+        $spent = $this->social_reel_spent_usd($post->ID);
+        if ($spent > 0) {
+            echo '<p class="description">Fal usage started for this Reel so far: about $' . esc_html(number_format_i18n($spent, 2)) . '. Resuming never pays again for a step that already finished.</p>';
+        }
+        echo '<div class="tr-ai-wire-reel-build-actions">';
+        if ($live) {
+            echo '<button type="button" class="button tr-ai-wire-reel-check">Check now</button> ';
+        }
+        $stale = $status === 'processing' && (time() - (int) strtotime((string) ($row['updated_at'] ?? '') . ' UTC')) > 180;
+        if (!$live || $stale) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline-block;margin-right:8px;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_resume_reel">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+            wp_nonce_field('tr_ai_wire_resume_reel_' . $id);
+            echo '<button class="button button-primary">Resume building this Reel</button>';
+            echo '</form>';
+        }
+        echo '</div>';
+        if (!$live) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+            wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
+            echo '<input type="hidden" name="confirmed_not_published" value="1">';
+            echo '<input type="hidden" name="regenerate_image" value="1">';
+            echo '<p class="description">Or throw this attempt away and build a new Reel from scratch. That pays Fal for every step again.</p>';
+            echo '<button class="button button-secondary">Start over with a new Reel</button>';
+            echo '</form>';
+            $this->render_social_reel_upload_form($row);
+        }
+    }
+
+    private function social_building_reel_rows() {
+        global $wpdb;
+        return (array) $wpdb->get_results(
+            "SELECT s.* FROM {$wpdb->prefix}tr_ai_wire_social s
+             INNER JOIN {$wpdb->postmeta} h ON h.post_id = s.post_id AND h.meta_key = '_tr_ai_wire_social_hold_reel' AND h.meta_value = '1'
+             INNER JOIN {$wpdb->postmeta} m ON m.post_id = s.post_id AND m.meta_key = '_tr_ai_wire_social_mode' AND m.meta_value = 'reel'
+             WHERE s.status IN ('queued', 'processing')
+             ORDER BY s.id ASC",
+            ARRAY_A
+        );
+    }
+
+    private function social_reel_error_is_transient($error, $post_id) {
+        $post_id = (int) $post_id;
+        if (!is_wp_error($error) || $post_id < 1) {
+            return false;
+        }
+        if (!in_array($error->get_error_code(), array('tr_ai_wire_reel_tts', 'tr_ai_wire_reel_video'), true)) {
+            return false;
+        }
+        if (!preg_match('/cURL error|timed out|could not reach|HTTP 5\d\d|temporar|overloaded|rate limit|try again/i', $error->get_error_message())) {
+            return false;
+        }
+        $tries = (int) get_post_meta($post_id, '_tr_ai_wire_reel_auto_retries', true);
+        if ($tries >= 3) {
+            return false;
+        }
+        update_post_meta($post_id, '_tr_ai_wire_reel_auto_retries', $tries + 1);
+        return true;
+    }
+
+    private function social_reel_reset_pending_errors($post_id) {
+        foreach (array('_tr_ai_wire_fal_host_request', '_tr_ai_wire_fal_request', '_tr_ai_wire_fal_compose_request') as $meta_key) {
+            $pending = $this->social_fal_pending_get($post_id, $meta_key);
+            if ($pending && !empty($pending['errors'])) {
+                $pending['errors'] = 0;
+                $this->social_fal_pending_save($post_id, $meta_key, $pending);
+            }
+        }
+        delete_post_meta((int) $post_id, '_tr_ai_wire_reel_auto_retries');
+    }
+
+    private function resume_social_reel_build($id) {
+        $id = (int) $id;
+        global $wpdb;
+        $row = $id > 0 ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A) : null;
+        if (!$row || !$this->social_row_holds_reel_for_review($row)) {
+            return false;
+        }
+        $status = sanitize_key((string) $row['status']);
+        if (!in_array($status, array('queued', 'processing', 'needs_review'), true)) {
+            return false;
+        }
+        $post_id = (int) $row['post_id'];
+        if ($this->social_reel_preview_id($post_id) > 0 && $status === 'needs_review') {
+            return false;
+        }
+        $this->social_reel_reset_pending_errors($post_id);
+        $now = current_time('mysql', true);
+        $wpdb->update($this->social_table(), array('status' => 'queued', 'error_text' => null, 'updated_at' => $now), array('id' => $id, 'status' => $status));
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->prefix}tr_ai_wire_social SET status = 'queued', error_text = NULL, updated_at = %s WHERE post_id = %d AND status = 'needs_review' AND (error_text IS NULL OR error_text NOT LIKE %s)",
+            $now,
+            $post_id,
+            'Held:%'
+        ));
+        $this->kick_social_queue(2, true);
+        return true;
+    }
+
+    public function resume_social_reel() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to resume a Reel.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_POST['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_resume_reel_' . $id);
+        $this->resume_social_reel_build($id);
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&reel_resumed=1'));
+        exit;
+    }
+
+    public function ajax_reel_tick() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'You are not allowed to do that.'), 403);
+        }
+        check_ajax_referer('tr_ai_wire_reel_tick', 'nonce');
+        if (function_exists('ignore_user_abort')) {
+            ignore_user_abort(true);
+        }
+        if (function_exists('set_time_limit')) {
+            set_time_limit(150);
+        }
+        $ran = false;
+        if ($this->social_building_reel_rows()) {
+            $ran = (bool) $this->process_social_queue();
+        }
+        $live = $this->social_building_reel_rows();
+        $panels = array();
+        foreach ($live as $row) {
+            $post = get_post((int) $row['post_id']);
+            if (!$this->social_reel_panel_applies($row, $post)) {
+                continue;
+            }
+            ob_start();
+            $this->render_social_reel_build_body($row, $post);
+            $panels[(string) (int) $row['id']] = (string) ob_get_clean();
+        }
+        wp_send_json_success(array(
+            'active' => count($live) > 0,
+            'ran' => $ran,
+            'panels' => $panels,
+        ));
+    }
+
+    private function render_social_reel_watch_script() {
+        if (!$this->social_building_reel_rows()) {
+            return;
+        }
+        $config = array(
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('tr_ai_wire_reel_tick'),
+        );
+        ?>
+        <script>
+        (function () {
+            var cfg = <?php echo wp_json_encode($config); ?>;
+            var busy = false;
+            var failures = 0;
+            var timer = null;
+            function schedule(ms) {
+                window.clearTimeout(timer);
+                timer = window.setTimeout(tick, ms);
+            }
+            function tick() {
+                if (busy) return;
+                busy = true;
+                var body = new FormData();
+                body.set('action', 'tr_ai_wire_reel_tick');
+                body.set('nonce', cfg.nonce);
+                fetch(cfg.ajaxUrl, {method: 'POST', body: body, credentials: 'same-origin'})
+                    .then(function (res) { return res.json(); })
+                    .then(function (payload) {
+                        busy = false;
+                        if (!payload || !payload.success) {
+                            failures++;
+                            schedule(Math.min(30000, 6000 * failures));
+                            return;
+                        }
+                        failures = 0;
+                        var panels = payload.data.panels || {};
+                        Object.keys(panels).forEach(function (rowId) {
+                            var holder = document.querySelector('.tr-ai-wire-reel-build[data-row="' + rowId + '"] .tr-ai-wire-reel-build-body');
+                            if (holder) holder.innerHTML = panels[rowId];
+                        });
+                        if (!payload.data.active) {
+                            window.location.reload();
+                            return;
+                        }
+                        schedule(payload.data.ran ? 4000 : 8000);
+                    })
+                    .catch(function () {
+                        busy = false;
+                        failures++;
+                        schedule(Math.min(30000, 6000 * failures));
+                    });
+            }
+            document.addEventListener('click', function (event) {
+                var button = event.target && event.target.closest ? event.target.closest('.tr-ai-wire-reel-check') : null;
+                if (!button) return;
+                event.preventDefault();
+                button.disabled = true;
+                button.textContent = 'Checking…';
+                schedule(0);
+            });
+            schedule(1500);
+        }());
+        </script>
+        <?php
     }
 
     private function render_social_reel_post_form($row) {
@@ -5018,16 +5352,9 @@ trait TechnoRapper_AI_Wire_Social {
                 }
                 return;
             }
-            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="tr-ai-wire-reel-post" style="margin-top:8px;">';
-            echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
-            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
-            wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
-            echo '<input type="hidden" name="confirmed_not_published" value="1">';
-            echo '<input type="hidden" name="regenerate_image" value="1">';
-            echo '<p class="description">No video file is on this row yet. This rebuilds the Reel. Download video and Post appear after it finishes.</p>';
-            echo '<button class="button button-primary">Retry building this Reel</button>';
-            echo '</form>';
-            $this->render_social_reel_upload_form($row);
+            if (!in_array($platform, array('instagram', 'youtube'), true)) {
+                echo '<p class="description">Waiting for the Reel on Instagram or YouTube to finish building.</p>';
+            }
             return;
         }
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
@@ -5114,7 +5441,7 @@ trait TechnoRapper_AI_Wire_Social {
             return $error;
         }
         if (stripos($error, 'need ffmpeg') !== false || stripos($error, 'has no ffmpeg') !== false) {
-            return 'This WordPress host has no ffmpeg, so the last attempt stopped before making a video. Click Retry building this Reel. Fal will generate the MP4. Download video and Post to Instagram appear on this row when that file is ready.';
+            return 'This WordPress host has no ffmpeg, so the video is assembled at Fal instead. Click Resume building this Reel. Download video and Post to Instagram appear on this row when the MP4 is ready.';
         }
         if ($this->instagram_is_missing_object_error($error)) {
             $ig_id = '';
@@ -5178,7 +5505,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $this->render_social_reel_preview_video($row, $post);
         echo '</div><div class="tr-ai-wire-social-copy">';
+        $building = $this->social_reel_panel_applies($row, $post);
         $this->render_social_reel_post_form($row);
+        $this->render_social_reel_build_panel($row, $post);
         $this->render_social_reel_downloads($row, $post);
         if (!empty($copy['on_image_headline'])) {
             echo '<p class="tr-ai-wire-social-headline"><strong>' . esc_html($copy['on_image_headline']) . '</strong></p>';
@@ -5208,9 +5537,10 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if ($this->social_row_holds_reel_for_review($row)) {
             $status_copy = 'Held for review. Watch the video, tick the box, then click Post. It is not live yet.';
-            if ($post instanceof WP_Post && $this->social_reel_preview_id($post->ID) < 1 && ($this->social_reel_kit_id($post->ID) > 0 || $this->social_motion_id($post->ID) > 0)) {
-                $status_copy = 'Held for review. This host has no ffmpeg. Download the video, finish the MP4 on your laptop, upload it here, then Post.';
-            }
+        }
+        if ($building) {
+            $status_copy = '';
+            $error = '';
         }
         if ($status_copy !== '') {
             echo '<p class="description">' . esc_html($status_copy) . '</p>';
@@ -5223,7 +5553,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($error !== '') {
             echo '<p class="tr-ai-wire-social-error">' . esc_html($error) . '</p>';
         }
-        if ($status === 'needs_review' || $status === 'published') {
+        if (($status === 'needs_review' || $status === 'published') && !$building) {
             $this->render_social_retry_form($row, $image_id, $status);
         }
         echo '</div></div>';
@@ -5246,6 +5576,7 @@ trait TechnoRapper_AI_Wire_Social {
         <div class="wrap">
             <h1>Social queue</h1>
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. Single Instagram posts still wait 3 hours between each other.'); ?></p></div><?php endif; ?>
+            <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <?php if (isset($_GET['social_ran'])) : ?><div class="notice notice-success is-dismissible"><p><?php echo ((int) $_GET['social_ran'] > 0) ? 'Processed queued social posts. Refresh in a minute if a graphic is still generating.' : 'No queued social post could be processed now. If items are still waiting, check the daily limit, image budget, and WP-Cron.'; ?></p></div><?php endif; ?>
             <?php if (isset($_GET['social_pack'])) : ?><div class="notice notice-info is-dismissible"><p><?php
@@ -5412,5 +5743,6 @@ trait TechnoRapper_AI_Wire_Social {
             </tbody></table>
         </div>
         <?php
+        $this->render_social_reel_watch_script();
     }
 }

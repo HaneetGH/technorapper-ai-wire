@@ -107,6 +107,14 @@ trait TechnoRapper_AI_Wire_Jobs {
         if (is_array($job) && ($job['status'] ?? '') === 'queued' && (time() - (int) ($job['updated_at'] ?? 0)) > 2) {
             $this->spawn_background_job();
         }
+        if (is_array($job) && ($job['status'] ?? '') === 'running' && (time() - (int) ($job['updated_at'] ?? 0)) > 420) {
+            $job['status'] = 'error';
+            $job['percent'] = 100;
+            $job['message'] = 'This background task stopped answering. Saved progress is kept. Reload the page and use Resume or Check now on the row.';
+            $job['effect'] = 'reload';
+            update_option(self::JOB_OPTION, $job, false);
+            delete_option(self::JOB_LOCK_OPTION);
+        }
         wp_send_json_success($this->public_job(is_array($job) ? $job : array()));
     }
 
@@ -176,6 +184,9 @@ trait TechnoRapper_AI_Wire_Jobs {
             }
 
             function applyEffect(job) {
+                if (job.effect === 'reload') {
+                    window.setTimeout(function () { window.location.reload(); }, 1500);
+                }
                 if (job.effect === 'remove-row' && job.item_id) {
                     var gone = document.querySelector('tr[data-item-id="' + job.item_id + '"]');
                     if (gone) gone.remove();
@@ -344,7 +355,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                     set_time_limit(600);
                 }
                 $processed = $this->drain_social_queue(15);
-                $this->finish_background_job('Social queue processed ' . (int) $processed . ' item' . ((int) $processed === 1 ? '' : 's') . '.', 'done');
+                $this->finish_background_job('Social queue processed ' . (int) $processed . ' item' . ((int) $processed === 1 ? '' : 's') . '.', 'done', array('effect' => 'reload'));
             } elseif ($job['kind'] === 'social_pack') {
                 if (function_exists('set_time_limit')) {
                     set_time_limit(600);
@@ -355,26 +366,28 @@ trait TechnoRapper_AI_Wire_Jobs {
                 if (is_wp_error($queued)) {
                     $this->finish_background_job($queued->get_error_message(), 'error');
                 } else {
-                    $processed = 0;
-                    $max = 8;
-                    for ($i = 0; $i < $max; $i++) {
-                        $this->note_background_progress(30 + (int) (60 * (($i + 1) / $max)), $kind === 'reel' ? 'Building the Reel for review' : ('Publishing the ' . $kind));
-                        $before = $this->social_queued_count();
-                        if ($before < 1) {
+                    if ($kind === 'reel') {
+                        $this->note_background_progress(55, 'Starting the Reel build');
+                        $this->process_social_queue();
+                        $this->finish_background_job($this->social_reel_job_message(), 'done', array('effect' => 'reload'));
+                    } else {
+                        $processed = 0;
+                        $max = 8;
+                        for ($i = 0; $i < $max; $i++) {
+                            $this->note_background_progress(30 + (int) (60 * (($i + 1) / $max)), 'Publishing the ' . $kind);
+                            $before = $this->social_queued_count();
+                            if ($before < 1) {
+                                break;
+                            }
+                            $this->process_social_queue();
+                            $after = $this->social_queued_count();
+                            if ($after < $before) {
+                                $processed++;
+                                continue;
+                            }
                             break;
                         }
-                        $this->process_social_queue();
-                        $after = $this->social_queued_count();
-                        if ($after < $before) {
-                            $processed++;
-                            continue;
-                        }
-                        break;
-                    }
-                    if ($kind === 'reel') {
-                        $this->finish_background_job('Built a spoken Reel for review. Watch it on Social queue, then click Post. It is not live yet.', 'done');
-                    } else {
-                        $this->finish_background_job('Queued a ' . (int) $queued . '-article ' . $kind . '. Processed ' . (int) $processed . ' social post' . ((int) $processed === 1 ? '' : 's') . '.', 'done');
+                        $this->finish_background_job('Queued a ' . (int) $queued . '-article ' . $kind . '. Processed ' . (int) $processed . ' social post' . ((int) $processed === 1 ? '' : 's') . '.', 'done', array('effect' => 'reload'));
                     }
                 }
             } elseif ($job['kind'] === 'social_retry') {
@@ -386,6 +399,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                     $processed = $this->drain_social_queue(8);
                     $this->finish_background_job('Social retry sent ' . (int) $processed . ' item' . ((int) $processed === 1 ? '' : 's') . '.', 'done', array(
                         'item_id' => (int) $job['item_id'],
+                        'effect' => 'reload',
                     ));
                 }
             } elseif ($job['kind'] === 'repair') {

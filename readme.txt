@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.73
+Stable tag: 0.2.74
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,13 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.74 =
+* Reel builds no longer get stuck on "processing". Every Fal job is saved by request id, so Resume never pays twice. Each step (voiceover, talking host, B-roll, assembly) is checked in short rounds and the row shows live progress with Check now and Resume building this Reel.
+* A worker that dies mid-build is detected after four minutes and resumed automatically. Flaky Fal status checks are retried and only reported after repeated failures.
+* The voiceover is recorded once per script and reused. Durations are read from the MP3/MP4 files, so this works without ffprobe.
+* Without ffmpeg on the host, the presenter plays unbroken and B-roll cutaways are skipped to keep lips in sync. If Fal refuses the end card, the Reel is rebuilt without it.
+* Download video and Post only appear for a real finished Reel (never a silent clip). Saved pieces stay downloadable, and you can still upload a finished MP4.
 
 = 0.2.73 =
 * Fal already billed Kling Avatar, then the queue stuck on “still generating” because status was polled on the full model path (HTTP 405). Poll now uses fal-ai/kling-video/requests/{id}. Retry building this Reel downloads that completed talking-host clip.
@@ -150,6 +157,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.74 =
+Open Social queue and click Resume building this Reel on a stuck row. Finished Fal steps are kept and not billed again. Leave the page open while it builds.
 
 = 0.2.73 =
 Retry building this Reel picks up a completed Fal Kling Avatar job that the queue could not download.

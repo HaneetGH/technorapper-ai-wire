@@ -437,6 +437,7 @@ trait TechnoRapper_AI_Wire_Social_YouTube {
 
     private function youtube_poll_sleep() {
         $seconds = (int) apply_filters('tr_ai_wire_youtube_poll_seconds', 2);
+        $this->social_heartbeat();
         if ($seconds > 0) {
             sleep($seconds);
         }
