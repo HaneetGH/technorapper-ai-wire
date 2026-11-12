@@ -356,7 +356,38 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p><label for="tr-social-reel-weekly">Reel posts per week</label><br><input id="tr-social-reel-weekly" type="number" min="0" max="14" name="<?php echo esc_attr($option); ?>[social_reel_weekly_limit]" value="<?php echo esc_attr((int) ($s['social_reel_weekly_limit'] ?? 0)); ?>"><span class="description">0 means no weekly cap. Use 2 for a 1–2 Reels/week desk.</span></p>
                     <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label><br><input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"><span class="description">Raise this before Fast, Kling, or a talking host. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
                     <p><label for="tr-social-reel-target">Spoken length</label><br><select id="tr-social-reel-target" name="<?php echo esc_attr($option); ?>[social_reel_target_seconds]"><?php foreach (array(15 => '15 seconds', 18 => '18 seconds (default)', 30 => '30 seconds', 45 => '45 seconds') as $target_n => $target_label) : ?><option value="<?php echo esc_attr((string) $target_n); ?>" <?php selected((int) ($s['social_reel_target_seconds'] ?? 18), $target_n); ?>><?php echo esc_html($target_label); ?></option><?php endforeach; ?></select></p>
-                    <p><label for="tr-social-reel-voice">Voice</label><br><select id="tr-social-reel-voice" name="<?php echo esc_attr($option); ?>[social_reel_tts_voice]"><?php foreach ($this->social_reel_tts_voices() as $voice_id => $voice_label) : ?><option value="<?php echo esc_attr($voice_id); ?>" <?php selected((string) ($s['social_reel_tts_voice'] ?? 'cedar'), $voice_id); ?>><?php echo esc_html($voice_label); ?></option><?php endforeach; ?></select></p>
+                    </div>
+                    <?php
+                    $current_voice = (string) ($s['social_reel_tts_voice'] ?? 'cedar');
+                    $voices_by_gender = array();
+                    foreach ($this->social_reel_tts_voices() as $voice_id => $voice_spec) {
+                        $gender = (string) ($voice_spec['gender'] ?? 'neutral');
+                        $voices_by_gender[$gender][$voice_id] = $voice_spec;
+                    }
+                    ?>
+                    <div id="tr-social-reel-voice">
+                    <p><strong>Voice</strong></p>
+                    <p class="description">Choose a male, female, or neutral Mini TTS voice for the spoken track (~$0.004 on the image budget). Default is Cedar (male news desk).</p>
+                    <?php foreach ($this->social_reel_tts_voice_groups() as $gender => $group_label) :
+                        if (empty($voices_by_gender[$gender])) {
+                            continue;
+                        }
+                        ?>
+                    <div class="tr-ai-wire-voice-group">
+                    <h4><?php echo esc_html($group_label); ?></h4>
+                    <div class="tr-ai-wire-choice tr-ai-wire-choice-voices">
+                        <?php foreach ($voices_by_gender[$gender] as $voice_id => $voice_spec) :
+                            $voice_selected = ($current_voice === $voice_id);
+                            ?>
+                        <label class="tr-ai-wire-choice-card<?php echo $voice_selected ? ' is-selected' : ''; ?>">
+                            <input id="tr-social-reel-voice-<?php echo esc_attr($voice_id); ?>" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_tts_voice]" value="<?php echo esc_attr($voice_id); ?>" <?php checked($current_voice, $voice_id); ?>>
+                            <strong><?php echo esc_html((string) $voice_spec['label']); ?></strong>
+                            <span class="description"><?php echo esc_html((string) $voice_spec['short']); ?><?php echo ($voice_id === 'cedar') ? ' · default' : ''; ?></span>
+                        </label>
+                        <?php endforeach; ?>
+                    </div>
+                    </div>
+                    <?php endforeach; ?>
                     </div>
                     <h3>How the video is cut</h3>
                     <p class="description">Every shot stays in motion: talking host, B-roll cutaways, captions on the video. No still news cards. Story edit is the talking-tech cut (host on camera, then product/demo B-roll).</p>

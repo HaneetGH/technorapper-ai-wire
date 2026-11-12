@@ -136,6 +136,16 @@
     margin: 8px 0 0;
 }
 
+.tr-ai-wire-voice-group h4 {
+    margin: 12px 0 0;
+    font-size: 13px;
+}
+
+.tr-ai-wire-choice-voices {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    margin-top: 8px;
+}
+
 .tr-ai-wire-avatar {
     display: grid;
     grid-template-columns: 160px minmax(0, 1fr);

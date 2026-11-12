@@ -205,14 +205,109 @@ trait TechnoRapper_AI_Wire_Social_Reel {
 
     private function social_reel_tts_voices() {
         return array(
-            'cedar' => 'Cedar (default news desk)',
-            'marin' => 'Marin',
-            'sage' => 'Sage',
-            'ash' => 'Ash',
-            'coral' => 'Coral',
-            'verse' => 'Verse',
-            'nova' => 'Nova',
+            'cedar' => array(
+                'label' => 'Cedar',
+                'gender' => 'male',
+                'short' => 'Default news desk',
+            ),
+            'ash' => array(
+                'label' => 'Ash',
+                'gender' => 'male',
+                'short' => 'Clear and lower',
+            ),
+            'echo' => array(
+                'label' => 'Echo',
+                'gender' => 'male',
+                'short' => 'Steady, mid',
+            ),
+            'onyx' => array(
+                'label' => 'Onyx',
+                'gender' => 'male',
+                'short' => 'Deeper, grounded',
+            ),
+            'verse' => array(
+                'label' => 'Verse',
+                'gender' => 'male',
+                'short' => 'Warm presenter',
+            ),
+            'fable' => array(
+                'label' => 'Fable',
+                'gender' => 'male',
+                'short' => 'British, story-like',
+            ),
+            'ballad' => array(
+                'label' => 'Ballad',
+                'gender' => 'male',
+                'short' => 'Warm, expressive',
+            ),
+            'marin' => array(
+                'label' => 'Marin',
+                'gender' => 'female',
+                'short' => 'Bright presenter',
+            ),
+            'sage' => array(
+                'label' => 'Sage',
+                'gender' => 'female',
+                'short' => 'Calm, measured',
+            ),
+            'coral' => array(
+                'label' => 'Coral',
+                'gender' => 'female',
+                'short' => 'Clear, conversational',
+            ),
+            'nova' => array(
+                'label' => 'Nova',
+                'gender' => 'female',
+                'short' => 'Crisp, upbeat',
+            ),
+            'shimmer' => array(
+                'label' => 'Shimmer',
+                'gender' => 'female',
+                'short' => 'Bright, energetic',
+            ),
+            'alloy' => array(
+                'label' => 'Alloy',
+                'gender' => 'neutral',
+                'short' => 'Androgynous news',
+            ),
         );
+    }
+
+    private function social_reel_tts_voice_groups() {
+        return array(
+            'male' => 'Male voices',
+            'female' => 'Female voices',
+            'neutral' => 'Neutral voices',
+        );
+    }
+
+    private function social_reel_tts_voice_spec($voice) {
+        $voices = $this->social_reel_tts_voices();
+        $voice = sanitize_key((string) $voice);
+        if (!isset($voices[$voice]) || !is_array($voices[$voice])) {
+            $voice = self::SOCIAL_TTS_VOICE;
+        }
+        return $voices[$voice];
+    }
+
+    private function social_reel_tts_voice_label($voice) {
+        $spec = $this->social_reel_tts_voice_spec($voice);
+        $gender = (string) ($spec['gender'] ?? 'neutral');
+        $label = (string) ($spec['label'] ?? $voice);
+        return $label . ' (' . $gender . ')';
+    }
+
+    private function social_reel_tts_instructions($settings = null) {
+        $spec = $this->social_reel_tts_voice_spec($this->social_reel_tts_voice($settings));
+        $gender = (string) ($spec['gender'] ?? 'neutral');
+        if ($gender === 'female') {
+            $cast = 'Female news presenter.';
+        } elseif ($gender === 'male') {
+            $cast = 'Male news presenter.';
+        } else {
+            $cast = 'News presenter.';
+        }
+        return $cast . ' Clear, calm, slightly urgent. No theatrical announcer. Speak so a listener can repeat the takeaway.';
     }
 
     private function social_reel_recipe($settings = null) {
@@ -306,7 +401,6 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $recipe = $this->social_reel_recipe($settings);
         $models = $this->social_reel_video_models();
         $model = $this->social_reel_video_model($settings);
-        $voices = $this->social_reel_tts_voices();
         $voice = $this->social_reel_tts_voice($settings);
         $parts = array();
         if ($recipe === 'story') {
@@ -331,7 +425,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $parts[] = 'B-roll spoken Reel';
         }
         $parts[] = (string) ($models[$model]['label'] ?? $model);
-        $parts[] = (string) $this->social_reel_target_seconds($settings) . 's · ' . (string) ($voices[$voice] ?? $voice);
+        $parts[] = (string) $this->social_reel_target_seconds($settings) . 's · ' . $this->social_reel_tts_voice_label($voice);
         return implode(' · ', $parts);
     }
 
@@ -1798,7 +1892,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 'model' => self::SOCIAL_TTS_MODEL,
                 'voice' => $this->social_reel_tts_voice($settings),
                 'input' => $script,
-                'instructions' => 'News desk. Clear, calm, slightly urgent. No theatrical announcer. Speak so a listener can repeat the takeaway.',
+                'instructions' => $this->social_reel_tts_instructions($settings),
                 'response_format' => 'mp3',
             )),
         ));

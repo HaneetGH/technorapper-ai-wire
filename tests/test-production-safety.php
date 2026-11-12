@@ -5714,6 +5714,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(45, (int) $story['social_reel_target_seconds']);
         $this->assertSame(2, (int) $story['social_reel_weekly_limit']);
         $this->assertSame('marin', $story['social_reel_tts_voice']);
+        $this->assertStringContainsString('Marin (female)', $this->invoke_private('social_reel_recipe_summary', array($story)));
+        $this->assertStringContainsString('Female news presenter', $this->invoke_private('social_reel_tts_instructions', array($story)));
+        $this->assertStringContainsString('Male news presenter', $this->invoke_private('social_reel_tts_instructions', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame('shimmer', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'shimmer'))['social_reel_tts_voice']);
+        $this->assertSame('onyx', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'onyx'))['social_reel_tts_voice']);
+        $this->assertSame('alloy', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'alloy'))['social_reel_tts_voice']);
+        $this->assertSame('cedar', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'not-a-voice'))['social_reel_tts_voice']);
         $this->assertSame(1, (int) $story['social_reel_close_camera']);
         $this->assertSame(0, (int) $story['social_reel_medium_camera']);
         $this->assertSame(3, (int) $story['social_reel_fact_slides']);
@@ -6099,6 +6106,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Generate a presenter face', $html);
         $this->assertStringContainsString('Talking host (avatar face)', $html);
         $this->assertStringContainsString('id="tr-reel-recipe-story"', $html);
+        $this->assertStringContainsString('Male voices', $html);
+        $this->assertStringContainsString('Female voices', $html);
+        $this->assertStringContainsString('Neutral voices', $html);
+        $this->assertStringContainsString('id="tr-social-reel-voice"', $html);
+        $this->assertStringContainsString('id="tr-social-reel-voice-cedar"', $html);
+        $this->assertStringContainsString('id="tr-social-reel-voice-marin"', $html);
+        $this->assertTrue((bool) preg_match('/id="tr-social-reel-voice-cedar"[^>]*\bchecked\b/', $html));
         $this->assertStringContainsString('tr-ai-wire-choice-card is-selected', $html);
         $this->assertSame(10, has_action('admin_enqueue_scripts', array($this->plugin, 'enqueue_admin_assets')));
         $admin_php = file_get_contents(dirname(__DIR__) . '/includes/class-admin.php');
