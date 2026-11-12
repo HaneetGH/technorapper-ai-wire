@@ -5938,7 +5938,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Female tech creator', $this->invoke_private('social_reel_tts_instructions', array($story)));
         $this->assertStringContainsString('Male tech creator', $this->invoke_private('social_reel_tts_instructions', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertStringContainsString('never a flat robot newsreader', $this->invoke_private('social_reel_tts_instructions', array($story)));
-        $this->assertStringContainsString('scroll-stopping Reel', $this->invoke_private('social_reel_script_brief', array($story)));
+        $this->assertStringContainsString('mini lesson', $this->invoke_private('social_reel_script_brief', array($story)));
         $this->assertSame('shimmer', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'shimmer'))['social_reel_tts_voice']);
         $this->assertSame('onyx', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'onyx'))['social_reel_tts_voice']);
         $this->assertSame('alloy', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'alloy'))['social_reel_tts_voice']);
@@ -6155,7 +6155,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, (int) $effective['social_reel_vary_host_scene']);
         $this->assertSame(0.0, $this->invoke_private('social_reel_host_estimate_usd', array($cheap)));
         $this->assertStringContainsString('DEV CHEAP TEST', $this->invoke_private('social_reel_recipe_summary', array($cheap)));
-        $this->assertStringContainsString('No-face hook story', $this->invoke_private('social_reel_recipe_summary', array($cheap)));
+        $this->assertStringContainsString('No-face teach Reel', $this->invoke_private('social_reel_recipe_summary', array($cheap)));
         $this->assertLessThan(
             $this->invoke_private('social_reel_total_estimate_usd', array($settings)),
             $this->invoke_private('social_reel_total_estimate_usd', array($cheap))
@@ -6172,7 +6172,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, (int) $defaults['social_reel_include_host']);
         $this->assertSame(1, (int) $defaults['social_reel_include_slides']);
         $this->assertStringContainsString('No talking face', $this->invoke_private('social_reel_script_brief', array($defaults)));
-        $this->assertStringContainsString('No-face hook story', $this->invoke_private('social_reel_recipe_summary', array($defaults)));
+        $this->assertStringContainsString('mini lesson', $this->invoke_private('social_reel_script_brief', array($defaults)));
+        $this->assertStringContainsString('No-face teach Reel', $this->invoke_private('social_reel_recipe_summary', array($defaults)));
 
         $long = implode(' ', array_fill(0, 200, 'word'));
         $trimmed = $this->invoke_private('social_reel_trim_script', array($long, $defaults));
@@ -6189,6 +6190,44 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $short_loops = $this->invoke_private('social_fal_loop_keyframes', array('https://example.org/m.mp4', 4.0, 15.0, 0));
         $this->assertSame(4, count($short_loops));
         $this->assertSame(4000, (int) $short_loops[0]['duration']);
+    }
+
+    public function test_overlong_finished_reel_is_rejected_even_when_over_ninety_seconds() {
+        $tmp = sys_get_temp_dir() . '/tr-overlong-' . wp_generate_uuid4() . '.mp4';
+        // mvhd duration 7861s (the class of broken still+voice mux the player showed as 2:11:01).
+        $bytes = $this->fake_mp4_bytes(7861);
+        file_put_contents($tmp, $bytes);
+        $this->assertEqualsWithDelta(7861.0, $this->invoke_private('social_reel_output_seconds', array($tmp)), 1.0);
+        // The short-clip helper must NOT silently treat this as 0.
+        $this->assertSame(0.0, $this->invoke_private('social_video_duration', array($tmp, 0.0)));
+        @unlink($tmp);
+    }
+
+    public function test_purge_social_reel_assets_deletes_old_media_and_can_force_new_script() {
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Purge old reel'));
+        $motion = $this->create_reel_asset('motion.mp4', 'video/mp4', str_repeat('v', 2048));
+        $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', str_repeat('a', 512));
+        $reel = $this->create_reel_asset('reel.mp4', 'video/mp4', str_repeat('r', 2048));
+        update_post_meta($post_id, '_tr_ai_wire_social_motion_id', $motion['id']);
+        update_post_meta($post_id, '_tr_ai_wire_social_voice_id', $voice['id']);
+        update_post_meta($post_id, '_tr_ai_wire_social_reel_id', $reel['id']);
+        update_post_meta($post_id, '_tr_ai_wire_reel_lesson', wp_json_encode(array('key' => 'old', 'reel_script' => 'old script')));
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'x' => 'x',
+            'instagram' => 'ig',
+            'reel_script' => 'Old spoken script that should be rewritten.',
+        )));
+        $deleted = $this->invoke_private('purge_social_reel_assets', array($post_id, array(
+            'keep_broll' => true,
+            'regen_script' => true,
+        )));
+        $this->assertGreaterThanOrEqual(3, (int) $deleted);
+        $this->assertNull(get_post($motion['id']));
+        $this->assertNull(get_post($voice['id']));
+        $this->assertNull(get_post($reel['id']));
+        $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_copy', true));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_reel_regen_script', true));
     }
 
     public function test_host_scene_keeps_the_same_face_but_changes_place_per_reel() {
@@ -6545,7 +6584,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->costs_page();
         $costs = ob_get_clean();
         $this->assertStringContainsString('Current recipe', $costs);
-        $this->assertStringContainsString('No-face hook story', $costs);
+        $this->assertStringContainsString('No-face teach Reel', $costs);
 
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
             'social_reel_daily_limit' => 2,
@@ -7239,6 +7278,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Resume building this Reel', $html);
         $this->assertStringContainsString('tr_ai_wire_resume_reel', $html);
         $this->assertStringContainsString('Start over with a new Reel', $html);
+        $this->assertStringContainsString('Generate script again', $html);
+        $this->assertStringContainsString('tr_ai_wire_regen_reel_script', $html);
         $this->assertStringContainsString('Saved pieces', $html);
         $this->assertStringContainsString('voice MP3', $html);
         $this->assertStringContainsString('Upload Reel MP4', $html);

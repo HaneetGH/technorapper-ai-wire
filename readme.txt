@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.78
+Stable tag: 0.2.81
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,18 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.81 =
+* Finished-Reel duration check no longer ignores multi-hour muxes (the short-clip helper capped at 90s and could treat a 2h freeze as OK). Overlong voice MP3s are discarded instead of reused.
+
+= 0.2.80 =
+* Starting a new Reel (or Generate script again) deletes older Reel media for that article so a bad MP4 cannot linger.
+* Social queue: Generate script again rewrites the teach voiceover and rebuilds video from a fresh script.
+
+= 0.2.79 =
+* No-face teach Reels: research pass writes a learnable script, Veo motion cuts with animated lesson cards (JPEG stills are converted to short MP4s before Fal mux).
+* Fixes multi-hour frozen Reels caused by putting still images on Fal's video track. Overlong mux output is rejected.
+* Optional Independent web search also feeds the Reel research/teach pass.
 
 = 0.2.78 =
 * Default Reel is a no-face hook story: pattern-interrupt on-screen hook, captioned news-detail beats and B-roll, then sting. Talking host stays an optional paid upsell.
@@ -172,6 +184,15 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.81 =
+Update, then Start over or Generate script again on any old multi-hour Reel. Resume alone keeps the broken file.
+
+= 0.2.80 =
+On Social queue use Generate script again or Start over — both delete older Reel files for that row before rebuilding.
+
+= 0.2.79 =
+Update, then Start over on any Reel that shows a multi-hour still+voice file. Resume alone keeps the broken MP4. Enable Independent web search if you want the teach script researched.
 
 = 0.2.78 =
 Turn off Talking host for the cheap no-face hook story. Use Dev cheap test, then Start over on an old Reel so assemble uses the new cut (Resume alone keeps the old MP4).

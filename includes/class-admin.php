@@ -399,12 +399,12 @@ trait TechnoRapper_AI_Wire_Admin {
                     <?php endforeach; ?>
                     </div>
                     <h3>How the video is cut</h3>
-                    <p class="description">Recommended: no-face story — a pattern-interrupt hook on screen, then news-detail B-roll and captioned photos while the voice keeps going, then the brand sting. Talking face is optional and expensive.</p>
+                    <p class="description">Recommended: no-face teach Reel — research a mini lesson, speak it clearly, cut moving B-roll with animated on-screen lesson cards (not a still + voice track). Optional web search uses the same Independent web search setting. Talking face is optional and expensive.</p>
                     <div class="tr-ai-wire-choice">
                         <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'story') === 'story') ? ' is-selected' : ''; ?>">
                             <input id="tr-reel-recipe-story" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="story" <?php checked((string) ($s['social_reel_recipe'] ?? 'story'), 'story'); ?>>
-                            <strong>No-face hook story</strong>
-                            <span class="description">Scroll-stop cut: big hook line, motion + captioned news beats, sting. No avatar required.</span>
+                            <strong>No-face teach Reel</strong>
+                            <span class="description">Learn-it cut: researched script, Veo motion, animated lesson cards, sting. No avatar required.</span>
                         </label>
                         <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'story') === 'broll') ? ' is-selected' : ''; ?>">
                             <input id="tr-reel-recipe-broll" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="broll" <?php checked((string) ($s['social_reel_recipe'] ?? 'story'), 'broll'); ?>>

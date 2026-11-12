@@ -1760,9 +1760,14 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_copy($post, $settings = null) {
         $settings = is_array($settings) ? $settings : $this->settings();
+        $force_script = (string) get_post_meta($post->ID, '_tr_ai_wire_reel_regen_script', true) === '1';
+        if ($force_script) {
+            delete_post_meta($post->ID, '_tr_ai_wire_social_copy');
+            delete_post_meta($post->ID, '_tr_ai_wire_reel_lesson');
+        }
         $cached = get_post_meta($post->ID, '_tr_ai_wire_social_copy', true);
         $decoded = null;
-        if (is_string($cached) && $cached !== '') {
+        if (is_string($cached) && $cached !== '' && !$force_script) {
             $maybe = json_decode($cached, true);
             if (is_array($maybe) && !empty($maybe['x']) && !empty($maybe['instagram'])) {
                 $decoded = $maybe;
@@ -1779,6 +1784,7 @@ trait TechnoRapper_AI_Wire_Social {
                 return $guard;
             }
             update_post_meta($post->ID, '_tr_ai_wire_social_copy', wp_json_encode($copy));
+            delete_post_meta($post->ID, '_tr_ai_wire_reel_regen_script');
             return $copy;
         }
         if (is_wp_error($generated) && $generated->get_error_code() === 'tr_ai_wire_policy') {
@@ -1793,6 +1799,7 @@ trait TechnoRapper_AI_Wire_Social {
             return $guard;
         }
         update_post_meta($post->ID, '_tr_ai_wire_social_copy', wp_json_encode($copy));
+        delete_post_meta($post->ID, '_tr_ai_wire_reel_regen_script');
         return $copy;
     }
 
@@ -1883,11 +1890,11 @@ trait TechnoRapper_AI_Wire_Social {
             . (!empty($comic) ? 'Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. ' : '')
             . 'Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
-            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings) . ' THIS article only. Make someone stop scrolling. Not a robot reading a press release. '
-            . 'Three beats only: (1) pattern-interrupt hook in the first 1–2 seconds that names the change; (2) the one fact or mechanism from key_takeaways (or the lede if none) in short punchy sentences; (3) what that changes for the viewer\'s phone, game, job, or money. '
+            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings) . ' THIS article only. Teach the viewer something they can repeat. Not a robot reading a press release. '
+            . 'Beats: (1) pattern-interrupt hook naming the change; (2) what this is in plain words; (3) why it matters / the mechanism from key_takeaways; (4) one concrete example for their phone, game, job, or money; (5) the takeaway. '
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
             . 'Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
-            . 'reel_captions: 3–5 short on-screen lines that match spoken hooks and stakes, max 5 words each. Burn onto moving B-roll and detail shots — big, sparse, stop-thumb text. '
+            . 'reel_captions: 4–5 short on-screen lesson lines (max 6 words) matching those beats — big sparse text for animated cards and B-roll. '
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. '
             . (!empty($comic) ? 'A dry wink is fine if the named change is still obvious. ' : '')
             . 'This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
@@ -3031,6 +3038,8 @@ trait TechnoRapper_AI_Wire_Social {
             return new WP_Error('tr_ai_wire_social_reel', 'A Reel needs one published article that has not already gone out as video. There is none ready right now.');
         }
         $post_id = (int) $ids[0];
+        // New generation must not reuse a broken older MP4 / voice / lesson cards.
+        $this->purge_social_reel_assets($post_id, array('keep_broll' => false, 'regen_script' => false));
         $batch = array();
         foreach ($this->social_batch_ids() as $id) {
             if ((int) $id !== $post_id) {
@@ -3449,34 +3458,129 @@ trait TechnoRapper_AI_Wire_Social {
         return $brief;
     }
 
-    private function forget_cached_social_image($post_id) {
+    private function social_reel_asset_attachment_ids($post_id) {
+        $post_id = (int) $post_id;
+        $ids = array();
+        foreach (array(
+            '_tr_ai_wire_social_reel_id',
+            '_tr_ai_wire_social_motion_id',
+            '_tr_ai_wire_social_host_id',
+            '_tr_ai_wire_social_voice_id',
+            '_tr_ai_wire_social_endcard_id',
+            '_tr_ai_wire_social_reel_kit_id',
+            '_tr_ai_wire_social_host_scene_id',
+            '_tr_ai_wire_social_broll_id',
+        ) as $key) {
+            $id = (int) get_post_meta($post_id, $key, true);
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+        for ($i = 0; $i < 8; $i++) {
+            foreach (array('_tr_ai_wire_reel_detail_', '_tr_ai_wire_reel_card_vid_') as $prefix) {
+                $id = (int) get_post_meta($post_id, $prefix . (string) $i, true);
+                if ($id > 0) {
+                    $ids[] = $id;
+                }
+            }
+        }
+        $end_card_vid = (int) get_post_meta($post_id, '_tr_ai_wire_reel_card_vid_90', true);
+        if ($end_card_vid > 0) {
+            $ids[] = $end_card_vid;
+        }
+        return array_values(array_unique(array_map('intval', $ids)));
+    }
+
+    /**
+     * Delete every saved Reel media file for a post (finished MP4, motion, host,
+     * voice, lesson cards, kit) and clear Fal/lesson state so a new build cannot
+     * reuse a broken older file.
+     */
+    private function purge_social_reel_assets($post_id, $args = array()) {
         $post_id = (int) $post_id;
         if ($post_id < 1) {
             return 0;
         }
-        delete_post_meta($post_id, '_tr_ai_wire_social_image_id');
-        delete_post_meta($post_id, '_tr_ai_wire_social_slide_ids');
-        delete_post_meta($post_id, '_tr_ai_wire_social_broll_id');
-        delete_post_meta($post_id, '_tr_ai_wire_social_motion_id');
-        delete_post_meta($post_id, '_tr_ai_wire_fal_request');
-        delete_post_meta($post_id, '_tr_ai_wire_social_reel_id');
+        $args = is_array($args) ? $args : array();
+        $keep_broll = !empty($args['keep_broll']);
+        $regen_script = !empty($args['regen_script']);
+        $deleted = 0;
+        $keep = array();
+        if ($keep_broll) {
+            $broll = (int) get_post_meta($post_id, '_tr_ai_wire_social_broll_id', true);
+            if ($broll > 0) {
+                $keep[$broll] = true;
+            }
+        }
+        foreach ($this->social_reel_asset_attachment_ids($post_id) as $attachment_id) {
+            if (!empty($keep[$attachment_id])) {
+                continue;
+            }
+            // These IDs came from Reel meta on this post — delete the files so a new
+            // build cannot keep serving a broken older MP4 from the Media Library.
+            if (get_post($attachment_id)) {
+                wp_delete_attachment($attachment_id, true);
+                $deleted++;
+            }
+        }
         foreach (array(
+            '_tr_ai_wire_social_reel_id',
+            '_tr_ai_wire_social_motion_id',
             '_tr_ai_wire_social_host_id',
             '_tr_ai_wire_social_voice_id',
             '_tr_ai_wire_social_endcard_id',
+            '_tr_ai_wire_social_reel_kit_id',
+            '_tr_ai_wire_social_host_scene_id',
+            '_tr_ai_wire_fal_request',
             '_tr_ai_wire_fal_host_request',
             '_tr_ai_wire_fal_compose_request',
             '_tr_ai_wire_reel_no_sting',
             '_tr_ai_wire_reel_progress',
             '_tr_ai_wire_reel_ledger',
             '_tr_ai_wire_reel_auto_retries',
-        ) as $reel_meta) {
-            delete_post_meta($post_id, $reel_meta);
+            '_tr_ai_wire_reel_lesson',
+            '_tr_ai_wire_reel_audio_seconds',
+        ) as $meta) {
+            delete_post_meta($post_id, $meta);
         }
-        for ($detail_i = 0; $detail_i < 6; $detail_i++) {
-            delete_post_meta($post_id, '_tr_ai_wire_reel_detail_' . (string) $detail_i);
+        if (!$keep_broll) {
+            delete_post_meta($post_id, '_tr_ai_wire_social_broll_id');
         }
-        delete_post_meta($post_id, '_tr_ai_wire_social_host_scene_id');
+        for ($i = 0; $i < 8; $i++) {
+            delete_post_meta($post_id, '_tr_ai_wire_reel_detail_' . (string) $i);
+            delete_post_meta($post_id, '_tr_ai_wire_reel_card_vid_' . (string) $i);
+            delete_post_meta($post_id, '_tr_ai_wire_fal_card_' . (string) $i);
+        }
+        delete_post_meta($post_id, '_tr_ai_wire_reel_card_vid_90');
+        delete_post_meta($post_id, '_tr_ai_wire_fal_card_90');
+        if ($regen_script) {
+            delete_post_meta($post_id, '_tr_ai_wire_social_copy');
+            update_post_meta($post_id, '_tr_ai_wire_reel_regen_script', '1');
+        }
+        return $deleted;
+    }
+
+    private function forget_cached_social_image($post_id) {
+        $post_id = (int) $post_id;
+        if ($post_id < 1) {
+            return 0;
+        }
+        $this->purge_social_reel_assets($post_id, array('keep_broll' => false, 'regen_script' => false));
+        $image_id = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_id', true);
+        if ($image_id > 0 && get_post_meta($image_id, '_tr_ai_wire_social_asset', true) === '1') {
+            wp_delete_attachment($image_id, true);
+        }
+        $slide_ids = get_post_meta($post_id, '_tr_ai_wire_social_slide_ids', true);
+        if (is_array($slide_ids)) {
+            foreach ($slide_ids as $slide_id) {
+                $slide_id = (int) $slide_id;
+                if ($slide_id > 0 && get_post_meta($slide_id, '_tr_ai_wire_social_asset', true) === '1') {
+                    wp_delete_attachment($slide_id, true);
+                }
+            }
+        }
+        delete_post_meta($post_id, '_tr_ai_wire_social_image_id');
+        delete_post_meta($post_id, '_tr_ai_wire_social_slide_ids');
         $revision = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true);
         update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision + 1);
         update_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', '1');
@@ -5114,17 +5218,57 @@ trait TechnoRapper_AI_Wire_Social {
         }
         echo '</div>';
         if (!$live) {
-            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;display:inline-block;margin-right:8px;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_regen_reel_script">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+            wp_nonce_field('tr_ai_wire_regen_reel_script_' . $id);
+            echo '<p class="description">Write a fresh teach script, then rebuild voice + video. Older Reel files for this row are deleted.</p>';
+            echo '<button class="button">Generate script again</button>';
+            echo '</form>';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;display:inline-block;">';
             echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
             echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
             wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
             echo '<input type="hidden" name="confirmed_not_published" value="1">';
             echo '<input type="hidden" name="regenerate_image" value="1">';
-            echo '<p class="description">Or throw this attempt away and build a new Reel from scratch. That pays Fal for every step again.</p>';
+            echo '<p class="description">Throw this attempt away and build a new Reel from scratch. Deletes older Reel media and pays Fal for every step again.</p>';
             echo '<button class="button button-secondary">Start over with a new Reel</button>';
             echo '</form>';
             $this->render_social_reel_upload_form($row);
         }
+    }
+
+    public function regenerate_social_reel_script() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to regenerate a Reel script.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_POST['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_regen_reel_script_' . $id);
+        global $wpdb;
+        $row = $id > 0 ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A) : null;
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if (!$row || $post_id < 1 || !$this->social_row_holds_reel_for_review($row)) {
+            wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social'));
+            exit;
+        }
+        $this->purge_social_reel_assets($post_id, array('keep_broll' => true, 'regen_script' => true));
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        $now = current_time('mysql', true);
+        $wpdb->update($this->social_table(), array(
+            'status' => 'queued',
+            'error_text' => null,
+            'updated_at' => $now,
+        ), array('id' => $id));
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->prefix}tr_ai_wire_social SET status = 'queued', error_text = NULL, updated_at = %s WHERE post_id = %d AND status IN ('needs_review', 'processing') AND (error_text IS NULL OR error_text NOT LIKE %s)",
+            $now,
+            $post_id,
+            'Held:%'
+        ));
+        $this->kick_social_queue(2, true);
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&reel_script_regen=1'));
+        exit;
     }
 
     private function social_building_reel_rows() {
@@ -5611,6 +5755,7 @@ trait TechnoRapper_AI_Wire_Social {
             <h1>Social queue</h1>
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. Single Instagram posts still wait 3 hours between each other.'); ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
+            <?php if (!empty($_GET['reel_script_regen'])) : ?><div class="notice notice-info is-dismissible"><p>Generating a new teach script. Older Reel video/voice files for that row were deleted. This page updates itself while it rebuilds.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use no talking face + Veo Lite 4s hooks. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>
             <?php if ($this->social_reel_dev_cheap_on($settings)) : ?><div class="notice notice-warning"><p><strong>Dev cheap test is on.</strong> <?php echo esc_html($this->social_reel_dev_cheap_summary($settings)); ?> Turn it off before real publishing spend.</p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
