@@ -6896,6 +6896,99 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Publish Reel to Instagram', $html);
         $this->assertStringContainsString('I reviewed this Reel and want it live', $html);
         $this->assertStringNotContainsString('Post existing graphic to Instagram', $html);
+        $this->assertStringContainsString('Download Reel MP4', $html);
+    }
+
+    public function test_reel_laptop_kit_is_downloadable_when_ffmpeg_is_missing() {
+        if (!class_exists('ZipArchive')) {
+            $this->markTestSkipped('ZipArchive is required to pack a laptop Reel kit.');
+        }
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Laptop kit',
+        ));
+        $tmp = sys_get_temp_dir() . '/tr-kit-' . wp_generate_uuid4();
+        $this->assertTrue(mkdir($tmp, 0755, true));
+        $motion = $tmp . '/motion.mp4';
+        $voice = $tmp . '/voice.mp3';
+        $end = $tmp . '/end.jpg';
+        file_put_contents($motion, str_repeat('v', 2048));
+        file_put_contents($voice, str_repeat('a', 512));
+        file_put_contents($end, $this->tiny_jpeg_bytes() !== '' ? $this->tiny_jpeg_bytes() : str_repeat('j', 512));
+        $kit = $this->invoke_private('store_social_reel_laptop_kit', array(
+            get_post($post_id),
+            array(
+                'motion.mp4' => $motion,
+                'voice.mp3' => $voice,
+                'end.jpg' => $end,
+            ),
+            18,
+            array('hook' => 'Your next phone chip has a server cousin'),
+        ));
+        $this->assertFalse(is_wp_error($kit), is_wp_error($kit) ? $kit->get_error_message() : '');
+        $this->assertSame((int) $kit, $this->invoke_private('social_reel_kit_id', array($post_id)));
+        $path = get_attached_file((int) $kit);
+        $this->assertFileExists($path);
+        $zip = new ZipArchive();
+        $this->assertTrue($zip->open($path) === true);
+        $this->assertNotFalse($zip->locateName('motion.mp4'));
+        $this->assertNotFalse($zip->locateName('voice.mp3'));
+        $this->assertNotFalse($zip->locateName('make-reel.bat'));
+        $this->assertNotFalse($zip->locateName('make-reel.sh'));
+        $readme = $zip->getFromName('README.txt');
+        $zip->close();
+        $this->assertStringContainsString('gyan.dev/ffmpeg', (string) $readme);
+        foreach ((array) glob($tmp . '/*') as $file) {
+            @unlink($file);
+        }
+        @rmdir($tmp);
+    }
+
+    public function test_social_queue_shows_laptop_reel_downloads_when_video_is_unfinished() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Laptop downloads',
+        ));
+        $motion_upload = wp_upload_bits('technorapper-motion-' . wp_generate_uuid4() . '.mp4', null, str_repeat('v', 2048));
+        $voice_upload = wp_upload_bits('technorapper-voice-' . wp_generate_uuid4() . '.mp3', null, str_repeat('a', 512));
+        if (!empty($motion_upload['error']) || !empty($voice_upload['error'])) {
+            $this->markTestSkipped('Uploads are required to show Reel download buttons.');
+        }
+        $motion_id = wp_insert_attachment(array(
+            'post_mime_type' => 'video/mp4',
+            'post_title' => 'Motion',
+            'post_status' => 'inherit',
+        ), $motion_upload['file'], 0, true);
+        $voice_id = wp_insert_attachment(array(
+            'post_mime_type' => 'audio/mpeg',
+            'post_title' => 'Voice',
+            'post_status' => 'inherit',
+        ), $voice_upload['file'], 0, true);
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_motion_id', (int) $motion_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_voice_id', (int) $voice_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'This WordPress host has no ffmpeg, so the MP4 cannot be finished here.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Download motion video', $html);
+        $this->assertStringContainsString('Download voice MP3', $html);
+        $this->assertStringContainsString('Upload Reel MP4', $html);
+        $this->assertStringContainsString('gyan.dev/ffmpeg', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-preview-video', $html);
     }
 
     public function test_instagram_missing_quota_field_still_publishes() {

@@ -4809,6 +4809,130 @@ trait TechnoRapper_AI_Wire_Social {
         exit;
     }
 
+    public function upload_social_reel() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to upload a Reel.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_POST['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_upload_reel_' . $id);
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $post_id = (int) ($row['post_id'] ?? 0);
+        $post = $post_id > 0 ? get_post($post_id) : null;
+        if (!$row || !$post instanceof WP_Post) {
+            wp_die(esc_html__('That Social queue row is gone.', 'technorapper-ai-wire'));
+        }
+        if (empty($_FILES['reel_mp4']['tmp_name']) || !is_uploaded_file((string) $_FILES['reel_mp4']['tmp_name'])) {
+            wp_die(esc_html__('Choose an MP4 from your laptop first.', 'technorapper-ai-wire'));
+        }
+        $name = strtolower((string) ($_FILES['reel_mp4']['name'] ?? ''));
+        $type = strtolower((string) ($_FILES['reel_mp4']['type'] ?? ''));
+        if (substr($name, -4) !== '.mp4' && strpos($type, 'video/') !== 0) {
+            wp_die(esc_html__('Upload a .mp4 file.', 'technorapper-ai-wire'));
+        }
+        $bytes = file_get_contents((string) $_FILES['reel_mp4']['tmp_name']);
+        if (!is_string($bytes) || strlen($bytes) < 1024) {
+            wp_die(esc_html__('That MP4 is empty.', 'technorapper-ai-wire'));
+        }
+        $copy = json_decode((string) get_post_meta($post_id, '_tr_ai_wire_social_copy', true), true);
+        $copy = is_array($copy) ? $copy : array();
+        $stored = $this->store_social_video($post, $bytes, $copy, (string) ($copy['reel_script'] ?? ''), $this->settings());
+        if (is_wp_error($stored)) {
+            wp_die(esc_html($stored->get_error_message()));
+        }
+        update_post_meta($post_id, '_tr_ai_wire_social_reel_id', (int) $stored);
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        $wpdb->update($this->social_table(), array(
+            'status' => 'needs_review',
+            'error_text' => $this->social_reel_hold_copy($row),
+            'updated_at' => current_time('mysql', true),
+        ), array('id' => $id));
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social'));
+        exit;
+    }
+
+    private function render_social_reel_preview_video($row, $post) {
+        if (!$post instanceof WP_Post || !in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true) || !$this->social_wants_reel(null, $post->ID)) {
+            return;
+        }
+        $reel_id = $this->social_reel_preview_id($post->ID);
+        $motion_id = $reel_id > 0 ? 0 : $this->social_motion_id($post->ID);
+        $video_id = $reel_id > 0 ? $reel_id : $motion_id;
+        $url = $video_id > 0 ? wp_get_attachment_url($video_id) : '';
+        if (!$url) {
+            return;
+        }
+        echo '<video class="tr-ai-wire-social-preview-video" controls playsinline preload="metadata" src="' . esc_url($url) . '"></video>';
+        if ($reel_id < 1 && $motion_id > 0) {
+            echo '<p class="description">Motion clip only. Download the kit and mux voice on your laptop.</p>';
+        }
+    }
+
+    private function render_social_reel_downloads($row, $post) {
+        if (!$post instanceof WP_Post || !in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true) || !$this->social_wants_reel(null, $post->ID)) {
+            return;
+        }
+        $reel_id = $this->social_reel_preview_id($post->ID);
+        $motion_id = $this->social_motion_id($post->ID);
+        $voice_id = $this->social_voice_id($post->ID);
+        $kit_id = $this->social_reel_kit_id($post->ID);
+        $links = array();
+        if ($reel_id > 0) {
+            $url = wp_get_attachment_url($reel_id);
+            if ($url) {
+                $links[] = '<a class="button button-primary" href="' . esc_url($url) . '" download="reel.mp4">Download Reel MP4</a>';
+            }
+        }
+        if ($kit_id > 0) {
+            $url = wp_get_attachment_url($kit_id);
+            if ($url) {
+                $links[] = '<a class="button" href="' . esc_url($url) . '" download="reel-kit.zip">Download Reel kit (zip)</a>';
+            }
+        }
+        if ($motion_id > 0) {
+            $url = wp_get_attachment_url($motion_id);
+            if ($url) {
+                $links[] = '<a class="button" href="' . esc_url($url) . '" download="motion.mp4">Download motion video</a>';
+            }
+        }
+        if ($voice_id > 0) {
+            $url = wp_get_attachment_url($voice_id);
+            if ($url) {
+                $links[] = '<a class="button" href="' . esc_url($url) . '" download="voice.mp3">Download voice MP3</a>';
+            }
+        }
+        if (!$links) {
+            return;
+        }
+        echo '<p class="tr-ai-wire-reel-downloads">' . implode(' ', $links) . '</p>';
+        if ($reel_id < 1) {
+            echo '<p class="description">This host cannot run ffmpeg. On your laptop: install ffmpeg from '
+                . '<a href="https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" target="_blank" rel="noopener noreferrer">Windows zip</a>'
+                . ' or <a href="https://evermeet.cx/ffmpeg/getrelease/zip" target="_blank" rel="noopener noreferrer">Mac zip</a>'
+                . ', unzip the kit, run make-reel.bat / make-reel.sh, then upload reel.mp4 below.</p>';
+        }
+    }
+
+    private function render_social_reel_upload_form($row) {
+        $id = (int) ($row['id'] ?? 0);
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if ($id < 1 || $post_id < 1 || $this->social_reel_preview_id($post_id) > 0) {
+            return;
+        }
+        if ($this->social_motion_id($post_id) < 1 && $this->social_reel_kit_id($post_id) < 1 && $this->social_voice_id($post_id) < 1) {
+            return;
+        }
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" enctype="multipart/form-data" style="margin-top:8px;">';
+        echo '<input type="hidden" name="action" value="tr_ai_wire_upload_reel">';
+        echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+        wp_nonce_field('tr_ai_wire_upload_reel_' . $id);
+        echo '<p><label for="tr-reel-upload-' . esc_attr((string) $id) . '"><strong>Finished MP4 from your laptop</strong></label><br>';
+        echo '<input id="tr-reel-upload-' . esc_attr((string) $id) . '" name="reel_mp4" type="file" accept="video/mp4,.mp4" required></p>';
+        echo '<button class="button button-primary">Upload Reel MP4</button>';
+        echo '</form>';
+    }
+
     private function render_social_retry_form($row, $image_id, $status) {
         $id = (int) ($row['id'] ?? 0);
         $post_id = (int) ($row['post_id'] ?? 0);
@@ -4848,6 +4972,7 @@ trait TechnoRapper_AI_Wire_Social {
             echo '<input type="hidden" name="regenerate_image" value="1">';
             echo '<button class="button button-secondary">Retry building this Reel</button>';
             echo '</form>';
+            $this->render_social_reel_upload_form($row);
             return;
         }
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
@@ -4993,12 +5118,9 @@ trait TechnoRapper_AI_Wire_Social {
         } else {
             echo '<div class="tr-ai-wire-social-preview-empty">Graphic not generated yet. The worker creates it before posting.</div>';
         }
-        $reel_id = ($post instanceof WP_Post) ? $this->social_reel_preview_id($post->ID) : 0;
-        $reel_url = $reel_id > 0 ? wp_get_attachment_url($reel_id) : '';
-        if ($reel_url && in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true)) {
-            echo '<video class="tr-ai-wire-social-preview-video" controls playsinline preload="metadata" src="' . esc_url($reel_url) . '"></video>';
-        }
+        $this->render_social_reel_preview_video($row, $post);
         echo '</div><div class="tr-ai-wire-social-copy">';
+        $this->render_social_reel_downloads($row, $post);
         if (!empty($copy['on_image_headline'])) {
             echo '<p class="tr-ai-wire-social-headline"><strong>' . esc_html($copy['on_image_headline']) . '</strong></p>';
         }
@@ -5027,6 +5149,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if ($this->social_row_holds_reel_for_review($row)) {
             $status_copy = 'Held for review. Watch the video, then click Publish. It is not live yet.';
+            if ($post instanceof WP_Post && $this->social_reel_preview_id($post->ID) < 1 && ($this->social_reel_kit_id($post->ID) > 0 || $this->social_motion_id($post->ID) > 0)) {
+                $status_copy = 'Held for review. This host has no ffmpeg. Download the Reel files, finish the MP4 on your laptop, upload it here, then Publish.';
+            }
         }
         if ($status_copy !== '') {
             echo '<p class="description">' . esc_html($status_copy) . '</p>';
