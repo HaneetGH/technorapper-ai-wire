@@ -257,6 +257,7 @@ trait TechnoRapper_AI_Wire_Social {
             $this->queue_site_context_job(!$was_connected);
         }
         $this->process_social_ideas_from_request();
+        $this->process_reel_host_image_from_request($new_settings);
         wp_safe_redirect(add_query_arg(array(
             'page' => 'tr-ai-wire-social-settings',
             'social_credentials_saved' => '1',
@@ -327,6 +328,27 @@ trait TechnoRapper_AI_Wire_Social {
             'enabled' => empty($item['enabled']) ? 0 : 1,
             'created_at' => sanitize_text_field((string) ($item['created_at'] ?? current_time('mysql', true))),
         );
+    }
+
+    private function process_reel_host_image_from_request($settings) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        $host_id = $this->saved_social_reel_host_image_id();
+        if ($host_id < 1) {
+            $host_id = absint($settings['social_reel_host_image_id'] ?? 0);
+        }
+        if (!empty($_FILES['social_reel_host_image']['name']) && !empty($_FILES['social_reel_host_image']['tmp_name'])) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            $uploaded = media_handle_upload('social_reel_host_image', 0);
+            if (!is_wp_error($uploaded)) {
+                $host_id = (int) $uploaded;
+                update_post_meta($host_id, '_tr_ai_wire_social_host', '1');
+            }
+        } elseif (!empty($_POST['remove_reel_host_image'])) {
+            $host_id = 0;
+        }
+        $this->persist_social_reel_host_image_id($host_id);
     }
 
     private function process_social_ideas_from_request() {
@@ -749,7 +771,7 @@ trait TechnoRapper_AI_Wire_Social {
             'error' => '#b32d2e',
         );
         $color = $colors[$view['state']] ?? '#646970';
-        echo '<div class="card" style="max-width:900px;margin:16px 0;padding:16px 20px;border-left:4px solid ' . esc_attr($color) . ';">';
+        echo '<div class="card tr-ai-wire-card" style="border-left:4px solid ' . esc_attr($color) . ';">';
         echo '<h2 style="margin-top:0;">' . esc_html($view['title']) . '</h2>';
         echo '<p>' . esc_html($view['body']) . '</p>';
         echo '<p><strong>Last understood:</strong> ' . ($view['last'] !== '' ? esc_html($view['last']) : 'Not yet') . '</p>';
@@ -896,6 +918,40 @@ trait TechnoRapper_AI_Wire_Social {
             if ($claimed !== 1) {
                 continue;
             }
+            if ($this->social_row_holds_reel_for_review($row)) {
+                if (function_exists('set_time_limit')) {
+                    set_time_limit(300);
+                }
+                $prepared = $this->prepare_social_delivery($row, $settings);
+                if (is_wp_error($prepared)) {
+                    if ($prepared->get_error_code() === 'tr_ai_wire_social_image_busy') {
+                        $wpdb->update($table, array('status' => 'queued', 'updated_at' => current_time('mysql', true)), array('id' => (int) $row['id']));
+                        wp_schedule_single_event(time() + 60, self::SOCIAL_CRON_HOOK);
+                        break;
+                    }
+                    if ($prepared->get_error_code() === 'tr_ai_wire_reel_video_wait' || $prepared->get_error_code() === 'tr_ai_wire_yt_video_wait') {
+                        $wait_fields = array(
+                            'status' => 'queued',
+                            'error_text' => $prepared->get_error_message(),
+                            'updated_at' => current_time('mysql', true),
+                        );
+                        $pending_id = $prepared->get_error_data();
+                        if ($prepared->get_error_code() === 'tr_ai_wire_yt_video_wait' && is_string($pending_id) && $pending_id !== '') {
+                            $wait_fields['remote_id'] = sanitize_text_field($pending_id);
+                        }
+                        $wpdb->update($table, $wait_fields, array('id' => (int) $row['id']));
+                        wp_schedule_single_event(time() + 45, self::SOCIAL_CRON_HOOK);
+                        break;
+                    }
+                    $this->finish_social_item($row['id'], 'needs_review', '', '', $prepared->get_error_message());
+                    break;
+                }
+                $this->finish_social_item($row['id'], 'needs_review', '', '', $this->social_reel_hold_copy($row));
+                if ($this->social_finishable_queued_count() > 0) {
+                    $this->kick_social_queue(5);
+                }
+                break;
+            }
             $pack = array($row);
             $explicit = $this->social_row_explicit_pack($row);
             if (($explicit !== '' || $this->social_row_is_pack($row, $settings)) && !$this->social_item_is_manual_repost($row)) {
@@ -1014,7 +1070,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($platform_sql === '') {
             return array();
         }
-        $forced_first = "(EXISTS (SELECT 1 FROM {$wpdb->postmeta} f WHERE f.post_id = {$wpdb->prefix}tr_ai_wire_social.post_id AND f.meta_key = '_tr_ai_wire_social_force_pack' AND f.meta_value IN ('carousel', 'collage'))) DESC, created_at ASC";
+        $forced_first = "(EXISTS (SELECT 1 FROM {$wpdb->postmeta} f WHERE f.post_id = {$wpdb->prefix}tr_ai_wire_social.post_id AND f.meta_key = '_tr_ai_wire_social_force_pack' AND f.meta_value IN ('carousel', 'collage', 'reel'))) DESC, created_at ASC";
         if ($this->social_published_today() < $limit) {
             return $wpdb->get_results("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'{$platform_sql} ORDER BY {$forced_first} LIMIT 25", ARRAY_A);
         }
@@ -1038,10 +1094,10 @@ trait TechnoRapper_AI_Wire_Social {
                         SELECT 1 FROM {$wpdb->postmeta} f
                         WHERE f.post_id = q.post_id
                           AND f.meta_key = '_tr_ai_wire_social_force_pack'
-                          AND f.meta_value IN ('carousel', 'collage')
+                          AND f.meta_value IN ('carousel', 'collage', 'reel')
                     )
                )
-             ORDER BY (EXISTS (SELECT 1 FROM {$wpdb->postmeta} f WHERE f.post_id = q.post_id AND f.meta_key = '_tr_ai_wire_social_force_pack' AND f.meta_value IN ('carousel', 'collage'))) DESC, q.created_at ASC
+             ORDER BY (EXISTS (SELECT 1 FROM {$wpdb->postmeta} f WHERE f.post_id = q.post_id AND f.meta_key = '_tr_ai_wire_social_force_pack' AND f.meta_value IN ('carousel', 'collage', 'reel'))) DESC, q.created_at ASC
              LIMIT 25",
             ARRAY_A
         );
@@ -1110,19 +1166,21 @@ trait TechnoRapper_AI_Wire_Social {
 
     public function generate_social_pack_request() {
         if (!current_user_can('manage_options')) {
-            wp_die(esc_html__('You are not allowed to generate a social carousel or collage.', 'technorapper-ai-wire'));
+            wp_die(esc_html__('You are not allowed to generate a social carousel, collage, or Reel.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_generate_social_pack');
-        $kind = sanitize_key((string) ($_POST['pack_kind'] ?? ''));
-        if ($kind !== 'collage') {
-            $kind = 'carousel';
-        }
+        $kind = $this->social_manual_pack_kind($_POST['pack_kind'] ?? '');
         $this->enqueue_background_job('social_pack', array('pack_kind' => $kind));
         wp_safe_redirect(add_query_arg(array(
             'page' => 'tr-ai-wire-social',
             'social_pack' => $kind,
         ), admin_url('admin.php')));
         exit;
+    }
+
+    private function social_manual_pack_kind($kind) {
+        $kind = sanitize_key((string) $kind);
+        return in_array($kind, array('carousel', 'collage', 'reel'), true) ? $kind : 'carousel';
     }
 
     private function drain_social_queue($max = 15) {
@@ -1761,7 +1819,7 @@ trait TechnoRapper_AI_Wire_Social {
         $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this site';
         $comic = $this->post_is_comic($post);
         $system = $this->social_copy_system_prompt($brand, $comic);
-        $user = $this->social_copy_user_prompt($brand, $profile, $snapshot, $comic);
+        $user = $this->social_copy_user_prompt($brand, $profile, $snapshot, $comic, $s);
         $copy_settings = $s;
         $copy_settings['max_output_tokens'] = min(1600, max(400, (int) ($s['max_output_tokens'] ?? 1600)));
         return $this->ai_json($s['writer_model'] ?? 'gpt-6-luna', $system, $user, $copy_settings, false);
@@ -1778,7 +1836,7 @@ trait TechnoRapper_AI_Wire_Social {
         return $prompt . 'Safe for a news brand: no nudity, and keep the wording suitable for a general audience. Return JSON only.';
     }
 
-    private function social_copy_user_prompt($brand, $profile, $snapshot, $comic = false) {
+    private function social_copy_user_prompt($brand, $profile, $snapshot, $comic = false, $settings = null) {
         $user = 'Write the package a growth editor would actually post to get views, saves, and sends. Lead with a specific name, number, or mechanism from the article; a reader stake (phone, job, money, privacy, or status); then pay the curiosity off in the next lines with saveable bullets. Short. No throat-clearing. '
             . (!empty($comic) ? 'One dry wink is enough. ' : '')
             . 'Never use: you won’t believe, wait for it, wait until the end, must see, gone wrong, shocking, this changes everything, this will blow your mind. Those lines look like bait and Instagram withholds them. Open a loop only if the caption pays it off in the next sentence. '
@@ -1792,10 +1850,10 @@ trait TechnoRapper_AI_Wire_Social {
             . (!empty($comic) ? 'Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. ' : '')
             . 'Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
-            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. '
+            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings) . ' THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. '
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
             . 'Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
-            . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
+            . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These burn onto moving host and B-roll shots, not still news cards. '
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. '
             . (!empty($comic) ? 'A dry wink is fine if the named change is still obvious. ' : '')
             . 'This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
@@ -2535,7 +2593,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         delete_post_meta($post_id, '_tr_ai_wire_social_skip');
         $left = $this->social_mix_remaining($settings);
-        if ($left['reel'] > 0) {
+        if ($left['reel'] > 0 && $this->social_reel_weekly_remaining($settings) > 0) {
             $this->enqueue_social_article($post_id, 'reel');
             $this->social_mix_add('reel');
             $this->kick_social_queue(30);
@@ -2746,6 +2804,27 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $mix[$kind] += max(1, (int) $by);
         update_option($this->social_mix_option_name(), $mix, false);
+        if ($kind === 'reel') {
+            $week = $this->social_reel_week_count();
+            update_option($this->social_reel_week_option_name(), $week + max(1, (int) $by), false);
+        }
+    }
+
+    private function social_reel_week_option_name() {
+        return self::SOCIAL_MIX_OPTION . '_week_' . gmdate('oW');
+    }
+
+    private function social_reel_week_count() {
+        return max(0, (int) get_option($this->social_reel_week_option_name(), 0));
+    }
+
+    private function social_reel_weekly_remaining($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        $cap = min(14, max(0, absint($settings['social_reel_weekly_limit'] ?? 0)));
+        if ($cap < 1) {
+            return 99;
+        }
+        return max(0, $cap - $this->social_reel_week_count());
     }
 
     private function social_row_is_pack($row, $settings) {
@@ -2785,7 +2864,33 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function social_row_is_forced_pack($row) {
         $value = sanitize_key((string) get_post_meta((int) ($row['post_id'] ?? 0), '_tr_ai_wire_social_force_pack', true));
-        return $value === 'carousel' || $value === 'collage';
+        return $value === 'carousel' || $value === 'collage' || $value === 'reel';
+    }
+
+    private function social_row_holds_reel_for_review($row) {
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if ($post_id < 1) {
+            return false;
+        }
+        if ((string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true) !== '1') {
+            return false;
+        }
+        return sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true)) === 'reel';
+    }
+
+    private function social_reel_hold_copy($row) {
+        $platform = self::social_platform_label((string) ($row['platform'] ?? ''));
+        return 'Held: Watch this Reel, then click Publish to ' . $platform . '. It has not been posted yet.';
+    }
+
+    private function social_reel_preview_id($post_id) {
+        $post_id = (int) $post_id;
+        $video_id = (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true);
+        if ($video_id < 1) {
+            return 0;
+        }
+        $path = get_attached_file($video_id);
+        return ($path && file_exists($path)) ? $video_id : 0;
     }
 
     private function release_social_rows_to_queue($rows) {
@@ -2836,7 +2941,7 @@ trait TechnoRapper_AI_Wire_Social {
              INNER JOIN {$wpdb->postmeta} m
                 ON m.post_id = q.post_id
                AND m.meta_key = '_tr_ai_wire_social_force_pack'
-               AND m.meta_value IN ('carousel', 'collage')
+               AND m.meta_value IN ('carousel', 'collage', 'reel')
              WHERE q.status = 'queued'"
         );
     }
@@ -2870,6 +2975,133 @@ trait TechnoRapper_AI_Wire_Social {
         $this->social_mix_add($kind, 1);
         $this->kick_social_queue(5);
         return count($ids);
+    }
+
+    private function force_generate_social_reel() {
+        if (!$this->social_distribution_ready()) {
+            return new WP_Error('tr_ai_wire_social_reel', 'Turn on Instagram or YouTube under Social settings before generating a Reel.');
+        }
+        $platforms = self::connected_social_platforms();
+        if (!in_array('instagram', $platforms, true) && !in_array('youtube', $platforms, true)) {
+            return new WP_Error('tr_ai_wire_social_reel', 'Turn on Instagram or YouTube under Social settings before generating a Reel. X only receives the still poster.');
+        }
+        if ($this->social_reel_weekly_remaining() < 1) {
+            return new WP_Error('tr_ai_wire_social_reel', 'The weekly Reel cap is full. Raise it on Social settings, or wait for next week.');
+        }
+        $waiting = $this->social_held_reel_pending_post_id();
+        if ($waiting > 0) {
+            return new WP_Error('tr_ai_wire_social_reel', 'A Reel is already waiting for review on Social queue. Watch it, then click Publish. It has not been posted yet.');
+        }
+        $ids = $this->social_force_reel_candidates();
+        if (!$ids) {
+            return new WP_Error('tr_ai_wire_social_reel', 'A Reel needs one published article that has not already gone out as video. There is none ready right now.');
+        }
+        $post_id = (int) $ids[0];
+        $batch = array();
+        foreach ($this->social_batch_ids() as $id) {
+            if ((int) $id !== $post_id) {
+                $batch[] = (int) $id;
+            }
+        }
+        $this->social_batch_save($batch);
+        $this->enqueue_social_article($post_id, 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_force_pack', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        $this->social_mix_add('reel', 1);
+        $this->kick_social_queue(5);
+        return $post_id;
+    }
+
+    private function social_held_reel_pending_post_id() {
+        global $wpdb;
+        return (int) $wpdb->get_var(
+            "SELECT s.post_id FROM {$wpdb->prefix}tr_ai_wire_social s
+             INNER JOIN {$wpdb->postmeta} h
+                ON h.post_id = s.post_id
+               AND h.meta_key = '_tr_ai_wire_social_hold_reel'
+               AND h.meta_value = '1'
+             INNER JOIN {$wpdb->postmeta} m
+                ON m.post_id = s.post_id
+               AND m.meta_key = '_tr_ai_wire_social_mode'
+               AND m.meta_value = 'reel'
+             WHERE s.status IN ('queued', 'processing', 'needs_review')
+             LIMIT 1"
+        );
+    }
+
+    private function social_force_reel_candidates() {
+        $ids = array();
+        $consider = function ($post_id) use (&$ids) {
+            $post_id = (int) $post_id;
+            if ($post_id < 1 || $ids || in_array($post_id, $ids, true)) {
+                return;
+            }
+            if ($this->social_force_reel_candidate_ok($post_id)) {
+                $ids[] = $post_id;
+            }
+        };
+        global $wpdb;
+        $queued = $wpdb->get_col("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued' GROUP BY post_id ORDER BY MIN(created_at) ASC LIMIT 40");
+        foreach ((array) $queued as $id) {
+            $consider($id);
+        }
+        if ($ids) {
+            return $ids;
+        }
+        $recent = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 40,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'fields' => 'ids',
+            'no_found_rows' => true,
+        ));
+        foreach ((array) $recent as $id) {
+            $consider($id);
+        }
+        return $ids;
+    }
+
+    private function social_force_reel_candidate_ok($post_id) {
+        $post_id = (int) $post_id;
+        $post = get_post($post_id);
+        if (!$post || $post->post_status !== 'publish' || $post->post_type !== 'post') {
+            return false;
+        }
+        if (!get_post_meta($post_id, '_tr_ai_wire_queue_id', true)) {
+            return false;
+        }
+        if (in_array($post_id, $this->social_batch_ids(), true)) {
+            return false;
+        }
+        $mode = sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        if (in_array($mode, array('pack', 'carousel', 'collage', 'reel'), true)) {
+            return false;
+        }
+        if (!$this->social_article_clears_quality_gate($post_id)) {
+            return false;
+        }
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, post_id, platform, status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d",
+            $post_id
+        ), ARRAY_A);
+        foreach ((array) $rows as $row) {
+            $status = sanitize_key((string) ($row['status'] ?? ''));
+            $platform = sanitize_key((string) ($row['platform'] ?? ''));
+            if (in_array($status, array('published', 'processing', 'needs_review'), true) && in_array($platform, array('instagram', 'youtube'), true)) {
+                return false;
+            }
+            if (in_array($status, array('processing', 'needs_review'), true)) {
+                return false;
+            }
+            if ($status === 'queued' && $this->social_item_is_manual_repost($row)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private function social_force_pack_candidates($limit, $kind) {
@@ -3200,6 +3432,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $post_id = (int) $row['post_id'];
         $from_published = $status === 'published';
+        if (!$regenerate_image && !$from_published) {
+            delete_post_meta($post_id, '_tr_ai_wire_social_hold_reel');
+        }
         if ($from_published) {
             $deleted = $this->delete_live_social_post($row);
             if (is_wp_error($deleted)) {
@@ -4576,9 +4811,45 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function render_social_retry_form($row, $image_id, $status) {
         $id = (int) ($row['id'] ?? 0);
+        $post_id = (int) ($row['post_id'] ?? 0);
         $platform = (string) ($row['platform'] ?? '');
         $platform_label = self::social_platform_label($platform);
         $published = $status === 'published';
+        $held_reel = !$published && $this->social_row_holds_reel_for_review($row);
+        $reel_ready = $held_reel && $this->social_reel_preview_id($post_id) > 0;
+        if ($held_reel) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+            wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
+            if ($reel_ready) {
+                echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> I reviewed this Reel and want it live</label><br>';
+                if (in_array($platform, array('instagram', 'youtube'), true)) {
+                    echo '<p class="description">This posts the video on this row. It does not generate a new one.</p>';
+                    echo '<button class="button button-primary">Publish Reel to ' . esc_html($platform_label) . '</button>';
+                } else {
+                    echo '<p class="description">X still gets the poster. Publish after you have reviewed the Reel.</p>';
+                    echo '<button class="button button-primary">Publish still to ' . esc_html($platform_label) . '</button>';
+                }
+                echo '</form>';
+                if (in_array($platform, array('instagram', 'youtube'), true)) {
+                    echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
+                    echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
+                    echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+                    wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
+                    echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> Rebuild a new Reel and hold it for review</label><br>';
+                    echo '<input type="hidden" name="regenerate_image" value="1">';
+                    echo '<button class="button button-secondary">Generate a new Reel</button>';
+                    echo '</form>';
+                }
+                return;
+            }
+            echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> Retry building this Reel and hold it for review</label><br>';
+            echo '<input type="hidden" name="regenerate_image" value="1">';
+            echo '<button class="button button-secondary">Retry building this Reel</button>';
+            echo '</form>';
+            return;
+        }
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
         echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
         echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
@@ -4711,7 +4982,7 @@ trait TechnoRapper_AI_Wire_Social {
                     $label = 'Posted in a ' . $pack_size . '-story Instagram post';
                 }
             }
-            $reel_id = ($post instanceof WP_Post) ? $this->social_reel_id($post->ID) : 0;
+            $reel_id = ($post instanceof WP_Post) ? $this->social_reel_preview_id($post->ID) : 0;
             if ($reel_id > 0 && (string) ($row['platform'] ?? '') === 'instagram') {
                 $label = 'Spoken Instagram Reel';
             }
@@ -4721,6 +4992,11 @@ trait TechnoRapper_AI_Wire_Social {
             echo '<span class="tr-ai-wire-social-preview-label">' . ($this->social_image_is_current($image_id) ? esc_html($label) : 'Saved graphic — retry posts this file unless you generate a new one') . '</span></a>';
         } else {
             echo '<div class="tr-ai-wire-social-preview-empty">Graphic not generated yet. The worker creates it before posting.</div>';
+        }
+        $reel_id = ($post instanceof WP_Post) ? $this->social_reel_preview_id($post->ID) : 0;
+        $reel_url = $reel_id > 0 ? wp_get_attachment_url($reel_id) : '';
+        if ($reel_url && in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true)) {
+            echo '<video class="tr-ai-wire-social-preview-video" controls playsinline preload="metadata" src="' . esc_url($reel_url) . '"></video>';
         }
         echo '</div><div class="tr-ai-wire-social-copy">';
         if (!empty($copy['on_image_headline'])) {
@@ -4749,6 +5025,9 @@ trait TechnoRapper_AI_Wire_Social {
         if ($pack_format !== '') {
             $status_copy = 'Queued in a ' . $pack_format . '. The worker generates these graphics and posts them together. This does not wait out the gap between single Instagram posts.';
         }
+        if ($this->social_row_holds_reel_for_review($row)) {
+            $status_copy = 'Held for review. Watch the video, then click Publish. It is not live yet.';
+        }
         if ($status_copy !== '') {
             echo '<p class="description">' . esc_html($status_copy) . '</p>';
         }
@@ -4775,32 +5054,21 @@ trait TechnoRapper_AI_Wire_Social {
         $settings = $this->settings();
         $stuck_pack = $this->maybe_start_stuck_pack_job();
         $image_usage = (float) get_option('tr_ai_wire_social_image_usage_' . gmdate('Ym'), 0);
+        $video_usage = (float) get_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'), 0);
+        $x_posting = !empty($settings['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready();
+        $ig_posting = !empty($settings['social_instagram_enabled']) && TechnoRapper_AI_Wire::instagram_credentials_ready();
+        $yt_posting = !empty($settings['social_youtube_enabled']) && TechnoRapper_AI_Wire::youtube_credentials_ready();
         ?>
         <div class="wrap">
             <h1>Social queue</h1>
-            <style>
-                .tr-ai-wire-social-item{display:flex;gap:16px;align-items:flex-start;max-width:920px;}
-                .tr-ai-wire-social-preview{flex:0 0 132px;}
-                .tr-ai-wire-social-preview-link{display:block;text-decoration:none;}
-                .tr-ai-wire-social-preview-image{display:block;width:120px;height:auto;border-radius:8px;background:#09142b;border:1px solid #c3c4c7;}
-                .tr-ai-wire-social-preview-label{display:block;margin-top:6px;font-size:12px;color:#50575e;}
-                .tr-ai-wire-social-preview-empty{width:120px;min-height:150px;padding:12px;border:1px dashed #c3c4c7;border-radius:8px;background:#f6f7f7;color:#646970;font-size:12px;}
-                .tr-ai-wire-social-copy{min-width:0;}
-                .tr-ai-wire-social-headline,.tr-ai-wire-social-subhead,.tr-ai-wire-social-caption{margin:0 0 6px;}
-                .tr-ai-wire-social-caption{white-space:pre-wrap;color:#1d2327;}
-                .tr-ai-wire-social-error{color:#b32d2e;margin:8px 0;}
-                .tr-ai-wire-social-copy label{display:block;margin:6px 0;}
-                .tr-ai-wire-social-status{display:inline-block;padding:2px 8px;border-radius:999px;background:#dcdcde;font-size:12px;text-transform:lowercase;}
-                .tr-ai-wire-social-status.is-published{background:#c6e1c6;}
-                .tr-ai-wire-social-status.is-needs_review{background:#f0c33c;}
-                .tr-ai-wire-social-status.is-processing{background:#c5d9ed;}
-            </style>
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. Single Instagram posts still wait 3 hours between each other.'); ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['site_context'])) : ?><div class="notice notice-info is-dismissible"><p>We are understanding your site so everything we do for social stays in your context.</p></div><?php endif; ?>
             <?php if (isset($_GET['social_ran'])) : ?><div class="notice notice-success is-dismissible"><p><?php echo ((int) $_GET['social_ran'] > 0) ? 'Processed queued social posts. Refresh in a minute if a graphic is still generating.' : 'No queued social post could be processed now. If items are still waiting, check the daily limit, image budget, and WP-Cron.'; ?></p></div><?php endif; ?>
             <?php if (isset($_GET['social_pack'])) : ?><div class="notice notice-info is-dismissible"><p><?php
-            $pack_kind = sanitize_key((string) $_GET['social_pack']) === 'collage' ? 'collage' : 'carousel';
-            echo esc_html('Generating a ' . $pack_kind . ' now. Stay on this page — the progress bar tracks the graphics and the post.');
+            $pack_kind = $this->social_manual_pack_kind($_GET['social_pack'] ?? '');
+            echo $pack_kind === 'reel'
+                ? esc_html('Building a Reel for review. Stay on this page — then watch it below and click Publish. It is not posted yet.')
+                : esc_html('Generating a ' . $pack_kind . ' now. Stay on this page — the progress bar tracks the graphics and the post.');
             ?></p></div><?php endif; ?>
             <?php if (isset($_GET['social_backfill'])) : ?><div class="notice notice-success is-dismissible"><p><?php
             $backfill = (int) $_GET['social_backfill'];
@@ -4820,7 +5088,13 @@ trait TechnoRapper_AI_Wire_Social {
             $failed_yt = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE platform = 'youtube' AND status = 'needs_review'");
             $finishable_now = $this->social_finishable_queued_count();
             ?>
-            <p>X posting is <?php echo !empty($settings['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · Instagram posting is <?php echo !empty($settings['social_instagram_enabled']) && TechnoRapper_AI_Wire::instagram_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · YouTube posting is <?php echo !empty($settings['social_youtube_enabled']) && TechnoRapper_AI_Wire::youtube_credentials_ready() ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Change that on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Planned social posts today: <strong><?php echo esc_html((string) $post_limit); ?></strong>, split in the mix below. Website articles used for that mix: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?>. A carousel or collage spends several articles on one social post. A successful Instagram or YouTube post does not spend an extra slot for X on the same article.</p>
+            <div class="tr-ai-wire-status">
+                <span class="tr-ai-wire-pill <?php echo $x_posting ? 'is-on' : 'is-off'; ?>">X <?php echo $x_posting ? 'posting' : 'off'; ?></span>
+                <span class="tr-ai-wire-pill <?php echo $ig_posting ? 'is-on' : 'is-off'; ?>">Instagram <?php echo $ig_posting ? 'posting' : 'off'; ?></span>
+                <span class="tr-ai-wire-pill <?php echo $yt_posting ? 'is-on' : 'is-off'; ?>">YouTube <?php echo $yt_posting ? 'posting' : 'off'; ?></span>
+                <a class="button button-small" href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Open Social settings</a>
+            </div>
+            <p>X posting is <?php echo $x_posting ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · Instagram posting is <?php echo $ig_posting ? '<strong>on</strong>' : '<strong>off</strong>'; ?> · YouTube posting is <?php echo $yt_posting ? '<strong>on</strong>' : '<strong>off</strong>'; ?>. Change that on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Planned social posts today: <strong><?php echo esc_html((string) $post_limit); ?></strong>, split in the mix below. Website articles used for that mix: <?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $daily_limit); ?>. A carousel or collage spends several articles on one social post. A successful Instagram or YouTube post does not spend an extra slot for X on the same article.</p>
             <?php if ($published_today >= $daily_limit && ($failed_x > 0 || $failed_ig > 0 || $failed_yt > 0 || $finishable_now > 0)) : ?>
             <div class="notice notice-warning"><p><?php
             $parts = array();
@@ -4839,31 +5113,62 @@ trait TechnoRapper_AI_Wire_Social {
             echo 'The article cap is full, but ' . esc_html(implode(' and ', $parts)) . ' can still run. Retry a failed row or Process now — you do not need to raise the daily limit.';
             ?></p></div>
             <?php endif; ?>
-            <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated. Reel video budget: $<?php echo esc_html(number_format_i18n((float) get_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'), 0), 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_video_budget_usd'] ?? 0), 2)); ?> estimated.</p>
+            <p>Social image budget this month: $<?php echo esc_html(number_format_i18n($image_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?> estimated. Reel video budget: $<?php echo esc_html(number_format_i18n($video_usage, 3)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_video_budget_usd'] ?? 0), 2)); ?> estimated.</p>
             <?php
             $wanted = $this->social_slide_count($settings);
             $mix = $this->social_mix_today();
             $limits = $this->social_daily_mix_limits($settings);
+            $weekly_cap = min(14, max(0, absint($settings['social_reel_weekly_limit'] ?? 0)));
+            $week_used = $this->social_reel_week_count();
             ?>
+            <div class="tr-ai-wire-statbar">
+                <p class="tr-ai-wire-stat"><span class="description">Image budget</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($image_usage, 2)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_image_budget_usd'] ?? 0), 2)); ?></strong></p>
+                <p class="tr-ai-wire-stat"><span class="description">Reel video budget</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n($video_usage, 2)); ?> / $<?php echo esc_html(number_format_i18n((float) ($settings['social_video_budget_usd'] ?? 0), 2)); ?></strong></p>
+                <p class="tr-ai-wire-stat"><span class="description">Posts today</span><strong><?php echo esc_html((string) $published_today); ?> / <?php echo esc_html((string) $post_limit); ?></strong></p>
+                <?php if ($weekly_cap > 0) : ?>
+                <p class="tr-ai-wire-stat"><span class="description">Reels this week</span><strong><?php echo esc_html((string) $week_used); ?> / <?php echo esc_html((string) $weekly_cap); ?></strong></p>
+                <?php endif; ?>
+            </div>
+            <div class="tr-ai-wire-grid">
+                <?php foreach (array('reel' => 'Reels', 'carousel' => 'Carousels', 'collage' => 'Collages', 'single' => 'Singles') as $mix_key => $mix_label) :
+                    $mix_used = (int) ($mix[$mix_key] ?? 0);
+                    $mix_limit = (int) ($limits[$mix_key] ?? 0);
+                    $mix_pct = $mix_limit > 0 ? min(100, (int) round(100 * $mix_used / $mix_limit)) : 0;
+                    ?>
+                <div class="tr-ai-wire-tile tr-ai-wire-meter">
+                    <p class="description"><?php echo esc_html($mix_label); ?></p>
+                    <strong><?php echo esc_html((string) $mix_used); ?> / <?php echo esc_html((string) $mix_limit); ?></strong>
+                    <div class="tr-ai-wire-meter-bar" aria-hidden="true"><span style="width:<?php echo esc_attr((string) $mix_pct); ?>%;"></span></div>
+                </div>
+                <?php endforeach; ?>
+            </div>
             <p>Today’s mix: <strong><?php echo esc_html((string) ($mix['reel'] ?? 0)); ?> / <?php echo esc_html((string) ($limits['reel'] ?? 0)); ?> Reels</strong>, <strong><?php echo esc_html((string) $mix['carousel']); ?> / <?php echo esc_html((string) $limits['carousel']); ?> carousels</strong>, <strong><?php echo esc_html((string) $mix['collage']); ?> / <?php echo esc_html((string) $limits['collage']); ?> collages</strong>, <strong><?php echo esc_html((string) $mix['single']); ?> / <?php echo esc_html((string) $limits['single']); ?> single stories</strong><?php
             $holding = count($this->social_batch_ids());
             if ($holding > 0 && $wanted > 1 && $holding < $wanted) {
                 echo '. Holding ' . esc_html((string) $holding) . ' article' . ($holding === 1 ? '' : 's') . ' for the next pack of ' . esc_html((string) $wanted);
             }
             ?>. Change the counts under <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>. Automatic carousels and collages wait until 4, 5, or 6 articles are held and a daily slot is left. Reels fill first, then carousels, then collages. Collage posts per day defaults to 0, so a collage does not start on its own. One leftover article stays held for the next pack.</p>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 8px 8px 0;display:inline-block;">
+            <div class="tr-ai-wire-actions">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <input type="hidden" name="action" value="tr_ai_wire_generate_social_pack">
+                <input type="hidden" name="pack_kind" value="reel">
+                <?php wp_nonce_field('tr_ai_wire_generate_social_pack'); ?>
+                <?php submit_button('Generate Reel now', 'primary', 'submit', false); ?>
+            </form>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_generate_social_pack">
                 <input type="hidden" name="pack_kind" value="carousel">
                 <?php wp_nonce_field('tr_ai_wire_generate_social_pack'); ?>
                 <?php submit_button('Generate carousel now', 'primary', 'submit', false); ?>
             </form>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;display:inline-block;">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_generate_social_pack">
                 <input type="hidden" name="pack_kind" value="collage">
                 <?php wp_nonce_field('tr_ai_wire_generate_social_pack'); ?>
                 <?php submit_button('Generate collage now', 'primary', 'submit', false); ?>
             </form>
-            <p class="description">These skip the daily mix and that wait. Each button packs at least 2 stories that have not already been posted: held articles first, then queued stories, then recent articles with no social post. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. Single Instagram posts still wait 3 hours after the last Instagram post.</p>
+            </div>
+            <p class="description"><strong>Generate Reel now</strong> builds one spoken video and holds it on this page. Watch it, then click Publish — it does not go live until you do. Auto Reels still post on their own when Reel posts per day is above 0. Carousel and collage skip the daily mix and that wait. Each of those packs at least 2 stories that have not already been posted. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. Single Instagram posts still wait 3 hours after the last Instagram post.</p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);
@@ -4871,12 +5176,14 @@ trait TechnoRapper_AI_Wire_Social {
                 echo '<div class="notice notice-warning"><p>Queued posts are waiting until ' . esc_html(gmdate('Y-m-d H:i', $next_run)) . ' UTC — usually because the daily cap was hit earlier. Raising the daily limit does not start them by itself. Process the queue now.</p></div>';
             }
             ?>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0 16px;">
+            <div class="tr-ai-wire-actions">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_run_social_queue">
                 <?php wp_nonce_field('tr_ai_wire_run_social_queue'); ?>
                 <?php submit_button('Process queued social posts now', 'secondary', 'submit', false); ?>
-                <p class="description" style="display:inline;margin-left:8px;">Runs in the background and keeps this page open. A progress bar tracks it. Saved graphics are reused. Use this after refreshing an X token, after raising the daily limit, or to ship a leftover batch.</p>
             </form>
+            </div>
+            <p class="description">Runs in the background and keeps this page open. A progress bar tracks it. Saved graphics are reused. Use this after refreshing an X token, after raising the daily limit, or to ship a leftover batch.</p>
             <?php
             foreach (array('x' => 'X', 'instagram' => 'Instagram', 'youtube' => 'YouTube') as $platform => $label) {
                 if (!in_array($platform, self::connected_social_platforms(), true)) {
@@ -4887,13 +5194,15 @@ trait TechnoRapper_AI_Wire_Social {
                     continue;
                 }
                 ?>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:0 0 16px;">
+            <div class="tr-ai-wire-actions">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_queue_missing_platform">
                 <input type="hidden" name="platform" value="<?php echo esc_attr($platform); ?>">
                 <?php wp_nonce_field('tr_ai_wire_queue_missing_platform'); ?>
                 <?php submit_button($platform === 'youtube' ? 'Queue spoken Shorts for YouTube' : ('Queue saved graphics for ' . $label), 'secondary', 'submit', false); ?>
-                <p class="description" style="display:inline;margin-left:8px;"><?php echo esc_html((string) $missing); ?> article<?php echo $missing === 1 ? '' : 's'; ?> already went to another network. <?php echo $platform === 'youtube' ? 'This queues YouTube using the spoken Reel file, not a still image.' : ('This queues ' . esc_html($label) . ' using the saved graphic and does not generate a new image.'); ?></p>
             </form>
+            </div>
+            <p class="description"><?php echo esc_html((string) $missing); ?> article<?php echo $missing === 1 ? '' : 's'; ?> already went to another network. <?php echo $platform === 'youtube' ? 'This queues YouTube using the spoken Reel file, not a still image.' : ('This queues ' . esc_html($label) . ' using the saved graphic and does not generate a new image.'); ?></p>
                 <?php
             }
             ?>

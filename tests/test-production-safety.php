@@ -315,6 +315,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $code, implode("\n", $output));
         $this->assertFileExists($dest . '/readme.txt');
         $this->assertFileExists($dest . '/LICENSE');
+        $this->assertFileExists($dest . '/assets/admin.css');
         $packed = file_get_contents($dest . '/readme.txt');
         $this->assertMatchesRegularExpression('/^License:\s*GPLv2 or later\s*$/m', $packed);
         $tag_workflow = file_get_contents($root . '/.github/workflows/tag-version.yml');
@@ -3717,6 +3718,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(10.0, (float) $reel['social_video_budget_usd']);
         $this->assertSame('veo-lite', $reel['social_reel_video_model']);
         $this->assertSame(8, (int) $reel['social_reel_clip_seconds']);
+        $this->assertSame('broll', $reel['social_reel_recipe']);
+        $this->assertSame(0, (int) $reel['social_reel_include_host']);
+        $this->assertSame(0, (int) $reel['social_reel_enhance_host_face']);
+        $this->assertSame(0, (int) $reel['social_reel_generate_host_face']);
+        $this->assertSame('kling-avatar-pro', $reel['social_reel_host_model']);
+        $this->assertSame(0, (int) $reel['social_reel_weekly_limit']);
         $upgraded = $this->plugin->sanitize_settings(array(
             'social_post_format' => 'reel',
             'social_video_budget_usd' => 40,
@@ -4486,6 +4493,56 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertTrue(is_wp_error($result));
         $this->assertSame('', (string) get_post_meta($fresh, '_tr_ai_wire_social_mode', true));
         $this->assertSame(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
+    }
+
+    public function test_generate_reel_now_holds_for_review_when_auto_is_off() {
+        $this->onboard_social(array('instagram'));
+        $this->assertSame(0, (int) get_option(TechnoRapper_AI_Wire::OPTION, array())['social_reel_daily_limit']);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Manual reel story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 410);
+        $this->fire_social_publish($post_id);
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $queued = $this->invoke_private('force_generate_social_reel');
+        $this->assertSame($post_id, $queued);
+        $this->assertSame('reel', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
+        $this->assertSame('reel', (string) get_post_meta($post_id, '_tr_ai_wire_social_force_pack', true));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
+        $this->assertSame('queued', (string) ($row['status'] ?? ''));
+        $this->assertTrue($this->invoke_private('social_row_holds_reel_for_review', array($row)));
+        $this->assertTrue($this->invoke_private('social_row_is_forced_pack', array($row)));
+        $this->assertStringContainsString('Watch this Reel', $this->invoke_private('social_reel_hold_copy', array($row)));
+        $again = $this->invoke_private('force_generate_social_reel');
+        $this->assertTrue(is_wp_error($again));
+        $this->assertStringContainsString('waiting for review', $again->get_error_message());
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_social', array('status' => 'needs_review'), array('id' => (int) $row['id']));
+        $this->assertTrue($this->invoke_private('requeue_social_item', array((int) $row['id'], false)));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
+        $this->assertSame('queued', (string) $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", (int) $row['id'])));
+    }
+
+    public function test_auto_reel_does_not_hold_for_review() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Auto reel story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 411);
+        $this->invoke_private('collect_social_article', array($post_id, $settings));
+        $this->assertSame('reel', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
     }
 
     public function test_forced_pack_claims_same_format_siblings_when_mix_slide_count_is_one() {
@@ -5680,6 +5737,225 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         @rmdir($tmp);
     }
 
+    public function test_social_reel_recipe_and_avatar_face_are_configurable() {
+        $story = $this->plugin->sanitize_settings(array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 1,
+            'social_reel_include_slides' => 1,
+            'social_reel_include_broll' => 1,
+            'social_reel_include_sting' => 1,
+            'social_reel_host_model' => 'kling-avatar-std',
+            'social_reel_generate_host_face' => 1,
+            'social_reel_enhance_host_face' => 1,
+            'social_reel_target_seconds' => 45,
+            'social_reel_weekly_limit' => 2,
+            'social_reel_tts_voice' => 'marin',
+            'social_reel_close_camera' => 1,
+            'social_reel_medium_camera' => 0,
+            'social_reel_fact_slides' => 3,
+            'social_reel_host_seconds' => 24,
+            'social_reel_sting_seconds' => 3,
+        ));
+        $this->assertSame('story', $story['social_reel_recipe']);
+        $this->assertSame(1, (int) $story['social_reel_include_host']);
+        $this->assertSame(1, (int) $story['social_reel_enhance_host_face']);
+        $this->assertSame(1, (int) $story['social_reel_generate_host_face']);
+        $this->assertSame('kling-avatar-std', $story['social_reel_host_model']);
+        $this->assertSame(45, (int) $story['social_reel_target_seconds']);
+        $this->assertSame(2, (int) $story['social_reel_weekly_limit']);
+        $this->assertSame('marin', $story['social_reel_tts_voice']);
+        $this->assertStringContainsString('Marin (female)', $this->invoke_private('social_reel_recipe_summary', array($story)));
+        $this->assertStringContainsString('same host face', $this->invoke_private('social_reel_recipe_summary', array($story)));
+        $this->assertStringContainsString('Female news presenter', $this->invoke_private('social_reel_tts_instructions', array($story)));
+        $this->assertStringContainsString('Male news presenter', $this->invoke_private('social_reel_tts_instructions', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame('shimmer', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'shimmer'))['social_reel_tts_voice']);
+        $this->assertSame('onyx', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'onyx'))['social_reel_tts_voice']);
+        $this->assertSame('alloy', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'alloy'))['social_reel_tts_voice']);
+        $this->assertSame('cedar', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'not-a-voice'))['social_reel_tts_voice']);
+        $this->assertSame(1, (int) $story['social_reel_close_camera']);
+        $this->assertSame(0, (int) $story['social_reel_medium_camera']);
+        $this->assertSame(3, (int) $story['social_reel_fact_slides']);
+        $this->assertSame(24, (int) $story['social_reel_host_seconds']);
+        $this->assertSame(3, (int) $story['social_reel_sting_seconds']);
+        $this->assertSame('110–140 spoken words, about 40–45 seconds.', $this->invoke_private('social_reel_script_brief', array($story)));
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_STORY_LAYOUT, $this->invoke_private('social_reel_layout_key', array($story)));
+        $empty = $this->plugin->sanitize_settings(array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 0,
+            'social_reel_include_slides' => 0,
+            'social_reel_include_broll' => 0,
+            'social_reel_include_sting' => 0,
+            'social_reel_close_camera' => 0,
+            'social_reel_medium_camera' => 0,
+        ));
+        $this->assertSame(1, (int) $empty['social_reel_include_broll']);
+        $host_only = $this->plugin->sanitize_settings(array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 1,
+            'social_reel_close_camera' => 0,
+            'social_reel_medium_camera' => 0,
+        ));
+        $this->assertSame(1, (int) $host_only['social_reel_close_camera']);
+        $clips = $this->invoke_private('build_social_reel_story_timeline', array(
+            array(
+                'on_image_headline' => 'Phone chip has a server cousin',
+                'on_image_subhead' => 'The rack is the prize',
+                'hook' => 'Cloud GPUs set the price',
+                'cta' => 'Read the full story on TechnoRapper',
+            ),
+            30,
+            $story,
+        ));
+        $kinds = array();
+        foreach ($clips as $clip) {
+            $kinds[] = $clip['kind'] . ':' . ($clip['crop'] ?? 'full');
+        }
+        $this->assertSame(array('host:close', 'broll:full', 'broll:close', 'broll:full', 'end:full'), $kinds);
+        $this->assertNotContains('slide:full', $kinds);
+        $this->assertGreaterThan(0.0, $this->invoke_private('social_reel_host_estimate_usd', array($story)));
+        $this->assertSame(0.0, $this->invoke_private('social_reel_host_estimate_usd', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(99, $this->invoke_private('social_reel_weekly_remaining', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(2, $this->invoke_private('social_reel_weekly_remaining', array($story)));
+        $held = $this->invoke_private('ensure_social_reel_host_portrait', array(array_merge(
+            TechnoRapper_AI_Wire::defaults(),
+            array(
+                'social_reel_include_host' => 1,
+                'social_reel_generate_host_face' => 0,
+                'social_reel_host_image_id' => 0,
+            )
+        )));
+        $this->assertWPError($held);
+        $this->assertSame('tr_ai_wire_reel_host_image', $held->get_error_code());
+    }
+
+    public function test_avatar_face_enhance_uses_codeformer() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to enhance an avatar face.');
+        }
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'codeformer') !== false && strpos($url, '/requests/') === false) {
+                $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
+                $captured['endpoint'] = $url;
+                return $this->mock_http_ok(array(
+                    'request_id' => 'fal-face-1',
+                    'status' => 'IN_QUEUE',
+                ));
+            }
+            if (strpos($url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                return $this->mock_http_ok(array('image' => array('url' => 'https://example.org/enhanced-face.jpg')));
+            }
+            if (strpos($url, 'example.org/enhanced-face.jpg') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => str_repeat('e', 2048),
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $enhanced = $this->invoke_private('ensure_social_reel_host_face_enhanced', array($attachment_id, TechnoRapper_AI_Wire::defaults()));
+        $this->assertFalse(is_wp_error($enhanced), is_wp_error($enhanced) ? $enhanced->get_error_message() : '');
+        $this->assertGreaterThan(0, (int) $enhanced);
+        $this->assertTrue(!empty($captured['submit']['face_upscale']));
+        $this->assertSame(2, (int) ($captured['submit']['upscale_factor'] ?? 0));
+        $this->assertStringContainsString('codeformer', (string) ($captured['endpoint'] ?? ''));
+        $this->assertSame((int) $enhanced, (int) get_post_meta($attachment_id, '_tr_ai_wire_host_face_enhanced_id', true));
+        $again = $this->invoke_private('ensure_social_reel_host_face_enhanced', array($attachment_id, TechnoRapper_AI_Wire::defaults()));
+        $this->assertSame((int) $enhanced, (int) $again);
+    }
+
+    public function test_saved_avatar_face_is_reused_for_every_reel() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to reuse an avatar face.');
+        }
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_include_host' => 1,
+            'social_reel_generate_host_face' => 1,
+            'social_reel_host_image_id' => $attachment_id,
+            'social_image_budget_usd' => 5,
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $calls = 0;
+        add_filter('pre_http_request', function () use (&$calls) {
+            $calls++;
+            return new WP_Error('blocked', 'Avatar generation must not run when a face is already saved.');
+        }, 10, 3);
+        $first = $this->invoke_private('ensure_social_reel_host_portrait', array($settings));
+        $second = $this->invoke_private('ensure_social_reel_host_portrait', array($settings));
+        $this->assertSame($attachment_id, (int) $first);
+        $this->assertSame($attachment_id, (int) $second);
+        $this->assertSame(0, $calls);
+        $this->assertSame($attachment_id, (int) $this->invoke_private('saved_social_reel_host_image_id'));
+        $stale = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_reel_host_image_id' => 0,
+        ));
+        $this->assertSame($attachment_id, (int) $stale['social_reel_host_image_id']);
+        $_POST['remove_reel_host_image'] = '1';
+        $removed = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_reel_host_image_id' => $attachment_id,
+        ));
+        unset($_POST['remove_reel_host_image']);
+        $this->assertSame(0, (int) $removed['social_reel_host_image_id']);
+    }
+
+    public function test_generated_avatar_face_is_saved_once_and_reused() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required to generate an avatar face.');
+        }
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_include_host' => 1,
+            'social_reel_generate_host_face' => 1,
+            'social_reel_host_image_id' => 0,
+            'social_image_budget_usd' => 5,
+            'social_reel_tts_voice' => 'cedar',
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $calls = 0;
+        $captured = '';
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$calls, &$captured, $jpeg) {
+            if (strpos((string) $url, 'api.openai.com/v1/images/generations') === false) {
+                return new WP_Error('blocked', 'Unexpected URL ' . $url);
+            }
+            $calls++;
+            $body = json_decode((string) ($args['body'] ?? ''), true);
+            $captured = (string) ($body['prompt'] ?? '');
+            return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+        }, 10, 3);
+        $first = $this->invoke_private('ensure_social_reel_host_portrait', array($settings));
+        $this->assertFalse(is_wp_error($first), is_wp_error($first) ? $first->get_error_message() : '');
+        $this->assertGreaterThan(0, (int) $first);
+        $this->assertSame((int) $first, (int) get_option(TechnoRapper_AI_Wire::OPTION, array())['social_reel_host_image_id']);
+        $this->assertStringContainsString('male news presenter', $captured);
+        $this->assertStringContainsString('single recurring show host', $captured);
+        $second = $this->invoke_private('ensure_social_reel_host_portrait', array(array_merge($settings, array(
+            'social_reel_host_image_id' => 0,
+            'social_reel_generate_host_face' => 1,
+        ))));
+        $this->assertSame((int) $first, (int) $second);
+        $this->assertSame(1, $calls);
+        $female = $this->invoke_private('social_reel_host_portrait_prompt', array(array_merge($settings, array(
+            'social_reel_tts_voice' => 'marin',
+        ))));
+        $this->assertStringContainsString('female news presenter', $female);
+    }
+
     public function test_site_context_needs_refresh_until_a_successful_read() {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         $this->assertTrue($this->plugin->site_context_needs_refresh());
@@ -5956,6 +6232,37 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Reel posts per day', $html);
         $this->assertStringContainsString('Monthly Reel video budget', $html);
         $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_reel_daily_limit]"', $html);
+        $this->assertStringContainsString('Avatar face', $html);
+        $this->assertStringContainsString('Enhance avatar face', $html);
+        $this->assertStringContainsString('Generate a presenter face', $html);
+        $this->assertStringContainsString('every Reel uses this same face', $html);
+        $this->assertStringContainsString('Talking host (avatar face)', $html);
+        $this->assertStringContainsString('id="tr-reel-recipe-story"', $html);
+        $this->assertStringContainsString('Male voices', $html);
+        $this->assertStringContainsString('Female voices', $html);
+        $this->assertStringContainsString('Neutral voices', $html);
+        $this->assertStringContainsString('id="tr-social-reel-voice"', $html);
+        $this->assertStringContainsString('id="tr-social-reel-voice-cedar"', $html);
+        $this->assertStringContainsString('id="tr-social-reel-voice-marin"', $html);
+        $this->assertTrue((bool) preg_match('/id="tr-social-reel-voice-cedar"[^>]*\bchecked\b/', $html));
+        $this->assertStringContainsString('tr-ai-wire-choice-card is-selected', $html);
+        $this->assertSame(10, has_action('admin_enqueue_scripts', array($this->plugin, 'enqueue_admin_assets')));
+        $admin_php = file_get_contents(dirname(__DIR__) . '/includes/class-admin.php');
+        $this->assertStringContainsString('function syncChoiceCards', $admin_php);
+        preg_match_all('/\sid="(tr-[^"]+)"/', $html, $id_matches);
+        $id_counts = array_count_values($id_matches[1]);
+        $duplicate_ids = array();
+        foreach ($id_counts as $control_id => $count) {
+            if ($count > 1) {
+                $duplicate_ids[] = $control_id . '=' . $count;
+            }
+        }
+        $this->assertSame(array(), $duplicate_ids);
+        ob_start();
+        $this->plugin->costs_page();
+        $costs = ob_get_clean();
+        $this->assertStringContainsString('Current recipe', $costs);
+        $this->assertStringContainsString('B-roll spoken Reel', $costs);
 
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
             'social_reel_daily_limit' => 2,
@@ -6431,8 +6738,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('tr_ai_wire_run_social_queue', $html);
         $this->assertStringContainsString('Generate carousel now', $html);
         $this->assertStringContainsString('Generate collage now', $html);
+        $this->assertStringContainsString('Generate Reel now', $html);
         $this->assertStringContainsString('name="pack_kind" value="carousel"', $html);
         $this->assertStringContainsString('name="pack_kind" value="collage"', $html);
+        $this->assertStringContainsString('name="pack_kind" value="reel"', $html);
         $this->assertStringNotContainsString('Regenerate graphic and post again', $html);
     }
 
@@ -6471,6 +6780,49 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             get_post($post_id),
         ));
         $this->assertSame($attachment_id, $found);
+    }
+
+    public function test_social_queue_page_shows_held_reel_for_review() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Held reel preview',
+        ));
+        $upload = wp_upload_bits('technorapper-reel-test-' . wp_generate_uuid4() . '.mp4', null, 'fake-mp4');
+        if (!empty($upload['error'])) {
+            $this->markTestSkipped('Uploads are required to preview a held Reel.');
+        }
+        $video_id = wp_insert_attachment(array(
+            'post_mime_type' => 'video/mp4',
+            'post_title' => 'Spoken Reel',
+            'post_status' => 'inherit',
+        ), $upload['file'], $post_id, true);
+        if (is_wp_error($video_id) || (int) $video_id < 1) {
+            $this->markTestSkipped('Uploads are required to preview a held Reel.');
+        }
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_reel_id', (int) $video_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Held: Watch this Reel, then click Publish to Instagram. It has not been posted yet.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Held for review', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-preview-video', $html);
+        $this->assertStringContainsString('Publish Reel to Instagram', $html);
+        $this->assertStringContainsString('I reviewed this Reel and want it live', $html);
+        $this->assertStringNotContainsString('Post existing graphic to Instagram', $html);
     }
 
     public function test_instagram_missing_quota_field_still_publishes() {
