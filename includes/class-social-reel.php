@@ -433,6 +433,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $host = $this->social_reel_host_model($settings);
                 $parts[] = (string) ($hosts[$host]['label'] ?? 'Talking host');
                 $parts[] = 'same host face';
+                if (!isset($settings['social_reel_vary_host_scene']) || !empty($settings['social_reel_vary_host_scene'])) {
+                    $parts[] = 'new outfit/place each Reel';
+                }
                 if (!empty($settings['social_reel_enhance_host_face'])) {
                     $parts[] = 'face enhance';
                 }
@@ -1655,11 +1658,18 @@ trait TechnoRapper_AI_Wire_Social_Reel {
 
     private function generate_social_reel_host($post, $settings, $copy, $voice, $submit_only = false) {
         $voice_key = (string) ($voice['key'] ?? '');
+        $scene_key = $this->social_reel_host_scene_key($post, $copy, $settings);
+        $input_key = md5($voice_key . '|' . $scene_key);
         $existing = $this->social_host_id($post->ID);
         if ($existing > 0) {
             $path = get_attached_file($existing);
             $made_for = (string) get_post_meta($existing, '_tr_ai_wire_voice_key', true);
-            if ($path && file_exists($path) && ($made_for === '' || $voice_key === '' || $made_for === $voice_key)) {
+            $made_scene = (string) get_post_meta($existing, '_tr_ai_wire_host_scene_key', true);
+            if (
+                $path && file_exists($path)
+                && ($made_for === '' || $voice_key === '' || $made_for === $voice_key)
+                && ($made_scene === '' || $made_scene === $scene_key)
+            ) {
                 return array('id' => $existing, 'path' => $path);
             }
         }
@@ -1674,10 +1684,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'estimate' => $this->social_reel_host_estimate_usd($settings, (float) ($voice['seconds'] ?? 0)),
             'enforce_budget' => true,
             'settings' => $settings,
-            'input_key' => $voice_key,
+            'input_key' => $input_key,
             'submit_only' => $submit_only,
-            'payload' => function () use ($settings, $voice) {
-                $image_url = $this->social_reel_host_face_url($settings);
+            'payload' => function () use ($post, $settings, $copy, $voice, $scene_key) {
+                $image_url = $this->social_reel_host_face_url($settings, $post, $copy);
                 if (is_wp_error($image_url)) {
                     return $image_url;
                 }
@@ -1685,23 +1695,29 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 if (is_wp_error($audio_url)) {
                     return $audio_url;
                 }
+                $look = $this->social_reel_host_scene_look($post, $copy);
                 return array(
                     'image_url' => $image_url,
                     'audio_url' => $audio_url,
-                    'prompt' => 'News presenter speaking to camera, natural blinks, subtle head motion, no extra people, no text, no logos.',
+                    'prompt' => 'The same news presenter speaking to camera in this exact wardrobe and place: '
+                        . $look['outfit'] . ', ' . $look['place']
+                        . '. Natural blinks, subtle head motion, no extra people, no text, no logos.',
                 );
             },
-            'store' => function ($bytes) use ($post, $copy, $voice_key) {
+            'store' => function ($bytes) use ($post, $copy, $voice_key, $scene_key) {
                 $stored = $this->store_social_host($post, $bytes, $copy);
-                if (!is_wp_error($stored) && $voice_key !== '') {
-                    update_post_meta((int) $stored['id'], '_tr_ai_wire_voice_key', $voice_key);
+                if (!is_wp_error($stored)) {
+                    if ($voice_key !== '') {
+                        update_post_meta((int) $stored['id'], '_tr_ai_wire_voice_key', $voice_key);
+                    }
+                    update_post_meta((int) $stored['id'], '_tr_ai_wire_host_scene_key', $scene_key);
                 }
                 return $stored;
             },
         ));
     }
 
-    private function social_reel_host_face_url($settings) {
+    private function social_reel_host_face_url($settings, $post = null, $copy = null) {
         $image_id = $this->ensure_social_reel_host_portrait($settings);
         if (is_wp_error($image_id)) {
             return $image_id;
@@ -1713,7 +1729,160 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             }
             $image_id = (int) $enhanced;
         }
+        if ($post instanceof WP_Post && !empty($settings['social_reel_vary_host_scene'])) {
+            $scene = $this->ensure_social_reel_host_scene($post, $settings, is_array($copy) ? $copy : array(), (int) $image_id);
+            if (!is_wp_error($scene)) {
+                $image_id = (int) $scene;
+            }
+        }
         return $this->social_reel_attachment_data_url((int) $image_id, 'tr_ai_wire_reel_host_image', 'The host portrait could not be read.');
+    }
+
+    private function social_reel_host_scene_look($post, $copy = array()) {
+        $copy = is_array($copy) ? $copy : array();
+        $seed = abs(crc32((string) ((int) ($post->ID ?? 0)) . '|' . (string) ($copy['hook'] ?? $post->post_title ?? '') . '|' . (string) ($copy['visual_brief'] ?? '')));
+        $outfits = array(
+            'charcoal tailored blazer over a plain shirt',
+            'navy knit polo under an open jacket',
+            'cream crewneck sweater',
+            'black turtleneck',
+            'soft grey shirt with the top button open',
+            'deep green blazer over a white tee',
+        );
+        $places = array(
+            'modern news desk with soft bokeh screens behind',
+            'bright loft studio with daylight windows',
+            'quiet city balcony at dusk with soft skyline bokeh',
+            'warm library corner with shelves softly blurred',
+            'minimal concrete studio with a single key light',
+            'rooftop terrace with distant city lights',
+            'glass office lounge with plants in the background',
+            'night street café awning softly out of focus',
+        );
+        $lights = array(
+            'soft key light from camera left',
+            'clean daylight',
+            'warm golden-hour rim light',
+            'cool evening practical lights',
+        );
+        return array(
+            'outfit' => $outfits[$seed % count($outfits)],
+            'place' => $places[$seed % count($places)],
+            'lighting' => $lights[$seed % count($lights)],
+        );
+    }
+
+    private function social_reel_host_scene_key($post, $copy, $settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        if (empty($settings['social_reel_vary_host_scene'])) {
+            return 'canonical';
+        }
+        $look = $this->social_reel_host_scene_look($post, $copy);
+        $face = (string) $this->saved_social_reel_host_image_id();
+        return md5(implode('|', array(
+            $face,
+            $look['outfit'],
+            $look['place'],
+            $look['lighting'],
+            $this->social_image_scene_brief((string) (($copy['visual_brief'] ?? ''))),
+        )));
+    }
+
+    private function social_reel_host_scene_prompt($post, $copy, $settings = null) {
+        $look = $this->social_reel_host_scene_look($post, $copy);
+        $brief = $this->social_image_scene_brief((string) (($copy['visual_brief'] ?? '')));
+        $hook = $this->clip_social_text((string) ($copy['hook'] ?? $post->post_title), 80);
+        $prompt = 'Keep this exact person\'s face, facial features, skin tone, age, hairline, and identity. Do not invent a different person or celebrity. '
+            . 'Change only wardrobe, location, and backdrop. Photoreal vertical head-and-shoulders portrait looking straight at camera, neutral expression ready to speak. '
+            . 'Wardrobe: ' . $look['outfit'] . '. Place/backdrop: ' . $look['place'] . '. Lighting: ' . $look['lighting'] . '. ';
+        if ($brief !== '') {
+            $prompt .= 'Story mood (do not put text in the image): ' . $brief . '. ';
+        } elseif ($hook !== '') {
+            $prompt .= 'Story mood (do not put text in the image): ' . $hook . '. ';
+        }
+        $prompt .= 'Fully clothed adult news presenter, sharp face, natural skin, no logos, no text, no watermarks, no lower-third.';
+        return $prompt;
+    }
+
+    private function ensure_social_reel_host_scene($post, $settings, $copy, $face_id) {
+        if (!$post instanceof WP_Post) {
+            return new WP_Error('tr_ai_wire_social_post', 'The source article is no longer published.');
+        }
+        $face_id = (int) $face_id;
+        if ($face_id < 1) {
+            return new WP_Error('tr_ai_wire_reel_host_image', 'The host portrait could not be read.');
+        }
+        $key = $this->social_reel_host_scene_key($post, $copy, $settings);
+        $existing = (int) get_post_meta($post->ID, '_tr_ai_wire_social_host_scene_id', true);
+        if ($existing > 0 && $this->social_image_file_exists($existing) && (string) get_post_meta($existing, '_tr_ai_wire_host_scene_key', true) === $key) {
+            return $existing;
+        }
+        $this->social_reel_progress_note($post->ID, 'Dressing the host for this story (same face, new place).');
+        $generated = $this->generate_social_reel_host_scene($post, $settings, $copy, $face_id, $key);
+        if (is_wp_error($generated)) {
+            return $generated;
+        }
+        update_post_meta($post->ID, '_tr_ai_wire_social_host_scene_id', (int) $generated);
+        return (int) $generated;
+    }
+
+    private function generate_social_reel_host_scene($post, $settings, $copy, $face_id, $key) {
+        $month_key = 'tr_ai_wire_social_image_usage_' . gmdate('Ym');
+        $usage = (float) get_option($month_key, 0);
+        $budget = (float) ($settings['social_image_budget_usd'] ?? 0);
+        if ($budget <= 0 || ($usage + self::SOCIAL_IMAGE_ESTIMATED_USD) > $budget) {
+            return new WP_Error('tr_ai_wire_social_image_budget', 'Social image generation is paused because its monthly image budget is exhausted.');
+        }
+        $api_key = $this->api_key();
+        if (!$api_key) {
+            return new WP_Error('tr_ai_wire_social_image_key', 'Add the OpenAI API key before restyling the host for a new place.');
+        }
+        $source = $this->social_reel_attachment_data_url((int) $face_id, 'tr_ai_wire_reel_host_image', 'The host portrait could not be read for a new scene.');
+        if (is_wp_error($source)) {
+            return $source;
+        }
+        $prompt = $this->social_reel_host_scene_prompt($post, $copy, $settings);
+        $response = wp_remote_post('https://api.openai.com/v1/images/edits', array(
+            'timeout' => 120,
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json',
+            ),
+            'body' => wp_json_encode(array(
+                'model' => self::SOCIAL_IMAGE_MODEL,
+                'prompt' => $prompt,
+                'images' => array(array('image_url' => $source)),
+                'size' => '1024x1536',
+                'quality' => 'low',
+                'output_format' => 'jpeg',
+                'n' => 1,
+            )),
+        ));
+        if (is_wp_error($response)) {
+            return new WP_Error('tr_ai_wire_reel_host_scene', $response->get_error_message());
+        }
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $data = json_decode((string) wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || empty($data['data'][0]['b64_json'])) {
+            $message = sanitize_text_field($data['error']['message'] ?? ('Image edit API returned HTTP ' . $status . '.'));
+            return new WP_Error('tr_ai_wire_reel_host_scene', $message);
+        }
+        $bytes = base64_decode($data['data'][0]['b64_json'], true);
+        if (!$bytes) {
+            return new WP_Error('tr_ai_wire_reel_host_scene', 'OpenAI returned an invalid host-scene image.');
+        }
+        update_option($month_key, round($usage + self::SOCIAL_IMAGE_ESTIMATED_USD, 6), false);
+        $stored = $this->store_social_host_face(
+            $bytes,
+            'technorapper-social-host-scene-' . (int) $post->ID . '.jpg',
+            sanitize_text_field((string) ($copy['hook'] ?? $post->post_title) . ' — host scene')
+        );
+        if (is_wp_error($stored)) {
+            return $stored;
+        }
+        update_post_meta((int) $stored, '_tr_ai_wire_host_scene_key', $key);
+        update_post_meta((int) $stored, '_tr_ai_wire_host_scene_face_id', (int) $face_id);
+        return (int) $stored;
     }
 
     private function saved_social_reel_host_image_id() {

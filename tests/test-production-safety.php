@@ -6111,6 +6111,53 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('female news presenter', $female);
     }
 
+    public function test_host_scene_keeps_the_same_face_but_changes_place_per_reel() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required to restyle the host scene.');
+        }
+        $face_id = $this->create_social_jpeg_attachment();
+        if ($face_id < 1) {
+            $this->markTestSkipped('Uploads are required to restyle the host scene.');
+        }
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_include_host' => 1,
+            'social_reel_vary_host_scene' => 1,
+            'social_reel_host_image_id' => $face_id,
+            'social_image_budget_usd' => 5,
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $post_a = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Chip shortage'));
+        $post_b = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Rocket launch'));
+        $calls = 0;
+        $prompts = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$calls, &$prompts, $jpeg) {
+            if (strpos((string) $url, 'api.openai.com/v1/images/edits') === false) {
+                return new WP_Error('blocked', 'Unexpected URL ' . $url);
+            }
+            $calls++;
+            $body = json_decode((string) ($args['body'] ?? ''), true);
+            $prompts[] = (string) ($body['prompt'] ?? '');
+            $this->assertNotEmpty($body['images'][0]['image_url'] ?? '');
+            return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+        }, 10, 3);
+        $first = $this->invoke_private('ensure_social_reel_host_scene', array(get_post($post_a), $settings, array('hook' => 'Chip shortage', 'visual_brief' => 'factory floor'), $face_id));
+        $again = $this->invoke_private('ensure_social_reel_host_scene', array(get_post($post_a), $settings, array('hook' => 'Chip shortage', 'visual_brief' => 'factory floor'), $face_id));
+        $second = $this->invoke_private('ensure_social_reel_host_scene', array(get_post($post_b), $settings, array('hook' => 'Rocket launch', 'visual_brief' => 'night pad'), $face_id));
+        $this->assertFalse(is_wp_error($first), is_wp_error($first) ? $first->get_error_message() : '');
+        $this->assertSame((int) $first, (int) $again);
+        $this->assertNotSame((int) $first, (int) $second);
+        $this->assertSame(2, $calls);
+        $this->assertStringContainsString('exact person', $prompts[0]);
+        $this->assertStringContainsString('Change only wardrobe, location, and backdrop', $prompts[0]);
+        $look_a = $this->invoke_private('social_reel_host_scene_look', array(get_post($post_a), array('hook' => 'Chip shortage')));
+        $look_b = $this->invoke_private('social_reel_host_scene_look', array(get_post($post_b), array('hook' => 'Rocket launch')));
+        $this->assertNotSame($look_a['place'] . '|' . $look_a['outfit'], $look_b['place'] . '|' . $look_b['outfit']);
+        $this->assertSame('canonical', $this->invoke_private('social_reel_host_scene_key', array(get_post($post_a), array('hook' => 'x'), array_merge($settings, array('social_reel_vary_host_scene' => 0)))));
+        remove_all_filters('pre_http_request');
+    }
+
     public function test_site_context_needs_refresh_until_a_successful_read() {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         $this->assertTrue($this->plugin->site_context_needs_refresh());

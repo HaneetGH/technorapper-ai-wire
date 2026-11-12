@@ -407,7 +407,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <p>
                             <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="0">
                             <label><input id="tr-reel-include-host" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="1" <?php checked(!empty($s['social_reel_include_host'])); ?>> <strong>Talking host (avatar face)</strong></label>
-                            <span class="description">Optional upsell. Lip-syncs one saved portrait to the voiceover. Every Reel uses that same avatar.</span>
+                            <span class="description">Optional upsell. Same face on every Reel; outfit, place, and backdrop can change per video.</span>
                         </p>
                         <div class="tr-ai-wire-panel" data-tr-reveal="tr-reel-include-host"<?php echo !empty($s['social_reel_include_host']) ? '' : ' hidden'; ?>>
                             <?php
@@ -426,9 +426,9 @@ trait TechnoRapper_AI_Wire_Admin {
                                 <div>
                                     <p><label for="tr-reel-host-image"><strong>Avatar face</strong></label><br>
                                     <input id="tr-reel-host-image" name="social_reel_host_image" type="file" accept="image/jpeg,image/png,image/webp">
-                                    <span class="description">Front-facing adult portrait, head and shoulders, no logos. This is the show host — every Reel uses this same face.</span></p>
+                                    <span class="description">Front-facing adult portrait, head and shoulders, no logos. This face is the show host identity — kept the same across Reels.</span></p>
                                     <?php if ($host_src) : ?>
-                                    <p class="description">Saved. New Reels keep this avatar. Replace it only if you upload a new portrait or remove it.</p>
+                                    <p class="description">Saved face. New Reels keep this identity. Clothing, room, and backdrop can still change per story.</p>
                                     <p><label><input type="checkbox" name="remove_reel_host_image" value="1"> Remove saved avatar face</label></p>
                                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="0">
                                     <?php else : ?>
@@ -445,6 +445,11 @@ trait TechnoRapper_AI_Wire_Admin {
                                         <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="0">
                                         <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="1" <?php checked(!empty($s['social_reel_enhance_host_face'])); ?>> <strong>Enhance avatar face</strong></label>
                                         <span class="description">CodeFormer restore/upscale (~$0.01 once per face, video budget).</span>
+                                    </p>
+                                    <p>
+                                        <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_vary_host_scene]" value="0">
+                                        <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_vary_host_scene]" value="1" <?php checked(!isset($s['social_reel_vary_host_scene']) || !empty($s['social_reel_vary_host_scene'])); ?>> <strong>New outfit / place per Reel</strong></label>
+                                        <span class="description">Keeps the same face, then paints a fresh wardrobe and backdrop for each story (~$0.006 image budget). Turn off to reuse the exact same still every time.</span>
                                     </p>
                                 </div>
                             </div>

@@ -3475,6 +3475,7 @@ trait TechnoRapper_AI_Wire_Social {
         for ($detail_i = 0; $detail_i < 6; $detail_i++) {
             delete_post_meta($post_id, '_tr_ai_wire_reel_detail_' . (string) $detail_i);
         }
+        delete_post_meta($post_id, '_tr_ai_wire_social_host_scene_id');
         $revision = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true);
         update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision + 1);
         update_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', '1');
