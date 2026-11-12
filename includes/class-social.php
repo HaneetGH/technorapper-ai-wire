@@ -1883,10 +1883,11 @@ trait TechnoRapper_AI_Wire_Social {
             . (!empty($comic) ? 'Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. ' : '')
             . 'Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
-            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings) . ' THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. '
+            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings) . ' THIS article only. Make someone stop scrolling. Not a robot reading a press release. '
+            . 'Three beats only: (1) pattern-interrupt hook in the first 1–2 seconds that names the change; (2) the one fact or mechanism from key_takeaways (or the lede if none) in short punchy sentences; (3) what that changes for the viewer\'s phone, game, job, or money. '
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
             . 'Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
-            . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These burn onto moving host and B-roll shots, not still news cards. '
+            . 'reel_captions: 3–5 short on-screen lines that match spoken hooks and stakes, max 5 words each. Burn onto moving B-roll and detail shots — big, sparse, stop-thumb text. '
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. '
             . (!empty($comic) ? 'A dry wink is fine if the named change is still obvious. ' : '')
             . 'This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
@@ -4975,11 +4976,19 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
         $reel_id = $this->social_reel_preview_id($post->ID);
+        $partial_kind = '';
         $partial_id = 0;
         if ($reel_id < 1) {
-            $partial_id = $this->social_host_id($post->ID);
-            if ($partial_id < 1) {
-                $partial_id = $this->social_motion_id($post->ID);
+            // Prefer B-roll over the talking-host take. The host clip is a full
+            // lip-sync readout of the script — an ingredient, not the story edit.
+            $partial_id = $this->social_motion_id($post->ID);
+            if ($partial_id > 0) {
+                $partial_kind = 'broll';
+            } else {
+                $partial_id = $this->social_host_id($post->ID);
+                if ($partial_id > 0) {
+                    $partial_kind = 'host';
+                }
             }
         }
         $video_id = $reel_id > 0 ? $reel_id : $partial_id;
@@ -4995,7 +5004,15 @@ trait TechnoRapper_AI_Wire_Social {
             }
             return;
         }
-        echo '<p class="description">Preview of one finished piece only. The finished Reel (voice, cuts and end card) is still being assembled, then Download video and Post appear here.</p>';
+        if ($partial_kind === 'host') {
+            echo '<p class="description"><strong>Talking-host take only</strong> — this is the full lip-sync readout used as an ingredient. It is not the finished story Reel. After assembly you get host opening + news-detail video/photos + sting.</p>';
+            return;
+        }
+        if ($partial_kind === 'broll') {
+            echo '<p class="description"><strong>B-roll piece only</strong> (usually ~8s, silent). Not the finished story Reel. Voice, host opening, news details, and sting are assembled next.</p>';
+            return;
+        }
+        echo '<p class="description">Preview of one finished piece only. The finished Reel is still being assembled, then Download video and Post appear here.</p>';
     }
 
     private function render_social_reel_downloads($row, $post) {
@@ -5075,8 +5092,8 @@ trait TechnoRapper_AI_Wire_Social {
         if ($live && !empty($progress['detail'])) {
             echo '<p class="description tr-ai-wire-reel-build-detail">' . esc_html((string) $progress['detail']) . '</p>';
         }
-        if (!empty($plan['story']) && empty($plan['host_seek']) && !empty($plan['host'])) {
-            echo '<p class="description">Movie-style story: the presenter speaks the opening, then the cut moves to news detail video and photos while the voice continues. Mid-speech camera switches need ffmpeg on the server; until then the host stays in the opening only.</p>';
+        if (!empty($plan['story']) && empty($plan['host_seek'])) {
+            echo '<p class="description">Scroll-stop cut: cold-open on news video/photos, a short host hook, then more detail beats while the voice continues. Not a full talking-head readout. Mid-speech host returns need ffmpeg on the server.</p>';
         }
         $spent = $this->social_reel_spent_usd($post->ID);
         if ($spent > 0) {

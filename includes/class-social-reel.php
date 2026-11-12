@@ -231,7 +231,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'cedar' => array(
                 'label' => 'Cedar',
                 'gender' => 'male',
-                'short' => 'Default news desk',
+                'short' => 'Default — conversational host',
             ),
             'ash' => array(
                 'label' => 'Ash',
@@ -324,13 +324,16 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $spec = $this->social_reel_tts_voice_spec($this->social_reel_tts_voice($settings));
         $gender = (string) ($spec['gender'] ?? 'neutral');
         if ($gender === 'female') {
-            $cast = 'Female news presenter.';
+            $cast = 'Female tech creator speaking to camera.';
         } elseif ($gender === 'male') {
-            $cast = 'Male news presenter.';
+            $cast = 'Male tech creator speaking to camera.';
         } else {
-            $cast = 'News presenter.';
+            $cast = 'Tech creator speaking to camera.';
         }
-        return $cast . ' Clear, calm, slightly urgent. No theatrical announcer. Speak so a listener can repeat the takeaway.';
+        return $cast
+            . ' Sound like a person stopping a friend mid-scroll — never a teleprompter, never a flat robot newsreader, never a TV announcer.'
+            . ' Punch the first line as a hook. Short phrases. Natural pauses. Slight urgency and a hint of a smile.'
+            . ' Emphasize the named change and the stake. Speak so they can repeat the takeaway.';
     }
 
     private function social_reel_recipe($settings = null) {
@@ -362,12 +365,16 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_reel_script_brief($settings = null) {
         $target = $this->social_reel_target_seconds($settings);
         if ($target >= 40) {
-            return '110–140 spoken words, about 40–45 seconds.';
+            $length = '110–140 spoken words, about 40–45 seconds.';
+        } elseif ($target >= 28) {
+            $length = '80–110 spoken words, about 30 seconds.';
+        } else {
+            $length = '40–55 spoken words, about 15–18 seconds.';
         }
-        if ($target >= 28) {
-            return '80–110 spoken words, about 30 seconds.';
-        }
-        return '40–55 spoken words, about 15–18 seconds.';
+        return $length
+            . ' Write for a scroll-stopping Reel, not a press readout. First 1–2 seconds: a pattern-interrupt hook that names the change (question, contradiction, or concrete stake).'
+            . ' Then 2–4 short punchy sentences — one idea each. Talk like you are telling one friend the one thing that matters for their phone, game, job, or money.'
+            . ' Ban: today we discuss, in this video, according to reports, experts say, let’s dive in, here’s what you need to know, moving on, in conclusion.';
     }
 
     private function social_reel_host_seconds($settings = null) {
@@ -528,17 +535,18 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $lesson = $this->clip_social_text($lede, 140);
             }
         }
-        $parts = array();
-        foreach (array($hook, $lesson) as $part) {
-            $part = rtrim($part, '.');
-            if ($part !== '' && !in_array($part, $parts, true)) {
-                $parts[] = $part;
-            }
+        $hook = rtrim($hook, '.');
+        $lesson = rtrim($lesson, '.');
+        if ($hook === '' && $lesson === '') {
+            return $this->clip_social_block('Something just shifted in this story. Here is the one change that matters.', 700);
         }
-        if (!$parts) {
-            $parts[] = 'Here is what changed';
+        if ($hook !== '' && $lesson !== '' && strcasecmp($hook, $lesson) !== 0) {
+            $script = $hook . '? ' . $lesson . '. That is the part that hits your next session.';
+        } elseif ($hook !== '') {
+            $script = $hook . '. That is the change — and it lands on what you use next.';
+        } else {
+            $script = $lesson . '. That is the part that matters for you.';
         }
-        $script = implode('. ', $parts) . '.';
         return $this->clip_social_block($script, 700);
     }
 
@@ -962,29 +970,41 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         );
     }
 
+    private function social_reel_fal_append_detail_beat(&$visual, &$clock, $post, $copy, $photo_bytes, $caption, $index, $seconds, $motion_url, $motion_source, $prefer_motion) {
+        $seconds = max(1.2, (float) $seconds);
+        if ($prefer_motion && $motion_url !== '') {
+            $loops = $this->social_fal_loop_keyframes($motion_url, $motion_source, $seconds, $clock);
+            if ($loops) {
+                foreach ($loops as $frame) {
+                    $visual[] = $frame;
+                }
+                $clock += $seconds;
+                return true;
+            }
+        }
+        $card = $this->social_reel_detail_frame($post, $copy, $photo_bytes, $caption, $index);
+        if (is_wp_error($card)) {
+            return $card;
+        }
+        $card_url = $this->social_reel_file_data_url((string) $card['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'A Reel news detail frame is missing.');
+        if (is_wp_error($card_url)) {
+            return $card_url;
+        }
+        $visual[] = array(
+            'timestamp' => $this->social_reel_ms($clock),
+            'duration' => $this->social_reel_ms($seconds),
+            'url' => $card_url,
+        );
+        $clock += $seconds;
+        return true;
+    }
+
     private function social_reel_fal_movie_keyframes($post, $settings, $copy, $plan, $parts, $photo_bytes, $audio_seconds, $use_sting, $sting_seconds, $end_caption) {
         $host = is_array($parts['host'] ?? null) ? $parts['host'] : null;
         $motion = is_array($parts['motion'] ?? null) ? $parts['motion'] : null;
         $visual = array();
         $clock = 0.0;
         $photo_bytes = is_string($photo_bytes) ? $photo_bytes : '';
-
-        if ($host) {
-            $host_url = $this->social_reel_file_data_url((string) $host['path'], 'video/mp4', 'tr_ai_wire_reel_host', 'The talking-host clip is missing.');
-            if (is_wp_error($host_url)) {
-                return $host_url;
-            }
-            $host_len = $this->social_video_duration((string) $host['path'], $audio_seconds);
-            // Opening host only — lips match from t=0. Later return-cuts need ffmpeg seeks.
-            $intro = min($host_len, max(3.5, min(8.0, $audio_seconds * 0.32)));
-            if (!$motion && $photo_bytes === '') {
-                $intro = max(3.0, min($host_len, $audio_seconds * 0.55));
-            }
-            $visual[] = array('timestamp' => 0, 'duration' => $this->social_reel_ms($intro), 'url' => $host_url);
-            $clock = $intro;
-        }
-
-        $left = max(0.0, $audio_seconds - $clock);
         $captions = $this->social_reel_cutaway_captions($copy);
         if (!$captions) {
             foreach (array($copy['hook'] ?? '', $copy['on_image_headline'] ?? '', $copy['cta'] ?? '') as $line) {
@@ -994,13 +1014,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 }
             }
         }
-        $beat_n = max(2, min(4, count($captions) ?: 2));
-        if (!empty($settings['social_reel_include_slides'])) {
-            $beat_n = max($beat_n, $this->social_reel_fact_slides($settings));
-        }
-        $beat_n = min(4, $beat_n);
-        if ($left < 1.6) {
-            $beat_n = max(1, min($beat_n, 1));
+        if (!$captions) {
+            $captions[] = $this->clip_social_text((string) ($copy['hook'] ?? $post->post_title), 42);
         }
 
         $motion_url = '';
@@ -1013,35 +1028,78 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $motion_source = $this->social_video_duration((string) $motion['path'], 4.0);
         }
 
+        $host_url = '';
+        $host_len = 0.0;
+        if ($host) {
+            $host_url = $this->social_reel_file_data_url((string) $host['path'], 'video/mp4', 'tr_ai_wire_reel_host', 'The talking-host clip is missing.');
+            if (is_wp_error($host_url)) {
+                return $host_url;
+            }
+            $host_len = $this->social_video_duration((string) $host['path'], $audio_seconds);
+        }
+
+        // Cold open on motion/detail so the thumb stops on a visual hook, not a talking face.
+        $can_cold = ($motion_url !== '' || $photo_bytes !== '') && $audio_seconds >= 8.0;
+        if ($can_cold) {
+            $cold = min(2.6, max(1.8, $audio_seconds * 0.14));
+            $added = $this->social_reel_fal_append_detail_beat(
+                $visual,
+                $clock,
+                $post,
+                $copy,
+                $photo_bytes,
+                $captions[0],
+                0,
+                $cold,
+                $motion_url,
+                $motion_source,
+                $motion_url !== ''
+            );
+            if (is_wp_error($added)) {
+                return $added;
+            }
+        }
+
+        // Short host hook only — lips match from t=0 of the host clip. Not a full readout.
+        if ($host_url !== '') {
+            $intro = min($host_len, max(2.4, min(3.6, $audio_seconds * 0.18)));
+            if (!$can_cold) {
+                $intro = min($host_len, max(3.0, min(5.0, $audio_seconds * 0.28)));
+            }
+            $visual[] = array('timestamp' => $this->social_reel_ms($clock), 'duration' => $this->social_reel_ms($intro), 'url' => $host_url);
+            $clock += $intro;
+        }
+
+        $left = max(0.0, $audio_seconds - $clock);
+        $beat_n = max(2, min(4, count($captions)));
+        if (!empty($settings['social_reel_include_slides'])) {
+            $beat_n = max($beat_n, $this->social_reel_fact_slides($settings));
+        }
+        $beat_n = min(4, $beat_n);
+        if ($left < 1.8) {
+            $beat_n = 1;
+        }
         if ($left >= 0.8) {
             $slice = $left / max(1, $beat_n);
             for ($i = 0; $i < $beat_n; $i++) {
-                $caption = $captions[$i] ?? ($captions[0] ?? (string) ($copy['hook'] ?? ''));
-                $prefer_motion = ($motion_url !== '') && ($photo_bytes === '' || ($i % 2) === 0);
-                if ($prefer_motion) {
-                    $loops = $this->social_fal_loop_keyframes($motion_url, $motion_source, $slice, $clock);
-                    if ($loops) {
-                        foreach ($loops as $frame) {
-                            $visual[] = $frame;
-                        }
-                        $clock += $slice;
-                        continue;
-                    }
-                }
-                $card = $this->social_reel_detail_frame($post, $copy, $photo_bytes, $caption, $i);
-                if (is_wp_error($card)) {
-                    return $card;
-                }
-                $card_url = $this->social_reel_file_data_url((string) $card['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'A Reel news detail frame is missing.');
-                if (is_wp_error($card_url)) {
-                    return $card_url;
-                }
-                $visual[] = array(
-                    'timestamp' => $this->social_reel_ms($clock),
-                    'duration' => $this->social_reel_ms(max(1.4, $slice)),
-                    'url' => $card_url,
+                $caption = $captions[min($i, count($captions) - 1)];
+                $prefer_motion = ($motion_url !== '') && ($photo_bytes === '' || (($i + ($can_cold ? 1 : 0)) % 2) === 0);
+                $added = $this->social_reel_fal_append_detail_beat(
+                    $visual,
+                    $clock,
+                    $post,
+                    $copy,
+                    $photo_bytes,
+                    $caption,
+                    $i + 1,
+                    $slice,
+                    $motion_url,
+                    $motion_source,
+                    $prefer_motion
                 );
-                $clock += max(1.4, $slice);
+                if (is_wp_error($added)) {
+                    return $added;
+                }
             }
         }
 
@@ -1079,7 +1137,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $use_sting = $sting_seconds > 0 && (string) get_post_meta($post->ID, '_tr_ai_wire_reel_no_sting', true) !== '1';
         $movie = !empty($plan['story']);
         $input_key = md5(implode('|', array(
-            'movie-v1',
+            'movie-v2-hook',
             (string) $voice['key'],
             (int) ($host['id'] ?? 0),
             (int) ($motion['id'] ?? 0),
@@ -1458,7 +1516,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $this->social_reel_progress_note(
                 $post->ID,
                 empty($plan['host_seek'])
-                    ? 'Assembling a movie-style story: host speaks first, then news details on video and photos.'
+                    ? 'Assembling a scroll-stop story: cold-open details, short host hook, then news beats.'
                     : 'Assembling the story Reel at Fal.'
             );
             return $this->social_reel_assemble_with_fal($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);

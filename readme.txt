@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.75
+Stable tag: 0.2.76
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.76 =
+* Reels stop sounding like a robot readout: punchier spoken hooks, creator-style TTS delivery, and a cold-open story cut (news video/photos first, short host hook, then detail beats). Partial previews are labeled so the full talking-host take is not mistaken for the finished Reel.
 
 = 0.2.75 =
 * Story edit is movie-style storytelling on hosts without ffmpeg: the presenter speaks the opening, then the cut moves to news detail B-roll and captioned photos while the voice continues, then the brand sting.
@@ -161,6 +164,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.76 =
+Update, then Start over on a stuck/boring Reel so the voiceover and assemble use the new hook style. Resume alone keeps the old script.
 
 = 0.2.75 =
 Set Reel recipe to Story edit, turn on talking host and B-roll, then Resume. The finished Reel cuts from speech into news details. Same host face can appear in a new outfit and place on each video.
