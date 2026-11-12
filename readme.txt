@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.78
+Stable tag: 0.2.79
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,11 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.79 =
+* No-face teach Reels: research pass writes a learnable script, Veo motion cuts with animated lesson cards (JPEG stills are converted to short MP4s before Fal mux).
+* Fixes multi-hour frozen Reels caused by putting still images on Fal's video track. Overlong mux output is rejected.
+* Optional Independent web search also feeds the Reel research/teach pass.
 
 = 0.2.78 =
 * Default Reel is a no-face hook story: pattern-interrupt on-screen hook, captioned news-detail beats and B-roll, then sting. Talking host stays an optional paid upsell.
@@ -172,6 +177,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.79 =
+Update, then Start over on any Reel that shows a multi-hour still+voice file. Resume alone keeps the broken MP4. Enable Independent web search if you want the teach script researched.
 
 = 0.2.78 =
 Turn off Talking host for the cheap no-face hook story. Use Dev cheap test, then Start over on an old Reel so assemble uses the new cut (Resume alone keeps the old MP4).

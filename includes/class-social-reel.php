@@ -10,11 +10,12 @@ if (!defined('ABSPATH')) {
  * A Ken Burns pass over those JPEGs is still a slideshow. This renderer
  * does none of that: one article, a voiceover as the timeline, captions
  * that follow the spoken words, Fal Veo motion from one B-roll still.
- * Motion loops instead of freezing. Default story edit is no-face movie
- * storytelling: a pattern-interrupt hook on screen, captioned news-detail
- * beats and B-roll while the voice continues, then a short brand sting.
- * Talking-host lip-sync is an optional paid upsell. Without local ffmpeg a
- * host (when enabled) only appears at the start — Fal cannot seek mid-clip.
+ * Motion loops instead of freezing. Default story edit is a no-face teaching
+ * Reel: research-backed spoken lesson, moving B-roll, and animated caption
+ * cards (image→short MP4) while the voice continues, then a brand sting.
+ * Fal's compose video track accepts only video files — JPEG stills on that
+ * track produced multi-hour broken outputs (still frame + voice). Talking-host
+ * lip-sync remains an optional paid upsell.
  */
 trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_wants_reel($settings = null, $post_id = 0) {
@@ -463,13 +464,69 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $length = '40–55 spoken words, about 15–18 seconds.';
         }
         $face = !empty($settings['social_reel_include_host'])
-            ? ' Host may appear briefly; most of the watch time is news visuals.'
-            : ' No talking face — the voice narrates over B-roll and big on-screen lines.';
+            ? ' Host may appear briefly; most of the watch time is teaching visuals.'
+            : ' No talking face — teach with moving B-roll and animated on-screen lesson cards.';
         return $length
-            . ' Write for a scroll-stopping Reel, not a press readout.' . $face
-            . ' First 1–2 seconds: a pattern-interrupt hook that names the change (question, contradiction, or concrete stake).'
-            . ' Then 2–4 short punchy sentences — one idea each. Talk like you are telling one friend the one thing that matters for their phone, game, job, or money.'
-            . ' Ban: today we discuss, in this video, according to reports, experts say, let’s dive in, here’s what you need to know, moving on, in conclusion.';
+            . ' Write a mini lesson people can learn from, not a press readout.' . $face
+            . ' Structure: (1) pattern-interrupt hook that names the change; (2) plain-language “what this is”; (3) one mechanism or why it matters; (4) one concrete example for their phone, game, job, or money; (5) the takeaway they can repeat.'
+            . ' Short punchy sentences — one idea each. Ban: today we discuss, in this video, according to reports, experts say, let’s dive in, here’s what you need to know, moving on, in conclusion.';
+    }
+
+    /**
+     * Research / teach layer: one Writer pass (optional OpenAI web_search) that
+     * turns the article into a learnable Reel script + on-screen lesson beats.
+     */
+    private function social_reel_enrich_lesson($post, $settings, $copy, $script) {
+        $copy = is_array($copy) ? $copy : array();
+        $script = $this->social_reel_trim_script($script, $settings);
+        $fingerprint = md5(implode('|', array(
+            (string) $post->ID,
+            $script,
+            (string) ($copy['hook'] ?? ''),
+            $this->social_reel_dev_cheap_on($settings) ? 'cheap' : 'prod',
+            !empty($settings['enable_web_search']) ? 'web' : 'local',
+            'lesson-v1',
+        )));
+        $cached = json_decode((string) get_post_meta($post->ID, '_tr_ai_wire_reel_lesson', true), true);
+        if (is_array($cached) && (string) ($cached['key'] ?? '') === $fingerprint && !empty($cached['reel_script'])) {
+            $copy['reel_script'] = $this->sanitize_reel_script($cached['reel_script'], $copy, $post);
+            if (!empty($cached['reel_captions']) && is_array($cached['reel_captions'])) {
+                $copy['reel_captions'] = $this->sanitize_reel_captions($cached['reel_captions'], $copy['reel_script']);
+            }
+            return array('copy' => $copy, 'script' => (string) $copy['reel_script']);
+        }
+
+        $this->social_reel_progress_note($post->ID, 'Researching a teach script for this Reel…');
+        $snapshot = $this->social_article_snapshot($post);
+        $web = !empty($settings['enable_web_search']);
+        $system = 'You are a tech explainer desk for ' . self::site_brand_name() . '. '
+            . 'Turn one published article into a scroll-stopping educational Reel people actually learn from. '
+            . 'No talking-head host. Ground every claim in the article'
+            . ($web ? ' and one quick web search for plain-language context (do not invent breaking news).' : '.')
+            . ' Never invent prices, quotes, or dates. Return JSON only.';
+        $user = 'Build a no-face teaching Reel.'
+            . "\n" . $this->social_reel_script_brief($settings)
+            . "\nAlso return reel_captions: 4–5 short on-screen lesson lines (max 6 words) that match the spoken beats — hook, what it is, why it matters, example, takeaway."
+            . "\nCurrent draft script (improve it into a clear mini lesson):\n" . $script
+            . "\nHook: " . (string) ($copy['hook'] ?? '')
+            . "\nArticle JSON:\n" . wp_json_encode($snapshot)
+            . "\nReturn JSON keys: reel_script, reel_captions (array).";
+        $parsed = $this->ai_json($settings['writer_model'] ?? 'gpt-6-luna', $system, $user, $settings, $web);
+        if (is_wp_error($parsed)) {
+            // Keep the existing script if research fails — still assemble.
+            return array('copy' => $copy, 'script' => $script !== '' ? $script : $this->fallback_reel_script($copy, $post));
+        }
+        $next_script = $this->sanitize_reel_script($parsed['reel_script'] ?? $script, $copy, $post);
+        $next_caps = $this->sanitize_reel_captions($parsed['reel_captions'] ?? ($copy['reel_captions'] ?? array()), $next_script);
+        $copy['reel_script'] = $next_script;
+        $copy['reel_captions'] = $next_caps;
+        update_post_meta($post->ID, '_tr_ai_wire_reel_lesson', wp_json_encode(array(
+            'key' => $fingerprint,
+            'reel_script' => $next_script,
+            'reel_captions' => $next_caps,
+            'at' => time(),
+        )));
+        return array('copy' => $copy, 'script' => $next_script);
     }
 
     private function social_reel_host_seconds($settings = null) {
@@ -543,9 +600,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     $parts[] = 'face enhance';
                 }
             } else {
-                $parts[] = 'No-face hook story';
+                $parts[] = 'No-face teach Reel';
             }
-            $parts[] = 'movie-style news details';
+            $parts[] = 'motion + animated lesson cards';
             if (!isset($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_broll'])) {
                 $parts[] = 'B-roll and photos';
             }
@@ -1073,7 +1130,123 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         );
     }
 
-    private function social_reel_fal_append_detail_beat(&$visual, &$clock, $post, $copy, $photo_bytes, $caption, $index, $seconds, $motion_url, $motion_source, $prefer_motion) {
+    /**
+     * Fal video tracks must only reference video files. Turn a JPEG lesson card
+     * into a short MP4 via an image-track compose, then reuse that clip.
+     */
+    private function social_reel_ensure_card_video($post, $card, $seconds, $index) {
+        $seconds = max(1.2, min(4.0, (float) $seconds));
+        $index = (int) $index;
+        $path = (string) ($card['path'] ?? '');
+        if ($path === '' || !file_exists($path)) {
+            return new WP_Error('tr_ai_wire_reel_frames', 'A Reel news detail frame is missing.');
+        }
+        $meta_vid = '_tr_ai_wire_reel_card_vid_' . (string) $index;
+        $meta_fal = '_tr_ai_wire_fal_card_' . (string) $index;
+        $key = md5($path . '|' . number_format($seconds, 2, '.', '') . '|card-v1');
+        $existing = (int) get_post_meta($post->ID, $meta_vid, true);
+        if ($existing > 0 && (string) get_post_meta($existing, '_tr_ai_wire_card_key', true) === $key) {
+            $have = get_attached_file($existing);
+            if ($have && file_exists($have) && filesize($have) > 1024) {
+                return array('id' => $existing, 'path' => $have, 'seconds' => $seconds);
+            }
+        }
+        $image_url = $this->social_reel_file_data_url($path, 'image/jpeg', 'tr_ai_wire_reel_frames', 'A Reel news detail frame is missing.');
+        if (is_wp_error($image_url)) {
+            return $image_url;
+        }
+        $this->social_reel_progress_note($post->ID, 'Animating lesson card ' . (string) ($index + 1) . '…');
+        return $this->social_fal_step(array(
+            'owner_id' => $post->ID,
+            'post_id' => $post->ID,
+            'meta_key' => $meta_fal,
+            'endpoint' => self::SOCIAL_REEL_MUX_ENDPOINT,
+            'label' => 'lesson card ' . (string) ($index + 1),
+            'estimate' => 0.0002,
+            'enforce_budget' => false,
+            'track_usage' => false,
+            'settings' => $this->settings(),
+            'input_key' => $key,
+            'payload' => function () use ($image_url, $seconds) {
+                return array(
+                    'tracks' => array(
+                        array(
+                            'id' => 'card',
+                            'type' => 'image',
+                            'keyframes' => array(
+                                array(
+                                    'timestamp' => 0,
+                                    'duration' => $this->social_reel_ms($seconds),
+                                    'url' => $image_url,
+                                ),
+                            ),
+                        ),
+                    ),
+                );
+            },
+            'store' => function ($bytes) use ($post, $meta_vid, $key, $index, $seconds) {
+                if (!is_string($bytes) || strlen($bytes) < 1024) {
+                    return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not return a usable lesson-card video.');
+                }
+                $name = 'technorapper-social-card-' . (int) $post->ID . '-' . (string) $index . '.mp4';
+                $upload = wp_upload_bits($name, null, $bytes);
+                if (!empty($upload['error'])) {
+                    return new WP_Error('tr_ai_wire_social_video_upload', sanitize_text_field($upload['error']));
+                }
+                $attachment_id = wp_insert_attachment(array(
+                    'post_mime_type' => 'video/mp4',
+                    'post_title' => 'Reel lesson card ' . (string) ($index + 1),
+                    'post_status' => 'inherit',
+                    'post_parent' => 0,
+                ), $upload['file'], 0, true);
+                if (is_wp_error($attachment_id)) {
+                    return $attachment_id;
+                }
+                update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+                update_post_meta($attachment_id, '_tr_ai_wire_card_key', $key);
+                update_post_meta($post->ID, $meta_vid, (int) $attachment_id);
+                return array('id' => (int) $attachment_id, 'path' => (string) $upload['file'], 'seconds' => $seconds);
+            },
+        ));
+    }
+
+    private function social_reel_prepare_card_videos($post, $settings, $copy, $photo_bytes, $audio_seconds) {
+        $audio_seconds = $this->social_reel_clamp_audio_seconds($audio_seconds, $settings);
+        $captions = $this->social_reel_cutaway_captions($copy);
+        if (!$captions) {
+            foreach (array($copy['hook'] ?? '', $copy['on_image_headline'] ?? '', $copy['cta'] ?? '') as $line) {
+                $line = $this->clip_social_text(trim(wp_strip_all_tags((string) $line)), 72);
+                if ($line !== '' && !in_array($line, $captions, true)) {
+                    $captions[] = $line;
+                }
+            }
+        }
+        if (!$captions) {
+            $captions[] = $this->clip_social_text((string) ($copy['hook'] ?? $post->post_title), 42);
+        }
+        $want = max(3, min(5, count($captions)));
+        if (!empty($settings['social_reel_include_slides'])) {
+            $want = max($want, $this->social_reel_fact_slides($settings));
+        }
+        $want = min(5, $want);
+        $slice = max(1.6, min(3.2, $audio_seconds / max(3, $want + 1)));
+        $clips = array();
+        for ($i = 0; $i < $want; $i++) {
+            $caption = $captions[min($i, count($captions) - 1)];
+            $card = $this->social_reel_detail_frame($post, $copy, $photo_bytes, $caption, $i);
+            if (is_wp_error($card)) {
+                return $card;
+            }
+            $vid = $this->social_reel_ensure_card_video($post, $card, $slice, $i);
+            if (is_wp_error($vid)) {
+                return $vid;
+            }
+            $clips[] = $vid;
+        }
+        return $clips;
+    }
+
+    private function social_reel_fal_append_detail_beat(&$visual, &$clock, $post, $copy, $photo_bytes, $caption, $index, $seconds, $motion_url, $motion_source, $prefer_motion, $card_videos = array()) {
         $seconds = max(1.2, (float) $seconds);
         if ($prefer_motion && $motion_url !== '') {
             $loops = $this->social_fal_loop_keyframes($motion_url, $motion_source, $seconds, $clock);
@@ -1085,11 +1258,31 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 return true;
             }
         }
+        $card_videos = is_array($card_videos) ? $card_videos : array();
+        $pre = is_array($card_videos[$index] ?? null) ? $card_videos[$index] : null;
+        if ($pre && !empty($pre['path'])) {
+            $card_url = $this->social_reel_file_data_url((string) $pre['path'], 'video/mp4', 'tr_ai_wire_reel_frames', 'A Reel lesson-card video is missing.');
+            if (is_wp_error($card_url)) {
+                return $card_url;
+            }
+            $visual[] = array(
+                'timestamp' => $this->social_reel_ms($clock),
+                'duration' => $this->social_reel_ms($seconds),
+                'url' => $card_url,
+            );
+            $clock += $seconds;
+            return true;
+        }
+        // Last resort: bake the card to MP4 now (never put JPEG on a video track).
         $card = $this->social_reel_detail_frame($post, $copy, $photo_bytes, $caption, $index);
         if (is_wp_error($card)) {
             return $card;
         }
-        $card_url = $this->social_reel_file_data_url((string) $card['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'A Reel news detail frame is missing.');
+        $baked = $this->social_reel_ensure_card_video($post, $card, $seconds, (int) $index);
+        if (is_wp_error($baked)) {
+            return $baked;
+        }
+        $card_url = $this->social_reel_file_data_url((string) $baked['path'], 'video/mp4', 'tr_ai_wire_reel_frames', 'A Reel lesson-card video is missing.');
         if (is_wp_error($card_url)) {
             return $card_url;
         }
@@ -1105,6 +1298,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_reel_fal_movie_keyframes($post, $settings, $copy, $plan, $parts, $photo_bytes, $audio_seconds, $use_sting, $sting_seconds, $end_caption) {
         $host = is_array($parts['host'] ?? null) ? $parts['host'] : null;
         $motion = is_array($parts['motion'] ?? null) ? $parts['motion'] : null;
+        $card_videos = is_array($parts['card_videos'] ?? null) ? $parts['card_videos'] : array();
         $visual = array();
         $clock = 0.0;
         $photo_bytes = is_string($photo_bytes) ? $photo_bytes : '';
@@ -1146,10 +1340,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
 
         $has_host = $host_url !== '';
-        $can_detail = ($motion_url !== '' || $photo_bytes !== '');
+        $can_detail = ($motion_url !== '' || $photo_bytes !== '' || $card_videos);
 
-        // No-face path: big on-screen hook first (thumb stopper), then motion + caption beats.
-        // With host: optional cold-open detail, short lip-sync intro, then news beats.
+        // Teach cut: lesson card → motion → lesson card… Video track is MP4-only.
         if (!$has_host && $can_detail) {
             $cold = min(2.4, max(1.6, $audio_seconds * 0.12));
             $added = $this->social_reel_fal_append_detail_beat(
@@ -1163,7 +1356,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $cold,
                 $motion_url,
                 $motion_source,
-                false
+                false,
+                $card_videos
             );
             if (is_wp_error($added)) {
                 return $added;
@@ -1181,7 +1375,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $cold,
                 $motion_url,
                 $motion_source,
-                $motion_url !== ''
+                $motion_url !== '',
+                $card_videos
             );
             if (is_wp_error($added)) {
                 return $added;
@@ -1202,7 +1397,6 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!empty($settings['social_reel_include_slides'])) {
             $beat_n = max($beat_n, $this->social_reel_fact_slides($settings));
         }
-        // No-face Reels need more cutaways so one 4s B-roll loop is never the whole video.
         if (!$has_host) {
             $beat_n = max($beat_n, 3);
         }
@@ -1212,7 +1406,6 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         if ($left >= 0.8) {
             $slice = $left / max(1, $beat_n);
-            // Cap each beat so Fal never gets one long keyframe that freezes after motion ends.
             $max_slice = $motion_source > 0 ? max(2.2, $motion_source) : 3.2;
             $slice = min($slice, $max_slice);
             for ($i = 0; $i < $beat_n; $i++) {
@@ -1222,10 +1415,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 }
                 $this_slice = min($slice, $remain);
                 $caption = $captions[min($i, count($captions) - 1)];
-                // Alternate motion and caption cards. No-face starts with a text hook, so first beat prefers motion.
-                $prefer_motion = ($motion_url !== '') && (
-                    $photo_bytes === '' || ((!$has_host ? $i : ($i + 1)) % 2) === 0
-                );
+                // Alternate motion and animated lesson cards so the cut teaches, not freezes.
+                $prefer_motion = ($motion_url !== '') && ((!$has_host ? $i : ($i + 1)) % 2) === 0;
                 $added = $this->social_reel_fal_append_detail_beat(
                     $visual,
                     $clock,
@@ -1233,11 +1424,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     $copy,
                     $photo_bytes,
                     $caption,
-                    $i + 1,
+                    min($i + 1, max(0, count($card_videos) - 1)),
                     $this_slice,
                     $motion_url,
                     $motion_source,
-                    $prefer_motion
+                    $prefer_motion,
+                    $card_videos
                 );
                 if (is_wp_error($added)) {
                     return $added;
@@ -1265,7 +1457,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             if (is_wp_error($endcard)) {
                 return $endcard;
             }
-            $end_url = $this->social_reel_file_data_url((string) $endcard['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
+            $end_vid = $this->social_reel_ensure_card_video($post, $endcard, max(1.0, (float) $sting_seconds), 90);
+            if (is_wp_error($end_vid)) {
+                return $end_vid;
+            }
+            $end_url = $this->social_reel_file_data_url((string) $end_vid['path'], 'video/mp4', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
             if (is_wp_error($end_url)) {
                 return $end_url;
             }
@@ -1274,6 +1470,16 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 'duration' => $this->social_reel_ms($sting_seconds),
                 'url' => $end_url,
             );
+        }
+        // Guard: every visual keyframe must look like video, not a raw JPEG data URL.
+        foreach ($visual as $frame) {
+            $url = (string) ($frame['url'] ?? '');
+            if ($url !== '' && (strpos($url, 'data:image/') === 0 || preg_match('/\.jpe?g(\?|$)/i', $url))) {
+                return new WP_Error(
+                    'tr_ai_wire_reel_frames',
+                    'Reel assemble blocked a still image on the Fal video track (that caused multi-hour frozen files). Start over to rebuild with animated lesson cards.'
+                );
+            }
         }
         return $visual;
     }
@@ -1286,8 +1492,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $sting_seconds = !empty($plan['sting']) ? ($plan['story'] ? (float) $this->social_reel_sting_seconds($settings) : 2.0) : 0.0;
         $use_sting = $sting_seconds > 0 && (string) get_post_meta($post->ID, '_tr_ai_wire_reel_no_sting', true) !== '1';
         $movie = !empty($plan['story']);
+        $card_sig = '';
+        foreach ((array) ($parts['card_videos'] ?? array()) as $card_vid) {
+            $card_sig .= '|' . (int) ($card_vid['id'] ?? 0);
+        }
         $input_key = md5(implode('|', array(
-            'movie-v3-noface-hook',
+            'movie-v4-teach-video-only',
             (string) $voice['key'],
             (int) ($host['id'] ?? 0),
             (int) ($motion['id'] ?? 0),
@@ -1296,6 +1506,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             md5((string) $photo_bytes),
             $end_caption,
             (string) (int) round($audio_seconds),
+            $card_sig,
         )));
         $payload = function () use ($post, $settings, $copy, $plan, $parts, $voice, $host, $motion, $audio_seconds, $use_sting, $sting_seconds, $photo_bytes, $end_caption, $movie) {
             $voice_url = $this->social_reel_file_data_url((string) $voice['path'], 'audio/mpeg', 'tr_ai_wire_reel_tts', 'The Reel voiceover file is missing.');
@@ -1349,11 +1560,24 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     if (is_wp_error($endcard)) {
                         return $endcard;
                     }
-                    $end_url = $this->social_reel_file_data_url((string) $endcard['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
+                    $end_vid = $this->social_reel_ensure_card_video($post, $endcard, max(1.0, (float) $sting_seconds), 90);
+                    if (is_wp_error($end_vid)) {
+                        return $end_vid;
+                    }
+                    $end_url = $this->social_reel_file_data_url((string) $end_vid['path'], 'video/mp4', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
                     if (is_wp_error($end_url)) {
                         return $end_url;
                     }
                     $visual[] = array('timestamp' => $this->social_reel_ms($visual_seconds), 'duration' => $this->social_reel_ms($sting_seconds), 'url' => $end_url);
+                }
+            }
+            foreach ((array) $visual as $frame) {
+                $url = (string) ($frame['url'] ?? '');
+                if ($url !== '' && (strpos($url, 'data:image/') === 0 || preg_match('/\.jpe?g(\?|$)/i', $url))) {
+                    return new WP_Error(
+                        'tr_ai_wire_reel_frames',
+                        'Reel assemble blocked a still image on the Fal video track. Start over to rebuild with animated lesson cards.'
+                    );
                 }
             }
             return array('tracks' => array(
@@ -1363,7 +1587,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 )),
             ));
         };
-        $store = function ($bytes) use ($post, $copy, $script, $settings) {
+        $store = function ($bytes) use ($post, $copy, $script, $settings, $audio_seconds) {
             if (!is_string($bytes) || strlen($bytes) < 1024) {
                 return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not return a usable Reel video.');
             }
@@ -1371,9 +1595,20 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             if (is_wp_error($stored)) {
                 return $stored;
             }
+            $path = get_attached_file((int) $stored);
+            $got = $path ? (float) $this->social_video_duration($path, 0.0) : 0.0;
+            $max = $this->social_reel_max_audio_seconds($settings) + 8.0;
+            if ($got > $max) {
+                if (get_post_meta((int) $stored, '_tr_ai_wire_social_asset', true) === '1') {
+                    wp_delete_attachment((int) $stored, true);
+                }
+                return new WP_Error(
+                    'tr_ai_wire_reel_mux',
+                    'Fal returned a broken overlong Reel (' . (string) (int) round($got) . 's). That usually means a still was muxed as video. Click Start over — do not Resume the bad file.'
+                );
+            }
             update_post_meta($post->ID, '_tr_ai_wire_social_reel_id', (int) $stored);
             $url = wp_get_attachment_url((int) $stored);
-            $path = get_attached_file((int) $stored);
             if (!$url || !$path) {
                 return new WP_Error('tr_ai_wire_ig_video_url', 'The Instagram Reel must have a public HTTP(S) Media Library URL.');
             }
@@ -1655,6 +1890,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $script = $this->fallback_reel_script($copy, $post);
             }
         }
+        $researched = $this->social_reel_enrich_lesson($post, $settings, $copy, $script);
+        if (is_wp_error($researched)) {
+            return $researched;
+        }
+        $copy = $researched['copy'];
+        $script = $researched['script'];
         $parts = $this->social_reel_gather($post, $settings, $copy, $broll_path, $plan, $script);
         if (is_wp_error($parts)) {
             return $parts;
@@ -1672,7 +1913,13 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     $photo = $bytes;
                 }
             }
-            $note = 'Assembling a scroll-stop story: hook on screen, news-detail beats, then sting.';
+            $this->social_reel_progress_note($post->ID, 'Animating lesson cards for the teach cut…');
+            $cards = $this->social_reel_prepare_card_videos($post, $settings, $copy, $photo, $duration);
+            if (is_wp_error($cards)) {
+                return $cards;
+            }
+            $parts['card_videos'] = $cards;
+            $note = 'Assembling a teach Reel: motion + animated lesson cards (no stills on the video track).';
             if (!empty($plan['host']) && empty($plan['host_seek'])) {
                 $note = 'Assembling a scroll-stop story: cold-open details, short host hook, then news beats.';
             } elseif (!empty($plan['host_seek'])) {
