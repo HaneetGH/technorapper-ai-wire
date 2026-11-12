@@ -20,7 +20,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.2.82';
+    const VERSION = '0.2.83';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -41,6 +41,12 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_IMAGE_LAYOUT = 'poster-v2';
     const SOCIAL_REEL_LAYOUT = 'reel-v1';
     const SOCIAL_REEL_STORY_LAYOUT = 'reel-story-v1';
+    // Finished Reels stamped with any other cut are never reused, previewed, or posted.
+    const SOCIAL_REEL_CUT = 'teach-cards-v6';
+    const SOCIAL_REEL_ACCENT_MAX_SECONDS = 2.5;
+    const SOCIAL_REEL_MAX_ACCENTS = 2;
+    const SOCIAL_REEL_MOTION_SHARE = 0.35;
+    const SOCIAL_REEL_MAX_CARDS = 8;
     const SOCIAL_TTS_MODEL = 'gpt-4o-mini-tts';
     const SOCIAL_TTS_VOICE = 'cedar';
     const SOCIAL_TTS_ESTIMATED_USD = 0.004;
