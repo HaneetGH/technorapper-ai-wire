@@ -4960,7 +4960,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($id < 1 || $post_id < 1 || $status !== 'needs_review' || !$this->social_row_holds_reel_for_review($row)) {
             return;
         }
-        if ($this->social_reel_preview_id($post_id) < 1) {
+        if ($this->social_reel_downloadable_id($post_id) < 1) {
             return;
         }
         $platform_label = self::social_platform_label($platform);
@@ -5003,7 +5003,7 @@ trait TechnoRapper_AI_Wire_Social {
         $platform_label = self::social_platform_label($platform);
         $published = $status === 'published';
         $held_reel = !$published && $this->social_row_holds_reel_for_review($row);
-        $reel_ready = $held_reel && $this->social_reel_preview_id($post_id) > 0;
+        $reel_ready = $held_reel && $this->social_reel_downloadable_id($post_id) > 0;
         if ($held_reel) {
             if ($reel_ready) {
                 if (in_array($platform, array('instagram', 'youtube'), true)) {
@@ -5018,13 +5018,14 @@ trait TechnoRapper_AI_Wire_Social {
                 }
                 return;
             }
-            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;">';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="tr-ai-wire-reel-post" style="margin-top:8px;">';
             echo '<input type="hidden" name="action" value="tr_ai_wire_retry_social_item">';
             echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
             wp_nonce_field('tr_ai_wire_retry_social_item_' . $id);
-            echo '<label><input type="checkbox" name="confirmed_not_published" value="1" required> Retry building this Reel and hold it for review</label><br>';
+            echo '<input type="hidden" name="confirmed_not_published" value="1">';
             echo '<input type="hidden" name="regenerate_image" value="1">';
-            echo '<button class="button button-secondary">Retry building this Reel</button>';
+            echo '<p class="description">No video file is on this row yet. This rebuilds the Reel. Download video and Post appear after it finishes.</p>';
+            echo '<button class="button button-primary">Retry building this Reel</button>';
             echo '</form>';
             $this->render_social_reel_upload_form($row);
             return;
@@ -5111,6 +5112,9 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if (strpos($error, 'Held:') === 0) {
             return $error;
+        }
+        if (stripos($error, 'need ffmpeg') !== false || stripos($error, 'has no ffmpeg') !== false) {
+            return 'This WordPress host has no ffmpeg, so the last attempt stopped before making a video. Click Retry building this Reel. Fal will generate the MP4. Download video and Post to Instagram appear on this row when that file is ready.';
         }
         if ($this->instagram_is_missing_object_error($error)) {
             $ig_id = '';

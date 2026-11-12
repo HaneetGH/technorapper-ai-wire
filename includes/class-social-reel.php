@@ -865,6 +865,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 'end.jpg' => $end_path,
             ), $duration, $copy);
             $this->social_reel_cleanup($tmp);
+            $adopted = $this->adopt_social_motion_as_reel($post, (int) ($motion['id'] ?? 0), $script);
+            if (!is_wp_error($adopted)) {
+                return $adopted;
+            }
             if (!is_wp_error($kit) && $this->social_ffmpeg_path() === '') {
                 return $this->social_reel_laptop_hold_error();
             }
@@ -1084,6 +1088,16 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             }
             $kit = $this->store_social_reel_laptop_kit($post, $kit_files, $duration, $copy);
             $this->social_reel_cleanup($tmp);
+            $fallback_id = 0;
+            if (is_array($motion) && !empty($motion['id'])) {
+                $fallback_id = (int) $motion['id'];
+            } elseif (is_array($host) && !empty($host['id'])) {
+                $fallback_id = (int) $host['id'];
+            }
+            $adopted = $this->adopt_social_motion_as_reel($post, $fallback_id, $script);
+            if (!is_wp_error($adopted)) {
+                return $adopted;
+            }
             if (!is_wp_error($kit) && $this->social_ffmpeg_path() === '') {
                 return $this->social_reel_laptop_hold_error();
             }
@@ -1855,6 +1869,22 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return array('id' => (int) $attachment_id, 'path' => (string) $upload['file']);
     }
 
+    private function adopt_social_motion_as_reel($post, $video_id, $script) {
+        if (!$post instanceof WP_Post) {
+            return new WP_Error('tr_ai_wire_social_post', 'The source article is no longer published.');
+        }
+        $video_id = (int) $video_id;
+        $path = $video_id > 0 ? get_attached_file($video_id) : '';
+        $url = $video_id > 0 ? wp_get_attachment_url($video_id) : '';
+        if ($video_id < 1 || !$path || !file_exists($path) || filesize($path) < 512 || !$url) {
+            return new WP_Error('tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
+        }
+        update_post_meta($video_id, '_tr_ai_wire_social_layout', $this->social_reel_layout_key());
+        update_post_meta($video_id, '_tr_ai_wire_reel_script', (string) $script);
+        update_post_meta($post->ID, '_tr_ai_wire_social_reel_id', $video_id);
+        return array('id' => $video_id, 'url' => $url, 'path' => $path);
+    }
+
     private function social_reel_laptop_hold_error() {
         return new WP_Error(
             'tr_ai_wire_reel_kit',
@@ -2004,7 +2034,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_reel_mux_error() {
         return new WP_Error(
             'tr_ai_wire_reel_ffmpeg',
-            'Instagram Reels need a Fal.ai API key to assemble the video on this host (no local ffmpeg). Save it on Social settings. The plugin will not fall back to a slideshow of posters.'
+            'Instagram Reels need a Fal.ai API key to assemble the video on this host (no local ffmpeg). Save it on Social settings, then click Retry building this Reel. Download video and Post appear when the MP4 is ready. The plugin will not fall back to a slideshow of posters.'
         );
     }
 
