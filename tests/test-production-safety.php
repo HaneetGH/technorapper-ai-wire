@@ -5752,7 +5752,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         foreach ($clips as $clip) {
             $kinds[] = $clip['kind'] . ':' . ($clip['crop'] ?? 'full');
         }
-        $this->assertSame(array('host:close', 'slide:full', 'broll:full', 'slide:full', 'slide:full', 'end:full'), $kinds);
+        $this->assertSame(array('host:close', 'broll:full', 'broll:close', 'broll:full', 'end:full'), $kinds);
+        $this->assertNotContains('slide:full', $kinds);
         $this->assertGreaterThan(0.0, $this->invoke_private('social_reel_host_estimate_usd', array($story)));
         $this->assertSame(0.0, $this->invoke_private('social_reel_host_estimate_usd', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertSame(99, $this->invoke_private('social_reel_weekly_remaining', array(TechnoRapper_AI_Wire::defaults())));

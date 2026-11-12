@@ -335,9 +335,11 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_reel_include_sting'] = array_key_exists('social_reel_include_sting', $input)
             ? (empty($input['social_reel_include_sting']) ? 0 : 1)
             : 1;
+        if ($out['social_reel_recipe'] === 'story' && !empty($out['social_reel_include_slides'])) {
+            $out['social_reel_include_broll'] = 1;
+        }
         if ($out['social_reel_recipe'] === 'story'
             && empty($out['social_reel_include_host'])
-            && empty($out['social_reel_include_slides'])
             && empty($out['social_reel_include_broll'])
         ) {
             $out['social_reel_include_broll'] = 1;

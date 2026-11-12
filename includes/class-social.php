@@ -1817,7 +1817,7 @@ trait TechnoRapper_AI_Wire_Social {
             . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings) . ' THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. '
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
             . 'Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
-            . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
+            . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These burn onto moving host and B-roll shots, not still news cards. '
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. '
             . (!empty($comic) ? 'A dry wink is fine if the named change is still obvious. ' : '')
             . 'This is the public YouTube listing title — the Short goes live immediately, not as a draft. '

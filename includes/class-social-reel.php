@@ -9,8 +9,9 @@ if (!defined('ABSPATH')) {
  * A carousel packs several article cards. A collage grids those cards.
  * A Ken Burns pass over those JPEGs is still a slideshow. This renderer
  * does none of that: one article, a voiceover as the timeline, captions
- * that follow the spoken words, Fal Veo motion from one B-roll still,
- * then a last-frame hold and a brand sting.
+ * that follow the spoken words, Fal Veo motion from one B-roll still.
+ * Motion loops instead of freezing. Story edit intercuts a talking host
+ * with captioned B-roll cutaways, then a short brand sting.
  */
 trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_wants_reel($settings = null, $post_id = 0) {
@@ -320,11 +321,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             } else {
                 $parts[] = 'no talking host';
             }
-            if (!empty($settings['social_reel_include_slides'])) {
-                $parts[] = (string) $this->social_reel_fact_slides($settings) . ' fact slides';
-            }
             if (!isset($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_broll'])) {
-                $parts[] = 'B-roll';
+                $parts[] = 'captioned B-roll cuts';
             }
             if (!isset($settings['social_reel_include_sting']) || !empty($settings['social_reel_include_sting'])) {
                 $parts[] = 'sting';
@@ -836,6 +834,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 'Story Reels need a Fal.ai API key for the talking host and B-roll motion.'
             );
         }
+        if ($want_slides) {
+            $want_broll = true;
+        }
         if ($want_broll && (!is_string($broll_path) || $broll_path === '' || !file_exists($broll_path))) {
             return new WP_Error('tr_ai_wire_reel_broll', 'A text-free 9:16 B-roll frame is required before rendering the Reel.');
         }
@@ -896,6 +897,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     'path' => $host['path'],
                     'duration' => (float) $shot['duration'],
                     'crop' => (string) ($shot['crop'] ?? 'medium'),
+                    'overlay' => $this->social_reel_write_caption_overlay($tmp, $index, $copy, (string) ($shot['caption'] ?? '')),
                 );
                 continue;
             }
@@ -908,11 +910,15 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     'kind' => 'broll',
                     'path' => $motion['path'],
                     'duration' => (float) $shot['duration'],
-                    'crop' => 'full',
+                    'crop' => (string) ($shot['crop'] ?? 'full'),
+                    'overlay' => $this->social_reel_write_caption_overlay($tmp, $index, $copy, (string) ($shot['caption'] ?? '')),
                 );
                 continue;
             }
-            $jpeg = $this->render_social_reel_frame($kind === 'end' ? 'end' : 'slide', $copy, '', (string) ($shot['caption'] ?? ''));
+            if ($kind !== 'end') {
+                continue;
+            }
+            $jpeg = $this->render_social_reel_frame('end', $copy, '', (string) ($shot['caption'] ?? ''));
             if (is_wp_error($jpeg)) {
                 $this->social_reel_cleanup($tmp);
                 return $jpeg;
@@ -923,7 +929,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 return new WP_Error('tr_ai_wire_reel_temp', 'Could not write a Reel story frame.');
             }
             $clips[] = array(
-                'kind' => $kind === 'end' ? 'end' : 'slide',
+                'kind' => 'end',
                 'path' => $frame_path,
                 'duration' => (float) $shot['duration'],
                 'crop' => 'full',
@@ -965,6 +971,41 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return array('id' => (int) $stored, 'url' => $url, 'path' => $path);
     }
 
+    private function social_reel_cutaway_captions($copy) {
+        $copy = is_array($copy) ? $copy : array();
+        $lines = array();
+        foreach ((array) ($copy['reel_captions'] ?? array()) as $line) {
+            $line = trim(wp_strip_all_tags((string) $line));
+            if ($line !== '' && !in_array($line, $lines, true)) {
+                $lines[] = $this->clip_social_text($line, 72);
+            }
+        }
+        if (count($lines) < 2) {
+            foreach ($this->social_reel_slide_titles($copy) as $title) {
+                if ($title !== '' && !in_array($title, $lines, true)) {
+                    $lines[] = $title;
+                }
+            }
+        }
+        return array_slice($lines, 0, 4);
+    }
+
+    private function social_reel_write_caption_overlay($tmp, $index, $copy, $caption) {
+        $caption = trim(wp_strip_all_tags((string) $caption));
+        if ($caption === '' || !is_string($tmp) || $tmp === '') {
+            return '';
+        }
+        $overlay = $this->render_social_reel_caption_overlay($copy, $caption);
+        if (is_wp_error($overlay) || !is_string($overlay) || $overlay === '') {
+            return '';
+        }
+        $path = $tmp . '/caption-' . (string) $index . '.png';
+        if (file_put_contents($path, $overlay) === false) {
+            return '';
+        }
+        return $path;
+    }
+
     private function build_social_reel_story_timeline($copy, $duration, $settings = null) {
         $settings = is_array($settings) ? $settings : $this->settings();
         $copy = is_array($copy) ? $copy : array();
@@ -972,7 +1013,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $duration = max(12.0, min($max, (float) $duration));
         $want_host = !empty($settings['social_reel_include_host']);
         $want_slides = !empty($settings['social_reel_include_slides']);
-        $want_broll = !empty($settings['social_reel_include_broll']);
+        $want_broll = !empty($settings['social_reel_include_broll']) || $want_slides;
         $want_sting = array_key_exists('social_reel_include_sting', $settings) ? !empty($settings['social_reel_include_sting']) : true;
         $close = $want_host && !empty($settings['social_reel_close_camera']);
         $medium = $want_host && !empty($settings['social_reel_medium_camera']);
@@ -981,32 +1022,40 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $sting = $want_sting ? (float) $this->social_reel_sting_seconds($settings) : 0.0;
         $left = max(8.0, $duration - $sting);
+        $captions = $this->social_reel_cutaway_captions($copy);
         $weights = array();
         if ($close) {
-            $weights[] = array('kind' => 'host', 'crop' => 'close', 'weight' => 1.1);
+            $weights[] = array('kind' => 'host', 'crop' => 'close', 'weight' => 1.1, 'caption' => '');
         }
-        $slide_n = $want_slides ? $this->social_reel_fact_slides($settings) : 0;
-        $titles = $this->social_reel_slide_titles($copy);
-        if ($slide_n > 0) {
-            $weights[] = array('kind' => 'slide', 'caption' => $titles[0], 'weight' => 1.3);
-        }
-        if ($medium) {
-            $weights[] = array('kind' => 'host', 'crop' => 'medium', 'weight' => 1.2);
-        }
+        $broll_n = 0;
         if ($want_broll) {
-            $weights[] = array('kind' => 'broll', 'weight' => 1.4);
-        }
-        if ($slide_n > 1) {
-            $weights[] = array('kind' => 'slide', 'caption' => $titles[min(1, count($titles) - 1)], 'weight' => 1.1);
-        }
-        if ($slide_n > 2) {
-            $extra = min($slide_n - 2, max(0, count($titles) - 2));
-            for ($i = 0; $i < $extra; $i++) {
-                $weights[] = array('kind' => 'slide', 'caption' => $titles[min($i + 2, count($titles) - 1)], 'weight' => 0.9);
+            $broll_n = max(2, count($captions));
+            if ($want_slides) {
+                $broll_n = max($broll_n, $this->social_reel_fact_slides($settings));
             }
+            $broll_n = min(4, $broll_n);
+        }
+        $inserted_medium = false;
+        for ($i = 0; $i < $broll_n; $i++) {
+            if ($medium && !$inserted_medium && $i === 1) {
+                $weights[] = array('kind' => 'host', 'crop' => 'medium', 'weight' => 1.2, 'caption' => '');
+                $inserted_medium = true;
+            }
+            $weights[] = array(
+                'kind' => 'broll',
+                'crop' => ($i % 2 === 1) ? 'close' : 'full',
+                'weight' => $i === 0 ? 1.4 : 1.0,
+                'caption' => $captions[$i] ?? ($captions[0] ?? ''),
+            );
+        }
+        if ($medium && !$inserted_medium) {
+            $weights[] = array('kind' => 'host', 'crop' => 'medium', 'weight' => 1.2, 'caption' => '');
+        }
+        if (!$weights && $want_host) {
+            $weights[] = array('kind' => 'host', 'crop' => $close ? 'close' : 'medium', 'weight' => 1, 'caption' => '');
         }
         if (!$weights) {
-            $weights[] = array('kind' => 'slide', 'caption' => $titles[0], 'weight' => 1);
+            $weights[] = array('kind' => 'broll', 'crop' => 'full', 'weight' => 1, 'caption' => $captions[0] ?? '');
         }
         $total_weight = 0.0;
         foreach ($weights as $row) {
@@ -1328,17 +1377,30 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $crop = (string) ($clip['crop'] ?? 'full');
             $kind = (string) ($clip['kind'] ?? '');
             $vf = 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p';
-            if ($kind === 'host' && $crop === 'close') {
+            if ($crop === 'close') {
                 $vf = 'scale=1460:2596:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p';
             }
+            $overlay = (string) ($clip['overlay'] ?? '');
+            $clip_t = number_format($duration, 2, '.', '');
             $args = array('-y');
-            if ($kind === 'slide' || $kind === 'end') {
-                $args = array_merge($args, array('-loop', '1', '-t', number_format($duration, 2, '.', ''), '-i', (string) $clip['path']));
+            if ($kind === 'end') {
+                $args = array_merge($args, array('-loop', '1', '-t', $clip_t, '-i', (string) $clip['path']));
             } else {
-                $args = array_merge($args, array('-i', (string) $clip['path'], '-t', number_format($duration, 2, '.', '')));
+                $args = array_merge($args, array('-stream_loop', '-1', '-t', $clip_t, '-i', (string) $clip['path']));
+            }
+            if ($overlay !== '' && file_exists($overlay) && $kind !== 'end') {
+                $args = array_merge($args, array(
+                    '-loop', '1',
+                    '-t', $clip_t,
+                    '-i', $overlay,
+                    '-filter_complex', '[0:v]' . $vf . '[v0];[v0][1:v]overlay=0:0[v]',
+                    '-map', '[v]',
+                    '-t', $clip_t,
+                ));
+            } else {
+                $args = array_merge($args, array('-vf', $vf, '-t', $clip_t));
             }
             $args = array_merge($args, array(
-                '-vf', $vf,
                 '-an',
                 '-c:v', 'libx264',
                 '-pix_fmt', 'yuv420p',
@@ -1426,7 +1488,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($this->post_is_comic($post)) {
             $prompt .= ' Keep any sly visual beat photoreal.';
         }
-        $prompt .= ' Slow cinematic push-in, natural light, no text, no logos, no watermarks, no subtitles, no captions.';
+        $prompt .= ' Continuous camera motion (push-in, orbit, or handheld), photoreal product or screen in frame, no freeze, no text, no logos, no watermarks, no subtitles, no captions.';
         $submitted = $this->social_fal_submit($endpoint, $this->social_fal_motion_payload($model, $image_url, $prompt, $seconds));
         if (is_wp_error($submitted)) {
             return $submitted;
@@ -1632,11 +1694,17 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!is_string($audio_path) || $audio_path === '' || !file_exists($audio_path)) {
             return new WP_Error('tr_ai_wire_reel_tts', 'A spoken voiceover is required. Silent poster clips are a slideshow.');
         }
-        $motion_duration = $this->social_video_duration($motion_path);
         $audio_duration = max(8.0, (float) $audio_duration);
-        $hold = max(0.0, round($audio_duration - $motion_duration, 2));
         $end = 2.0;
-        $args = array('-y', '-i', $motion_path, '-i', $audio_path, '-loop', '1', '-t', number_format($end, 2, '.', ''), '-i', $end_path);
+        $args = array(
+            '-y',
+            '-stream_loop', '-1',
+            '-i', $motion_path,
+            '-i', $audio_path,
+            '-loop', '1',
+            '-t', number_format($end, 2, '.', ''),
+            '-i', $end_path,
+        );
         $overlay_inputs = array();
         foreach (array_values((array) $overlays) as $overlay) {
             if (empty($overlay['path']) || !file_exists($overlay['path'])) {
@@ -1647,11 +1715,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $overlay_inputs[] = $overlay;
         }
         $filters = array();
-        $base = '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p';
-        if ($hold > 0.05) {
-            $base .= ',tpad=stop_mode=clone:stop_duration=' . number_format($hold, 2, '.', '');
-        }
-        $filters[] = $base . '[base]';
+        $filters[] = '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,format=yuv420p,trim=duration=' . number_format($audio_duration, 2, '.', '') . ',setpts=PTS-STARTPTS[base]';
         $last = 'base';
         $clock = 0.0;
         foreach ($overlay_inputs as $index => $overlay) {

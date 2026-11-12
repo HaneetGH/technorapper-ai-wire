@@ -359,17 +359,17 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p><label for="tr-social-reel-voice">Voice</label><br><select id="tr-social-reel-voice" name="<?php echo esc_attr($option); ?>[social_reel_tts_voice]"><?php foreach ($this->social_reel_tts_voices() as $voice_id => $voice_label) : ?><option value="<?php echo esc_attr($voice_id); ?>" <?php selected((string) ($s['social_reel_tts_voice'] ?? 'cedar'), $voice_id); ?>><?php echo esc_html($voice_label); ?></option><?php endforeach; ?></select></p>
                     </div>
                     <h3>How the video is cut</h3>
-                    <p class="description">Default stays a spoken B-roll clip. Story edit is opt-in: a talking host, fact slides, B-roll, and a sting.</p>
+                    <p class="description">Every shot stays in motion: talking host, B-roll cutaways, captions on the video. No still news cards. Story edit is the talking-tech cut (host on camera, then product/demo B-roll).</p>
                     <div class="tr-ai-wire-choice">
                         <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'broll') ? ' is-selected' : ''; ?>">
                             <input id="tr-reel-recipe-broll" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="broll" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'broll'); ?>>
                             <strong>B-roll spoken Reel</strong>
-                            <span class="description">One article, Fal motion, captions, last-frame hold, sting. Same as today.</span>
+                            <span class="description">One article, Fal motion, captions on the moving clip, sting. Motion loops instead of freezing.</span>
                         </label>
                         <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? ' is-selected' : ''; ?>">
                             <input id="tr-reel-recipe-story" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="story" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'story'); ?>>
                             <strong>Story edit</strong>
-                            <span class="description">Host close/medium, news slides, B-roll, sting. Turn each piece on below.</span>
+                            <span class="description">Talking host close/medium, then moving B-roll cutaways with captions. Like a tech presenter Reel — no slideshow.</span>
                         </label>
                     </div>
                     <div data-tr-reveal="tr-reel-recipe-story"<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? '' : ' hidden'; ?>>
@@ -440,9 +440,10 @@ trait TechnoRapper_AI_Wire_Admin {
                         </div>
                         <p class="tr-ai-wire-checks">
                             <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="0">
-                            <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="1" <?php checked(!empty($s['social_reel_include_slides'])); ?>> Fact slides</label>
+                            <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="1" <?php checked(!empty($s['social_reel_include_slides'])); ?>> Extra B-roll cuts</label>
                             <label for="tr-reel-fact-slides">Count</label>
                             <select id="tr-reel-fact-slides" name="<?php echo esc_attr($option); ?>[social_reel_fact_slides]"><?php foreach (array(1, 2, 3, 4) as $slide_n) : ?><option value="<?php echo esc_attr((string) $slide_n); ?>" <?php selected((int) ($s['social_reel_fact_slides'] ?? 2), $slide_n); ?>><?php echo esc_html((string) $slide_n); ?></option><?php endforeach; ?></select>
+                            <span class="description">More moving cutaways with captions. Not still news cards.</span>
                             <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="0">
                             <label><input id="tr-reel-include-broll" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="1" <?php checked(!isset($s['social_reel_include_broll']) || !empty($s['social_reel_include_broll'])); ?>> B-roll motion</label>
                             <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_sting]" value="0">
@@ -568,7 +569,7 @@ trait TechnoRapper_AI_Wire_Admin {
             </table>
             <p class="description">Writer GPT script tokens stay on the article budget. Mini TTS is about $0.004 per voiceover on the image budget. X API credits, Instagram quota, and YouTube Data API quota are separate. Fal bills the motion clip; the plugin only reserves the local estimate above. YouTube uploads have no Google per-video fee.</p>
             <h2>Talking host (optional avatar-face upsell)</h2>
-            <p>Off by default. Story recipe can lip-sync a still portrait with Kling Avatar. Upload a face, or generate a fictional presenter (~$0.006, image budget). <strong>Enhance avatar face</strong> runs Fal CodeFormer first (~$<?php echo esc_html(number_format_i18n(self::SOCIAL_REEL_FACE_ENHANCE_USD, 2)); ?> once per face, video budget).</p>
+            <p>Off by default. Story recipe lip-syncs a still portrait with Kling Avatar, then cuts to moving B-roll with captions — not still news cards. Upload a face, or generate a fictional presenter (~$0.006, image budget). <strong>Enhance avatar face</strong> runs Fal CodeFormer first (~$<?php echo esc_html(number_format_i18n(self::SOCIAL_REEL_FACE_ENHANCE_USD, 2)); ?> once per face, video budget).</p>
             <table class="widefat striped" style="max-width:960px;">
                 <thead>
                     <tr>
