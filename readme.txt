@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.84
+Stable tag: 0.2.85
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.85 =
+* Independent web search no longer sends OpenAI JSON mode (API 400: Web Search cannot be used with JSON mode). Search replies are still parsed as JSON.
 
 = 0.2.84 =
 * Local ffmpeg helper no longer treats a successful encode as failure when PHP already reaped the process (fixes a PHP 8.2 CI flake that surfaced as an ffmpeg version-banner error).
@@ -199,6 +202,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.85 =
+Update if Independent web search is on — review/Reel research was hitting OpenAI 400 with JSON mode.
 
 = 0.2.84 =
 Same as 0.2.83 for operators — this patch only hardens local ffmpeg status handling.
