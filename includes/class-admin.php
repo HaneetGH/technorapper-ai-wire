@@ -407,7 +407,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <p>
                             <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="0">
                             <label><input id="tr-reel-include-host" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="1" <?php checked(!empty($s['social_reel_include_host'])); ?>> <strong>Talking host (avatar face)</strong></label>
-                            <span class="description">Optional upsell. Lip-syncs a still portrait to the voiceover.</span>
+                            <span class="description">Optional upsell. Lip-syncs one saved portrait to the voiceover. Every Reel uses that same avatar.</span>
                         </p>
                         <div class="tr-ai-wire-panel" data-tr-reveal="tr-reel-include-host"<?php echo !empty($s['social_reel_include_host']) ? '' : ' hidden'; ?>>
                             <?php
@@ -420,23 +420,27 @@ trait TechnoRapper_AI_Wire_Admin {
                                     <?php if ($host_src) : ?>
                                     <img src="<?php echo esc_url($host_src); ?>" alt="Saved avatar face">
                                     <?php else : ?>
-                                    <span>No avatar face yet. Upload a portrait or generate a presenter.</span>
+                                    <span>No avatar face yet. Upload a portrait or generate a presenter. That one face is reused on every Reel.</span>
                                     <?php endif; ?>
                                 </div>
                                 <div>
                                     <p><label for="tr-reel-host-image"><strong>Avatar face</strong></label><br>
                                     <input id="tr-reel-host-image" name="social_reel_host_image" type="file" accept="image/jpeg,image/png,image/webp">
-                                    <span class="description">Front-facing adult portrait, head and shoulders, no logos.</span></p>
+                                    <span class="description">Front-facing adult portrait, head and shoulders, no logos. This is the show host — every Reel uses this same face.</span></p>
                                     <?php if ($host_src) : ?>
+                                    <p class="description">Saved. New Reels keep this avatar. Replace it only if you upload a new portrait or remove it.</p>
                                     <p><label><input type="checkbox" name="remove_reel_host_image" value="1"> Remove saved avatar face</label></p>
-                                    <?php elseif (!empty($s['social_reel_include_host']) && empty($s['social_reel_generate_host_face'])) : ?>
-                                    <div class="notice notice-warning inline"><p>Talking host is on but there is no avatar face yet. Upload a portrait or turn on Generate a presenter face.</p></div>
+                                    <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="0">
+                                    <?php else : ?>
+                                    <?php if (!empty($s['social_reel_include_host']) && empty($s['social_reel_generate_host_face'])) : ?>
+                                    <div class="notice notice-warning inline"><p>Talking host is on but there is no avatar face yet. Upload a portrait or turn on Generate a presenter face. The first face is saved and reused.</p></div>
                                     <?php endif; ?>
                                     <p>
                                         <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="0">
                                         <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="1" <?php checked(!empty($s['social_reel_generate_host_face'])); ?>> Generate a presenter face if none is uploaded</label>
-                                        <span class="description">GPT Image 2 low (~$0.006, image budget). Saved and reused.</span>
+                                        <span class="description">GPT Image 2 low (~$0.006, image budget). Generated once, then reused on every Reel.</span>
                                     </p>
+                                    <?php endif; ?>
                                     <p>
                                         <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="0">
                                         <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="1" <?php checked(!empty($s['social_reel_enhance_host_face'])); ?>> <strong>Enhance avatar face</strong></label>

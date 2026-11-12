@@ -58,7 +58,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 = 0.2.69 =
 * Spoken Reels are configurable from Social settings: recipe (B-roll vs story edit), spoken length, male/female/neutral Mini TTS voice, weekly cap, cameras, and sting. Story edit is a talking host plus moving B-roll cutaways with captions — no still news cards. Social queue has Generate Reel now: it builds one video, holds it on the dashboard for review, and only posts when you click Publish. Auto Reels still go out when Reel posts per day is above 0.
-* Optional avatar-face upsell: upload a host portrait, generate a fictional presenter, enhance the face with CodeFormer, and lip-sync with Kling Avatar Standard or Pro. Defaults stay B-roll, Reels off, $10 video budget.
+* Optional avatar-face upsell: upload a host portrait, generate a fictional presenter, enhance the face with CodeFormer, and lip-sync with Kling Avatar Standard or Pro. That one saved face is reused on every Reel. Defaults stay B-roll, Reels off, $10 video budget.
 * Social settings, Social queue, and Price estimate use grouped cards, recipe choice tiles, an avatar-face panel, mix meters, and a current-recipe cost summary.
 
 = 0.2.68 =

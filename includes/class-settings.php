@@ -347,9 +347,7 @@ trait TechnoRapper_AI_Wire_Settings {
         $host_models = array_keys($this->social_reel_host_models());
         $host_model = sanitize_key((string) ($input['social_reel_host_model'] ?? $defaults['social_reel_host_model']));
         $out['social_reel_host_model'] = in_array($host_model, $host_models, true) ? $host_model : 'kling-avatar-pro';
-        $out['social_reel_host_image_id'] = array_key_exists('social_reel_host_image_id', $input)
-            ? absint($input['social_reel_host_image_id'])
-            : absint($current['social_reel_host_image_id'] ?? $defaults['social_reel_host_image_id']);
+        $out['social_reel_host_image_id'] = $this->sanitize_social_reel_host_image_id($input, $current, $defaults);
         $out['social_reel_generate_host_face'] = empty($input['social_reel_generate_host_face']) ? 0 : 1;
         $out['social_reel_enhance_host_face'] = empty($input['social_reel_enhance_host_face']) ? 0 : 1;
         $out['social_reel_host_seconds'] = min(45, max(8, absint($input['social_reel_host_seconds'] ?? $defaults['social_reel_host_seconds'])));
@@ -409,6 +407,20 @@ trait TechnoRapper_AI_Wire_Settings {
         }
         $out['social_news_formats'] = self::sanitize_social_news_format_ids($input['social_news_formats'] ?? array());
         return self::apply_social_platform_toggles($out);
+    }
+
+    private function sanitize_social_reel_host_image_id($input, $current, $defaults) {
+        $existing = absint($current['social_reel_host_image_id'] ?? $defaults['social_reel_host_image_id']);
+        if (!empty($_POST['remove_reel_host_image'])) {
+            return 0;
+        }
+        $submitted = array_key_exists('social_reel_host_image_id', $input)
+            ? absint($input['social_reel_host_image_id'])
+            : $existing;
+        if ($submitted > 0) {
+            return $submitted;
+        }
+        return $existing;
     }
 
     private function clamp_social_mix_counts($counts, $budget) {

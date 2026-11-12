@@ -5765,6 +5765,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(2, (int) $story['social_reel_weekly_limit']);
         $this->assertSame('marin', $story['social_reel_tts_voice']);
         $this->assertStringContainsString('Marin (female)', $this->invoke_private('social_reel_recipe_summary', array($story)));
+        $this->assertStringContainsString('same host face', $this->invoke_private('social_reel_recipe_summary', array($story)));
         $this->assertStringContainsString('Female news presenter', $this->invoke_private('social_reel_tts_instructions', array($story)));
         $this->assertStringContainsString('Male news presenter', $this->invoke_private('social_reel_tts_instructions', array(TechnoRapper_AI_Wire::defaults())));
         $this->assertSame('shimmer', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'shimmer'))['social_reel_tts_voice']);
@@ -5873,6 +5874,86 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame((int) $enhanced, (int) get_post_meta($attachment_id, '_tr_ai_wire_host_face_enhanced_id', true));
         $again = $this->invoke_private('ensure_social_reel_host_face_enhanced', array($attachment_id, TechnoRapper_AI_Wire::defaults()));
         $this->assertSame((int) $enhanced, (int) $again);
+    }
+
+    public function test_saved_avatar_face_is_reused_for_every_reel() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to reuse an avatar face.');
+        }
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_include_host' => 1,
+            'social_reel_generate_host_face' => 1,
+            'social_reel_host_image_id' => $attachment_id,
+            'social_image_budget_usd' => 5,
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $calls = 0;
+        add_filter('pre_http_request', function () use (&$calls) {
+            $calls++;
+            return new WP_Error('blocked', 'Avatar generation must not run when a face is already saved.');
+        }, 10, 3);
+        $first = $this->invoke_private('ensure_social_reel_host_portrait', array($settings));
+        $second = $this->invoke_private('ensure_social_reel_host_portrait', array($settings));
+        $this->assertSame($attachment_id, (int) $first);
+        $this->assertSame($attachment_id, (int) $second);
+        $this->assertSame(0, $calls);
+        $this->assertSame($attachment_id, (int) $this->invoke_private('saved_social_reel_host_image_id'));
+        $stale = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_reel_host_image_id' => 0,
+        ));
+        $this->assertSame($attachment_id, (int) $stale['social_reel_host_image_id']);
+        $_POST['remove_reel_host_image'] = '1';
+        $removed = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_reel_host_image_id' => $attachment_id,
+        ));
+        unset($_POST['remove_reel_host_image']);
+        $this->assertSame(0, (int) $removed['social_reel_host_image_id']);
+    }
+
+    public function test_generated_avatar_face_is_saved_once_and_reused() {
+        $jpeg = $this->tiny_jpeg_bytes();
+        if ($jpeg === '') {
+            $this->markTestSkipped('GD is required to generate an avatar face.');
+        }
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_include_host' => 1,
+            'social_reel_generate_host_face' => 1,
+            'social_reel_host_image_id' => 0,
+            'social_image_budget_usd' => 5,
+            'social_reel_tts_voice' => 'cedar',
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $calls = 0;
+        $captured = '';
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$calls, &$captured, $jpeg) {
+            if (strpos((string) $url, 'api.openai.com/v1/images/generations') === false) {
+                return new WP_Error('blocked', 'Unexpected URL ' . $url);
+            }
+            $calls++;
+            $body = json_decode((string) ($args['body'] ?? ''), true);
+            $captured = (string) ($body['prompt'] ?? '');
+            return $this->mock_http_ok(array('data' => array(array('b64_json' => base64_encode($jpeg)))));
+        }, 10, 3);
+        $first = $this->invoke_private('ensure_social_reel_host_portrait', array($settings));
+        $this->assertFalse(is_wp_error($first), is_wp_error($first) ? $first->get_error_message() : '');
+        $this->assertGreaterThan(0, (int) $first);
+        $this->assertSame((int) $first, (int) get_option(TechnoRapper_AI_Wire::OPTION, array())['social_reel_host_image_id']);
+        $this->assertStringContainsString('male news presenter', $captured);
+        $this->assertStringContainsString('single recurring show host', $captured);
+        $second = $this->invoke_private('ensure_social_reel_host_portrait', array(array_merge($settings, array(
+            'social_reel_host_image_id' => 0,
+            'social_reel_generate_host_face' => 1,
+        ))));
+        $this->assertSame((int) $first, (int) $second);
+        $this->assertSame(1, $calls);
+        $female = $this->invoke_private('social_reel_host_portrait_prompt', array(array_merge($settings, array(
+            'social_reel_tts_voice' => 'marin',
+        ))));
+        $this->assertStringContainsString('female news presenter', $female);
     }
 
     public function test_site_context_needs_refresh_until_a_successful_read() {
@@ -6154,6 +6235,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Avatar face', $html);
         $this->assertStringContainsString('Enhance avatar face', $html);
         $this->assertStringContainsString('Generate a presenter face', $html);
+        $this->assertStringContainsString('every Reel uses this same face', $html);
         $this->assertStringContainsString('Talking host (avatar face)', $html);
         $this->assertStringContainsString('id="tr-reel-recipe-story"', $html);
         $this->assertStringContainsString('Male voices', $html);

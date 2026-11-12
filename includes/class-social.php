@@ -332,7 +332,10 @@ trait TechnoRapper_AI_Wire_Social {
 
     private function process_reel_host_image_from_request($settings) {
         $settings = is_array($settings) ? $settings : $this->settings();
-        $host_id = absint($settings['social_reel_host_image_id'] ?? 0);
+        $host_id = $this->saved_social_reel_host_image_id();
+        if ($host_id < 1) {
+            $host_id = absint($settings['social_reel_host_image_id'] ?? 0);
+        }
         if (!empty($_FILES['social_reel_host_image']['name']) && !empty($_FILES['social_reel_host_image']['tmp_name'])) {
             require_once ABSPATH . 'wp-admin/includes/file.php';
             require_once ABSPATH . 'wp-admin/includes/image.php';
@@ -345,10 +348,7 @@ trait TechnoRapper_AI_Wire_Social {
         } elseif (!empty($_POST['remove_reel_host_image'])) {
             $host_id = 0;
         }
-        if ((int) ($settings['social_reel_host_image_id'] ?? 0) !== $host_id) {
-            $settings['social_reel_host_image_id'] = $host_id;
-            update_option(self::OPTION, $settings, false);
-        }
+        $this->persist_social_reel_host_image_id($host_id);
     }
 
     private function process_social_ideas_from_request() {

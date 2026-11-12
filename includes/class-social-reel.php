@@ -409,6 +409,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $hosts = $this->social_reel_host_models();
                 $host = $this->social_reel_host_model($settings);
                 $parts[] = (string) ($hosts[$host]['label'] ?? 'Talking host');
+                $parts[] = 'same host face';
                 if (!empty($settings['social_reel_enhance_host_face'])) {
                     $parts[] = 'face enhance';
                 }
@@ -919,7 +920,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($want_host && absint($settings['social_reel_host_image_id'] ?? 0) < 1 && empty($settings['social_reel_generate_host_face'])) {
             return new WP_Error(
                 'tr_ai_wire_reel_host_image',
-                'Story Reels need an avatar face. Upload a portrait, turn on Generate a presenter face, or turn the talking host off.'
+                'Story Reels need an avatar face. Upload a portrait, turn on Generate a presenter face, or turn the talking host off. One saved face is used on every Reel.'
             );
         }
         if (($want_host || $want_broll) && $this->fal_api_key() === '') {
@@ -1250,26 +1251,64 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $this->social_reel_attachment_data_url((int) $image_id, 'tr_ai_wire_reel_host_image', 'The host portrait could not be read.');
     }
 
+    private function saved_social_reel_host_image_id() {
+        $stored = get_option(self::OPTION, array());
+        $image_id = absint(is_array($stored) ? ($stored['social_reel_host_image_id'] ?? 0) : 0);
+        return ($image_id > 0 && $this->social_image_file_exists($image_id)) ? $image_id : 0;
+    }
+
+    private function persist_social_reel_host_image_id($image_id) {
+        $image_id = absint($image_id);
+        $stored = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        $stored['social_reel_host_image_id'] = $image_id;
+        update_option(self::OPTION, $stored, false);
+    }
+
     private function ensure_social_reel_host_portrait($settings) {
         $settings = is_array($settings) ? $settings : $this->settings();
-        $image_id = absint($settings['social_reel_host_image_id'] ?? 0);
-        if ($image_id > 0 && $this->social_image_file_exists($image_id)) {
+        $image_id = $this->saved_social_reel_host_image_id();
+        if ($image_id > 0) {
             return $image_id;
+        }
+        $fallback = absint($settings['social_reel_host_image_id'] ?? 0);
+        if ($fallback > 0 && $this->social_image_file_exists($fallback)) {
+            $this->persist_social_reel_host_image_id($fallback);
+            return $fallback;
         }
         if (empty($settings['social_reel_generate_host_face'])) {
             return new WP_Error(
                 'tr_ai_wire_reel_host_image',
-                'Story Reels need an avatar face. Upload a portrait on Social settings, or turn on Generate a presenter face.'
+                'Story Reels need an avatar face. Upload a portrait on Social settings, or turn on Generate a presenter face. That one face is reused on every Reel.'
             );
         }
-        $generated = $this->generate_social_reel_host_portrait($settings);
-        if (is_wp_error($generated)) {
-            return $generated;
+        $lock = 'tr_ai_wire_host_face_lock';
+        if (!add_option($lock, time(), '', false)) {
+            $locked = (int) get_option($lock, 0);
+            if ($locked && $locked < time() - 120) {
+                delete_option($lock);
+            }
+            if (!add_option($lock, time(), '', false)) {
+                $image_id = $this->saved_social_reel_host_image_id();
+                if ($image_id > 0) {
+                    return $image_id;
+                }
+                return new WP_Error('tr_ai_wire_reel_host_image', 'Another worker is saving the show avatar. Retry this Reel in a minute.');
+            }
         }
-        $current = $this->settings();
-        $current['social_reel_host_image_id'] = (int) $generated;
-        update_option(self::OPTION, $current, false);
-        return (int) $generated;
+        try {
+            $image_id = $this->saved_social_reel_host_image_id();
+            if ($image_id > 0) {
+                return $image_id;
+            }
+            $generated = $this->generate_social_reel_host_portrait($settings);
+            if (is_wp_error($generated)) {
+                return $generated;
+            }
+            $this->persist_social_reel_host_image_id((int) $generated);
+            return (int) $generated;
+        } finally {
+            delete_option($lock);
+        }
     }
 
     private function generate_social_reel_host_portrait($settings) {
@@ -1283,7 +1322,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!$key) {
             return new WP_Error('tr_ai_wire_social_image_key', 'Add the OpenAI API key before generating an avatar face.');
         }
-        $prompt = 'Photoreal head-and-shoulders portrait of a fictional adult news presenter, 28-42 years old, looking straight at camera, even studio lighting, plain dark backdrop, wearing a simple fully clothed blazer. Neutral expression ready to speak. No logos, no text, no watermarks, no lower-third, no celebrity likeness, no real person. Vertical 4:5 photograph, sharp face, natural skin.';
+        $prompt = $this->social_reel_host_portrait_prompt($settings);
         $response = wp_remote_post('https://api.openai.com/v1/images/generations', array(
             'timeout' => 120,
             'headers' => array('Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json'),
@@ -1311,6 +1350,19 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         update_option($month_key, round($usage + self::SOCIAL_IMAGE_ESTIMATED_USD, 6), false);
         return $this->store_social_host_face($bytes, 'technorapper-social-host-face.jpg', 'Generated news presenter');
+    }
+
+    private function social_reel_host_portrait_prompt($settings = null) {
+        $spec = $this->social_reel_tts_voice_spec($this->social_reel_tts_voice($settings));
+        $gender = (string) ($spec['gender'] ?? 'neutral');
+        if ($gender === 'female') {
+            $who = 'a fictional adult female news presenter';
+        } elseif ($gender === 'male') {
+            $who = 'a fictional adult male news presenter';
+        } else {
+            $who = 'a fictional adult news presenter';
+        }
+        return 'Photoreal head-and-shoulders portrait of ' . $who . ', 28-42 years old, looking straight at camera, even studio lighting, plain dark backdrop, wearing a simple fully clothed blazer. Neutral expression ready to speak. This is a single recurring show host, not a new person. No logos, no text, no watermarks, no lower-third, no celebrity likeness, no real person. Vertical 4:5 photograph, sharp face, natural skin.';
     }
 
     private function ensure_social_reel_host_face_enhanced($image_id, $settings) {
