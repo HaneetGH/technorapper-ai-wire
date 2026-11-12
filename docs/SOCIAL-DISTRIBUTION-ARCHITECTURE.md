@@ -59,8 +59,8 @@ The separation is intentional:
 1. **Editorial processing:** AI Wire discovers and deduplicates a source, then runs Writer → Reviewer and applies its existing gates.
 2. **Article creation:** A passing item becomes a WordPress draft or published post. Social work starts only after WordPress confirms `publish`, including a later draft-to-publish transition.
 3. **Queue insert:** Skip social if the article’s review score is below `social_min_review_score` (default **90**). 90 means a complete original article; 85–89 stay on the website. The writer aims at 90, clustered complete scores are raised to 90, and one polish pass can apply reviewer fixes. Qualifying articles get one `queued` row per connected platform. YouTube is skipped unless the article’s social mode is `reel`. Instagram stills wait at least 3 hours after the last Instagram publish, and their captions never include a URL.
-4. **Copy generation:** One Writer JSON pass. Copy uses a named hook, pays it off, and asks for a save or send. Generic bait (“wait for it”, “you won’t believe”) is banned in the prompt and stripped before publish. Invalid or policy-failing copy is held; it is never sent to an adapter.
-5. **Still graphic:** GPT Image 2 low 1080×1350, GD overlay of this site’s name, cached as `_tr_ai_wire_social_image_id`. Reused across platforms. X always gets this still (even when Instagram/YouTube get a Reel).
+4. **Copy generation:** One Writer JSON pass. Copy uses a named hook as the Instagram first line (feed preview), pays it off, and asks for a save or send. Generic bait (“wait for it”, “you won’t believe”, “don’t skip”) is banned in the prompt and stripped before publish. Invalid or policy-failing copy is held; it is never sent to an adapter.
+5. **Still graphic:** GPT Image 2 low 1080×1350, photo-first GD overlay (small site-name chip + 3–6 word headline, no on-image subhead). Cached as `_tr_ai_wire_social_image_id`. Layout `poster-v3` regenerates queued stills that still have the older news-card chrome. Reused across platforms. X always gets this still (even when Instagram/YouTube get a Reel).
 6. **Spoken Reel (when mix allots a Reel):** Fal image-to-video (suggested Veo 3.1 Lite), Mini TTS (`gpt-4o-mini-tts` / `cedar`), ffmpeg mux with captions and a brand sting. The Instagram Reel container sets `is_ai_generated=true` (YouTube already sets `containsSyntheticMedia`). Missing Fal key or `ffmpeg` **holds** the job — no slideshow fallback.
 7. **Publish:** X, Instagram and YouTube adapters run separately. Ambiguous timeouts go to `needs_review`; they are not blindly retried.
 8. **YouTube listing:** `videos.insert` sets title, description (`#Shorts` + tags + permalink), tags, category, language, license, **public** privacy, not-made-for-kids, and synthetic-media disclosure in that call. `publishAt` is never set. If the channel default is private, the worker updates the video to public.
@@ -140,7 +140,7 @@ Adapters own authentication, payload formatting, media upload and error classifi
 
 ## Social Creative Engine
 
-1. **GPT Image 2 low poster** (default): 1080×1350, hashed layout variant, site-name overlay. Required for X stills and as the Reel still that Fal animates.
+1. **GPT Image 2 low poster** (default): 1080×1350, photo-first overlay on the first still (small site-name chip and a 3–6 word headline). Regenerations rotate layouts. The image prompt has to show a concrete object from this article. Required for X stills and as the Reel still that Fal animates.
 2. **Spoken Reel:** Fal catalog on Social settings (Veo 3.1 Lite suggested at ~$0.24 / 8s; Veo Fast, Veo 3.1, Kling 3.0 Standard/Pro). **$10/month** video budget. Price estimate page compares them.
 3. **No slideshow fallback.** Missing ffmpeg, Fal key, or video budget holds the Reel/YouTube job.
 

@@ -75,7 +75,7 @@ Silent Fal image-to-video estimates (not an invoice):
 ## Cheaper rollout options
 
 1. **Leave Social distribution off.** Current cost is $0 until the switch is enabled.
-2. **Use GPT Image 2 low for social cards.** The implementation creates one original editorial illustration per article, overlays a branded title card, then reuses it across destinations.
+2. **Use GPT Image 2 low for social cards.** The implementation creates one original photograph per article, overlays a small site-name chip and a short headline, then reuses it across destinations.
 3. **Keep an image budget ceiling.** The dashboard defaults to $5/month and stops requesting new images when the local estimate reaches the cap.
 4. **Prefer editorial illustrations** over fake news photographs. This reduces the chance of implying that a generated scene is a real event photograph.
 
