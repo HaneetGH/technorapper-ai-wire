@@ -6192,6 +6192,17 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(4000, (int) $short_loops[0]['duration']);
     }
 
+    public function test_overlong_finished_reel_is_rejected_even_when_over_ninety_seconds() {
+        $tmp = sys_get_temp_dir() . '/tr-overlong-' . wp_generate_uuid4() . '.mp4';
+        // mvhd duration 7861s (the class of broken still+voice mux the player showed as 2:11:01).
+        $bytes = $this->fake_mp4_bytes(7861);
+        file_put_contents($tmp, $bytes);
+        $this->assertEqualsWithDelta(7861.0, $this->invoke_private('social_reel_output_seconds', array($tmp)), 1.0);
+        // The short-clip helper must NOT silently treat this as 0.
+        $this->assertSame(0.0, $this->invoke_private('social_video_duration', array($tmp, 0.0)));
+        @unlink($tmp);
+    }
+
     public function test_purge_social_reel_assets_deletes_old_media_and_can_force_new_script() {
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Purge old reel'));
         $motion = $this->create_reel_asset('motion.mp4', 'video/mp4', str_repeat('v', 2048));

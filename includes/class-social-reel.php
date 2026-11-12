@@ -974,12 +974,20 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($existing > 0 && (string) get_post_meta($existing, '_tr_ai_wire_voice_key', true) === $key) {
             $path = get_attached_file($existing);
             if ($path && file_exists($path) && filesize($path) > 512) {
-                $seconds = (float) get_post_meta($existing, '_tr_ai_wire_voice_seconds', true);
-                if ($seconds <= 0) {
-                    $seconds = $this->social_audio_duration($path, $script, $settings);
+                $raw = (float) $this->social_mp3_duration($path);
+                $max = $this->social_reel_max_audio_seconds($settings);
+                // Never reuse an overlong voice file — Fal can extend the mux to match it.
+                if ($raw <= 0 || $raw <= ($max + 5.0)) {
+                    $seconds = (float) get_post_meta($existing, '_tr_ai_wire_voice_seconds', true);
+                    if ($seconds <= 0) {
+                        $seconds = $this->social_audio_duration($path, $script, $settings);
+                    }
+                    $seconds = $this->social_reel_clamp_audio_seconds($seconds, $settings);
+                    return array('id' => $existing, 'path' => $path, 'key' => $key, 'seconds' => $seconds);
                 }
-                $seconds = $this->social_reel_clamp_audio_seconds($seconds, $settings);
-                return array('id' => $existing, 'path' => $path, 'key' => $key, 'seconds' => $seconds);
+                if (get_post_meta($existing, '_tr_ai_wire_social_asset', true) === '1') {
+                    wp_delete_attachment($existing, true);
+                }
             }
         }
         $this->social_reel_progress_note($post->ID, 'Recording the voiceover.');
@@ -1596,7 +1604,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 return $stored;
             }
             $path = get_attached_file((int) $stored);
-            $got = $path ? (float) $this->social_video_duration($path, 0.0) : 0.0;
+            // Use uncapped probe — social_video_duration() ignores >90s and would
+            // treat a multi-hour freeze as 0 and keep it.
+            $got = $path ? (float) $this->social_reel_output_seconds($path) : 0.0;
             $max = $this->social_reel_max_audio_seconds($settings) + 8.0;
             if ($got > $max) {
                 if (get_post_meta((int) $stored, '_tr_ai_wire_social_asset', true) === '1') {
@@ -1604,7 +1614,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 }
                 return new WP_Error(
                     'tr_ai_wire_reel_mux',
-                    'Fal returned a broken overlong Reel (' . (string) (int) round($got) . 's). That usually means a still was muxed as video. Click Start over — do not Resume the bad file.'
+                    'Fal returned a broken overlong Reel (' . (string) (int) round($got) . 's). That usually means a still was muxed as video. Click Start over or Generate script again — do not Resume the bad file.'
                 );
             }
             update_post_meta($post->ID, '_tr_ai_wire_social_reel_id', (int) $stored);
@@ -3502,6 +3512,30 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return $seconds;
         }
         return $fallback !== null ? (float) $fallback : (float) $this->social_reel_clip_seconds();
+    }
+
+    /**
+     * Uncapped duration for finished-Reel validation. social_video_duration()
+     * ignores values over 90s (meant for short Fal source clips) — that would
+     * let a multi-hour broken mux slip through as "0".
+     */
+    private function social_reel_output_seconds($path) {
+        $probe = $this->social_ffprobe_path();
+        if ($probe !== '') {
+            $result = $this->social_run_binary($probe, array(
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                $path,
+            ));
+            if (!is_wp_error($result)) {
+                $seconds = (float) trim((string) $result);
+                if ($seconds > 0) {
+                    return $seconds;
+                }
+            }
+        }
+        return max(0.0, (float) $this->social_mp4_duration($path));
     }
 
     private function social_mp4_duration($path) {
