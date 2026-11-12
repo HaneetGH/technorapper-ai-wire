@@ -5567,7 +5567,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('tr_ai_wire_ffmpeg_path');
     }
 
-    public function test_reel_without_ffmpeg_muxes_through_fal() {
+    public function test_reel_without_ffmpeg_assembles_the_host_unbroken_through_fal() {
+        if (!function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render the end card.');
+        }
         add_filter('tr_ai_wire_ffmpeg_path', function () {
             return '/tmp/missing-ffmpeg-binary';
         });
@@ -5577,16 +5580,24 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
         $this->assertSame('', $this->invoke_private('social_ffmpeg_path'));
         $this->assertTrue($this->invoke_private('social_reel_can_mux'));
+        $story = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 1,
+            'social_reel_include_broll' => 1,
+            'social_reel_include_sting' => 1,
+            'social_reel_generate_host_face' => 1,
+        ));
+        $plan = $this->invoke_private('social_reel_plan', array($story));
+        $this->assertTrue($plan['host']);
+        $this->assertFalse($plan['motion']);
+        $this->assertTrue($plan['cutaways_skipped']);
         $captured = array();
         add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
             $url = (string) $url;
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
                 $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
                 $captured['endpoint'] = $url;
-                return $this->mock_http_ok(array(
-                    'request_id' => 'fal-mux-1',
-                    'status' => 'IN_QUEUE',
-                ));
+                return $this->mock_http_ok(array('request_id' => 'fal-mux-1', 'status' => 'IN_QUEUE'));
             }
             if (strpos($url, '/status') !== false) {
                 return $this->mock_http_ok(array('status' => 'COMPLETED'));
@@ -5595,45 +5606,41 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 return $this->mock_http_ok(array('video_url' => 'https://example.org/fal-mux.mp4'));
             }
             if (strpos($url, 'example.org/fal-mux.mp4') !== false) {
-                return array(
-                    'headers' => array(),
-                    'body' => str_repeat('M', 2048),
-                    'response' => array('code' => 200, 'message' => 'OK'),
-                    'cookies' => array(),
-                    'filename' => null,
-                );
+                return $this->mock_http_ok(str_repeat('M', 2048));
             }
             return new WP_Error('blocked', 'Unexpected URL ' . $url);
         }, 10, 3);
-        $tmp = sys_get_temp_dir() . '/tr-fal-mux-' . wp_generate_uuid4();
-        $this->assertTrue(mkdir($tmp, 0755, true));
-        $motion = $tmp . '/motion.mp4';
-        $audio = $tmp . '/voice.mp3';
-        $end = $tmp . '/end.jpg';
-        $out = $tmp . '/reel.mp4';
-        file_put_contents($motion, str_repeat('v', 2048));
-        file_put_contents($audio, str_repeat('a', 512));
-        file_put_contents($end, $this->tiny_jpeg_bytes() !== '' ? $this->tiny_jpeg_bytes() : str_repeat('j', 512));
-        $result = $this->invoke_private('compose_social_reel_motion', array(
-            $motion,
-            array(),
-            $end,
-            $audio,
-            $out,
-            18.0,
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Fal assembly'));
+        $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', $this->fake_mp3_bytes(100));
+        $host = $this->create_reel_asset('host.mp4', 'video/mp4', $this->fake_mp4_bytes(12.4));
+        $result = $this->invoke_private('social_reel_assemble_with_fal', array(
+            get_post($post_id),
+            $story,
+            array('hook' => 'Fal assembly'),
+            'Spoken script',
+            $plan,
+            array(
+                'voice' => array('id' => $voice['id'], 'path' => $voice['path'], 'key' => 'voice-key', 'seconds' => 12.0),
+                'host' => array('id' => $host['id'], 'path' => $host['path']),
+                'motion' => null,
+            ),
+            '',
+            'Read the full story',
         ));
         $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
-        $this->assertFileExists($out);
-        $this->assertSame(2048, filesize($out));
         $this->assertStringContainsString('ffmpeg-api/compose', (string) ($captured['endpoint'] ?? ''));
-        $this->assertCount(2, $captured['submit']['tracks'] ?? array());
-        $this->assertSame('video', $captured['submit']['tracks'][0]['type'] ?? '');
-        $this->assertSame('audio', $captured['submit']['tracks'][1]['type'] ?? '');
-        $this->assertGreaterThanOrEqual(2, count($captured['submit']['tracks'][0]['keyframes'] ?? array()));
-        foreach ((array) glob($tmp . '/*') as $file) {
-            @unlink($file);
-        }
-        @rmdir($tmp);
+        $tracks = $captured['submit']['tracks'] ?? array();
+        $this->assertCount(2, $tracks);
+        $this->assertSame('video', $tracks[0]['type'] ?? '');
+        $this->assertSame('audio', $tracks[1]['type'] ?? '');
+        $visual = $tracks[0]['keyframes'] ?? array();
+        $this->assertCount(2, $visual);
+        $this->assertSame(0, (int) $visual[0]['timestamp']);
+        $this->assertSame(12400, (int) $visual[0]['duration']);
+        $this->assertSame(12400, (int) $visual[1]['timestamp']);
+        $this->assertSame(12000, (int) $tracks[1]['keyframes'][0]['duration']);
+        $this->assertSame((int) $result['id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_fal_compose_request', true));
         remove_all_filters('tr_ai_wire_ffmpeg_path');
         remove_all_filters('tr_ai_wire_fal_poll_seconds');
         remove_all_filters('pre_http_request');
@@ -6802,6 +6809,58 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(12, has_action('init', array($this->plugin, 'maybe_requeue_instagram_quota_field_failures')));
     }
 
+    private function fake_mp3_bytes($frames = 100) {
+        $frame = "\xFF\xFB\x90\x00" . str_repeat("\0", 413);
+        return str_repeat($frame, (int) $frames);
+    }
+
+    private function fake_mp4_bytes($seconds) {
+        $mvhd = "\0\0\0\0" . pack('N', 0) . pack('N', 0) . pack('N', 1000) . pack('N', (int) round($seconds * 1000)) . str_repeat("\0", 80);
+        $box = pack('N', 8 + strlen($mvhd)) . 'mvhd' . $mvhd;
+        $moov = pack('N', 8 + strlen($box)) . 'moov' . $box;
+        return pack('N', 16) . 'ftypisom' . "\0\0\0\0" . $moov . str_repeat('m', 1024);
+    }
+
+    private function create_reel_asset($name, $mime, $bytes) {
+        $upload = wp_upload_bits(substr(wp_generate_uuid4(), 0, 8) . '-' . $name, null, $bytes);
+        if (!empty($upload['error'])) {
+            $this->markTestSkipped('Uploads are required for Reel assets.');
+        }
+        $id = wp_insert_attachment(array(
+            'post_mime_type' => $mime,
+            'post_title' => $name,
+            'post_status' => 'inherit',
+        ), $upload['file'], 0, true);
+        if (is_wp_error($id) || (int) $id < 1) {
+            $this->markTestSkipped('Uploads are required for Reel assets.');
+        }
+        return array('id' => (int) $id, 'path' => (string) $upload['file']);
+    }
+
+    private function fal_queue_mock(&$state, &$submits, $result_body = null) {
+        $result_body = $result_body ?: array('video' => array('url' => 'https://example.org/fal-clip.mp4'));
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$state, &$submits, $result_body) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, '/requests/') === false) {
+                $submits++;
+                return $this->mock_http_ok(array('request_id' => 'fal-req-resume-1', 'status' => 'IN_QUEUE'));
+            }
+            if (strpos($url, '/status') !== false) {
+                if ($state === 'HTTP502') {
+                    return array('headers' => array(), 'body' => 'bad gateway', 'response' => array('code' => 502, 'message' => 'Bad Gateway'), 'cookies' => array(), 'filename' => null);
+                }
+                return $this->mock_http_ok(array('status' => $state));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                return $this->mock_http_ok($result_body);
+            }
+            if (strpos($url, 'example.org/fal-clip.mp4') !== false) {
+                return $this->mock_http_ok(str_repeat('c', 2048));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+    }
+
     private function create_social_jpeg_attachment() {
         $jpeg = $this->tiny_jpeg_bytes();
         if ($jpeg === '') {
@@ -7008,56 +7067,93 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         @rmdir($tmp);
     }
 
-    public function test_social_queue_shows_laptop_reel_downloads_when_video_is_unfinished() {
+    public function test_social_queue_shows_saved_pieces_and_resume_when_video_is_unfinished() {
         $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
         wp_set_current_user($admin_id);
         $this->onboard_social(array('instagram'));
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
-            'post_title' => 'Laptop downloads',
+            'post_title' => 'Saved pieces',
         ));
-        $motion_upload = wp_upload_bits('technorapper-motion-' . wp_generate_uuid4() . '.mp4', null, str_repeat('v', 2048));
-        $voice_upload = wp_upload_bits('technorapper-voice-' . wp_generate_uuid4() . '.mp3', null, str_repeat('a', 512));
-        if (!empty($motion_upload['error']) || !empty($voice_upload['error'])) {
-            $this->markTestSkipped('Uploads are required to show Reel download buttons.');
-        }
-        $motion_id = wp_insert_attachment(array(
-            'post_mime_type' => 'video/mp4',
-            'post_title' => 'Motion',
-            'post_status' => 'inherit',
-        ), $motion_upload['file'], 0, true);
-        $voice_id = wp_insert_attachment(array(
-            'post_mime_type' => 'audio/mpeg',
-            'post_title' => 'Voice',
-            'post_status' => 'inherit',
-        ), $voice_upload['file'], 0, true);
+        $motion = $this->create_reel_asset('motion.mp4', 'video/mp4', str_repeat('v', 2048));
+        $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', str_repeat('a', 512));
         update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
         update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
-        update_post_meta($post_id, '_tr_ai_wire_social_motion_id', (int) $motion_id);
-        update_post_meta($post_id, '_tr_ai_wire_social_voice_id', (int) $voice_id);
+        update_post_meta($post_id, '_tr_ai_wire_social_motion_id', $motion['id']);
+        update_post_meta($post_id, '_tr_ai_wire_social_voice_id', $voice['id']);
         global $wpdb;
         $now = gmdate('Y-m-d H:i:s');
         $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
             'post_id' => $post_id,
             'platform' => 'instagram',
             'status' => 'needs_review',
-            'error_text' => 'This WordPress host has no ffmpeg, so the MP4 cannot be finished here.',
+            'error_text' => 'Fal could not assemble the finished MP4: no reason given.',
             'created_at' => $now,
             'updated_at' => $now,
         ));
         ob_start();
         $this->plugin->social_distribution_page();
         $html = ob_get_clean();
-        $this->assertStringContainsString('Download video', $html);
-        $this->assertStringContainsString('action=tr_ai_wire_download_reel', $html);
-        $this->assertStringContainsString('voice.mp3', $html);
+        $this->assertStringContainsString('The Reel build stopped', $html);
+        $this->assertStringContainsString('Resume building this Reel', $html);
+        $this->assertStringContainsString('tr_ai_wire_resume_reel', $html);
+        $this->assertStringContainsString('Start over with a new Reel', $html);
+        $this->assertStringContainsString('Saved pieces', $html);
+        $this->assertStringContainsString('voice MP3', $html);
         $this->assertStringContainsString('Upload Reel MP4', $html);
-        $this->assertStringContainsString('tr-ai-wire-social-preview-video', $html);
-        $this->assertStringContainsString('>Post to Instagram</button>', $html);
-        $this->assertStringContainsString('I reviewed this video', $html);
+        $this->assertStringNotContainsString('>Post to Instagram</button>', $html);
+        $this->assertStringNotContainsString('action=tr_ai_wire_download_reel', $html);
+        $this->assertSame(0, $this->invoke_private('social_reel_downloadable_id', array($post_id)));
     }
 
-    public function test_social_queue_ffmpeg_hold_retries_without_a_checkbox() {
+    public function test_social_queue_shows_live_reel_build_progress_and_check_now() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 1,
+            'social_reel_generate_host_face' => 1,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Live build',
+        ));
+        $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', str_repeat('a', 512));
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_voice_id', $voice['id']);
+        update_post_meta($post_id, '_tr_ai_wire_fal_host_request', wp_json_encode(array(
+            'request_id' => 'abcdef1234567890',
+            'endpoint' => 'fal-ai/kling-video/ai-avatar/v2/pro',
+            'submitted_at' => time() - 130,
+            'estimated_usd' => 1.54,
+        )));
+        update_post_meta($post_id, '_tr_ai_wire_reel_ledger', wp_json_encode(array(array('label' => 'talking host', 'usd' => 1.54, 'request_id' => 'abcdef1234567890', 'at' => time()))));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'error_text' => 'Talking host rendering at Fal for 2m 10s.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Building your Reel', $html);
+        $this->assertStringContainsString('tr-ai-wire-reel-check', $html);
+        $this->assertStringContainsString('Talking host', $html);
+        $this->assertStringContainsString('request abcdef12', $html);
+        $this->assertStringContainsString('$1.54', $html);
+        $this->assertStringContainsString('tr_ai_wire_reel_tick', $html);
+        $this->assertStringNotContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringNotContainsString('>Post to Instagram</button>', $html);
+    }
+
+    public function test_social_queue_ffmpeg_hold_resumes_without_a_checkbox() {
         $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
         wp_set_current_user($admin_id);
         $this->onboard_social(array('instagram'));
@@ -7080,40 +7176,221 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ob_start();
         $this->plugin->social_distribution_page();
         $html = ob_get_clean();
-        $this->assertStringContainsString('Retry building this Reel', $html);
-        $this->assertStringContainsString('type="hidden" name="confirmed_not_published"', $html);
-        $this->assertStringContainsString('Fal will generate the MP4', $html);
+        $this->assertStringContainsString('Resume building this Reel', $html);
+        $this->assertStringNotContainsString('name="confirmed_not_published" value="1" required', $html);
         $this->assertStringNotContainsString('>Post to Instagram</button>', $html);
-        $this->assertStringNotContainsString('Retry building this Reel and hold it for review', $html);
     }
 
-    public function test_adopt_social_motion_as_reel_is_downloadable_and_postable() {
+    public function test_resume_keeps_the_hold_and_requeues_the_row() {
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Resume me'));
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_fal_host_request', wp_json_encode(array(
+            'request_id' => 'req-keep',
+            'endpoint' => 'fal-ai/kling-video/ai-avatar/v2/pro',
+            'errors' => 6,
+        )));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        foreach (array('processing' => 'instagram', 'needs_review' => 'youtube') as $status => $platform) {
+            $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+                'post_id' => $post_id,
+                'platform' => $platform,
+                'status' => $status,
+                'error_text' => 'Fal answered HTTP 502.',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ));
+        }
+        $id = (int) $wpdb->get_var($wpdb->prepare("SELECT id FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id));
+        $this->assertTrue($this->invoke_private('resume_social_reel_build', array($id)));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
+        $statuses = $wpdb->get_col($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d", $post_id));
+        $this->assertSame(array('queued', 'queued'), $statuses);
+        $pending = json_decode((string) get_post_meta($post_id, '_tr_ai_wire_fal_host_request', true), true);
+        $this->assertSame('req-keep', $pending['request_id']);
+        $this->assertSame(0, (int) $pending['errors']);
+    }
+
+    public function test_worker_resumes_a_dead_processing_reel_row_instead_of_parking_it() {
+        $this->onboard_social(array('instagram'));
+        add_filter('pre_http_request', function () {
+            return new WP_Error('blocked', 'No network in this test.');
+        }, 10, 3);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Dead worker'));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 777);
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        global $wpdb;
+        $old = gmdate('Y-m-d H:i:s', time() - 600);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'processing',
+            'attempts' => 1,
+            'created_at' => $old,
+            'updated_at' => $old,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $this->plugin->process_social_queue();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertNotSame('processing', (string) $row['status']);
+        $this->assertStringNotContainsString('worker stopped before recording', (string) $row['error_text']);
+        remove_all_filters('pre_http_request');
+    }
+
+    public function test_silent_motion_clip_is_never_postable_as_the_reel() {
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
-            'post_title' => 'Adopt motion',
+            'post_title' => 'Silent motion',
         ));
-        $upload = wp_upload_bits('technorapper-adopt-' . wp_generate_uuid4() . '.mp4', null, str_repeat('v', 2048));
-        if (!empty($upload['error'])) {
-            $this->markTestSkipped('Uploads are required to adopt motion as a Reel.');
+        $motion = $this->create_reel_asset('motion.mp4', 'video/mp4', str_repeat('v', 2048));
+        update_post_meta($post_id, '_tr_ai_wire_social_motion_id', $motion['id']);
+        $this->assertSame(0, $this->invoke_private('social_reel_id', array($post_id)));
+        $this->assertSame(0, $this->invoke_private('social_reel_preview_id', array($post_id)));
+        $this->assertSame(0, $this->invoke_private('social_reel_downloadable_id', array($post_id)));
+    }
+
+    public function test_reel_audio_and_video_durations_are_read_without_ffprobe() {
+        $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', $this->fake_mp3_bytes(100));
+        $host = $this->create_reel_asset('host.mp4', 'video/mp4', $this->fake_mp4_bytes(27.4));
+        $this->assertEqualsWithDelta(2.612, $this->invoke_private('social_mp3_duration', array($voice['path'])), 0.05);
+        $this->assertEqualsWithDelta(27.4, $this->invoke_private('social_mp4_duration', array($host['path'])), 0.01);
+        $this->assertEquals(0, $this->invoke_private('social_mp3_duration', array($host['path'])));
+        $this->assertEquals(0, $this->invoke_private('social_mp4_duration', array($voice['path'])));
+    }
+
+    public function test_fal_step_submits_once_and_resumes_across_flaky_status_checks() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        delete_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'));
+        $state = 'IN_PROGRESS';
+        $submits = 0;
+        $this->fal_queue_mock($state, $submits);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Resumable step'));
+        $stored = 0;
+        $args = function ($submit_only = false) use ($post_id, &$stored) {
+            return array(
+                'owner_id' => $post_id,
+                'post_id' => $post_id,
+                'meta_key' => '_tr_ai_wire_fal_host_request',
+                'endpoint' => 'fal-ai/kling-video/ai-avatar/v2/pro',
+                'label' => 'talking host',
+                'estimate' => 1.54,
+                'enforce_budget' => true,
+                'settings' => array('social_video_budget_usd' => 10),
+                'submit_only' => $submit_only,
+                'payload' => function () {
+                    return array('image_url' => 'https://example.org/face.jpg', 'audio_url' => 'https://example.org/voice.mp3');
+                },
+                'store' => function ($bytes) use (&$stored) {
+                    $stored++;
+                    return array('id' => 5, 'path' => '/tmp/host.mp4', 'bytes' => strlen($bytes));
+                },
+            );
+        };
+        $kick = $this->invoke_private('social_fal_step', array($args(true)));
+        $this->assertWPError($kick);
+        $this->assertSame('tr_ai_wire_reel_video_wait', $kick->get_error_code());
+        $this->assertSame(1, $submits);
+        $waiting = $this->invoke_private('social_fal_step', array($args(false)));
+        $this->assertSame('tr_ai_wire_reel_video_wait', $waiting->get_error_code());
+        $this->assertStringContainsString('Talking host', $waiting->get_error_message());
+        $state = 'HTTP502';
+        $flaky = $this->invoke_private('social_fal_step', array($args(false)));
+        $this->assertSame('tr_ai_wire_reel_video_wait', $flaky->get_error_code());
+        $pending = $this->invoke_private('social_fal_pending_get', array($post_id, '_tr_ai_wire_fal_host_request'));
+        $this->assertSame('fal-req-resume-1', $pending['request_id']);
+        $this->assertSame(1, (int) $pending['errors']);
+        $state = 'COMPLETED';
+        $done = $this->invoke_private('social_fal_step', array($args(false)));
+        $this->assertFalse(is_wp_error($done), is_wp_error($done) ? $done->get_error_message() : '');
+        $this->assertSame(2048, $done['bytes']);
+        $this->assertSame(1, $stored);
+        $this->assertSame(1, $submits);
+        $this->assertSame(array(), $this->invoke_private('social_fal_pending_get', array($post_id, '_tr_ai_wire_fal_host_request')));
+        $this->assertEqualsWithDelta(1.54, $this->invoke_private('social_reel_spent_usd', array($post_id)), 0.001);
+        $this->assertEqualsWithDelta(1.54, (float) get_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'), 0), 0.001);
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
+        remove_all_filters('pre_http_request');
+    }
+
+    public function test_fal_step_never_resubmits_after_a_failed_status_check_but_does_after_fal_says_failed() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        delete_option('tr_ai_wire_social_video_usage_' . gmdate('Ym'));
+        $state = 'HTTP502';
+        $submits = 0;
+        $this->fal_queue_mock($state, $submits);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'No double billing'));
+        $args = array(
+            'owner_id' => $post_id,
+            'post_id' => $post_id,
+            'meta_key' => '_tr_ai_wire_fal_request',
+            'endpoint' => 'fal-ai/veo3.1/lite/image-to-video',
+            'label' => 'B-roll motion',
+            'estimate' => 0.24,
+            'enforce_budget' => true,
+            'settings' => array('social_video_budget_usd' => 10),
+            'payload' => function () {
+                return array('image_url' => 'https://example.org/broll.jpg');
+            },
+            'store' => function () {
+                return array('id' => 1);
+            },
+        );
+        for ($i = 0; $i < 7; $i++) {
+            $result = $this->invoke_private('social_fal_step', array($args));
         }
-        $motion_id = wp_insert_attachment(array(
-            'post_mime_type' => 'video/mp4',
-            'post_title' => 'Motion',
-            'post_status' => 'inherit',
-        ), $upload['file'], 0, true);
-        if (is_wp_error($motion_id) || (int) $motion_id < 1) {
-            $this->markTestSkipped('Uploads are required to adopt motion as a Reel.');
-        }
-        $result = $this->invoke_private('adopt_social_motion_as_reel', array(
-            get_post($post_id),
-            (int) $motion_id,
-            'Spoken script',
-        ));
-        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
-        $this->assertSame((int) $motion_id, (int) ($result['id'] ?? 0));
-        $this->assertSame((int) $motion_id, $this->invoke_private('social_reel_id', array($post_id)));
-        $this->assertSame((int) $motion_id, $this->invoke_private('social_reel_preview_id', array($post_id)));
-        $this->assertSame((int) $motion_id, $this->invoke_private('social_reel_downloadable_id', array($post_id)));
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_fal_hiccup', $result->get_error_code());
+        $this->assertStringContainsString('fal-req-resume-1', $result->get_error_message());
+        $this->assertSame(1, $submits);
+        $this->assertNotEmpty($this->invoke_private('social_fal_pending_get', array($post_id, '_tr_ai_wire_fal_request')));
+        $state = 'FAILED';
+        $failed = $this->invoke_private('social_fal_step', array($args));
+        $this->assertSame('tr_ai_wire_reel_video_failed', $failed->get_error_code());
+        $this->assertSame(array(), $this->invoke_private('social_fal_pending_get', array($post_id, '_tr_ai_wire_fal_request')));
+        $this->assertSame(1, $submits);
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
+        remove_all_filters('pre_http_request');
+    }
+
+    public function test_reel_voice_is_recorded_once_per_script() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array('social_image_budget_usd' => 5));
+        $calls = 0;
+        $mp3 = $this->fake_mp3_bytes(120);
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$calls, $mp3) {
+            if (strpos((string) $url, 'api.openai.com/v1/audio/speech') === false) {
+                return new WP_Error('blocked', 'Unexpected URL ' . $url);
+            }
+            $calls++;
+            return array(
+                'headers' => array('content-type' => 'audio/mpeg'),
+                'body' => $mp3,
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        }, 10, 3);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'One voice'));
+        $post = get_post($post_id);
+        $first = $this->invoke_private('social_reel_voice', array($post, 'Same spoken script for this Reel.', $settings, array('hook' => 'One voice')));
+        $second = $this->invoke_private('social_reel_voice', array($post, 'Same spoken script for this Reel.', $settings, array('hook' => 'One voice')));
+        $this->assertFalse(is_wp_error($first), is_wp_error($first) ? $first->get_error_message() : '');
+        $this->assertSame(1, $calls);
+        $this->assertSame($first['id'], $second['id']);
+        $this->assertEqualsWithDelta(3.136, (float) $first['seconds'], 0.05);
+        $third = $this->invoke_private('social_reel_voice', array($post, 'A different script now.', $settings, array('hook' => 'One voice')));
+        $this->assertSame(2, $calls);
+        $this->assertNotSame($first['id'], $third['id']);
+        remove_all_filters('pre_http_request');
     }
 
     public function test_instagram_missing_quota_field_still_publishes() {
