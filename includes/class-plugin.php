@@ -47,6 +47,7 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_INSTAGRAM_STILL_SPACING = 10800;
     const SOCIAL_REEL_VIDEO_DEFAULT = 'veo-lite';
     const SOCIAL_REEL_FACE_ENHANCE_USD = 0.01;
+    const SOCIAL_REEL_MUX_ENDPOINT = 'fal-ai/ffmpeg-api/compose';
     const INSTAGRAM_GRAPH_VERSION = 'v22.0';
     const SOCIAL_CONTEXT_TTL = 1209600;
     const TABLE_SUFFIX = 'tr_ai_wire_items';

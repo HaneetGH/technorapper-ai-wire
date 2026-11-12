@@ -64,7 +64,7 @@ The plugin uploads the spoken Reel MP4 as a **public** Short (not a draft) and s
 
 Connect with **Sign in with Google** on Social settings (Google Cloud OAuth client ID/secret first). A YouTube API key cannot upload. If the channel default privacy is private, the worker updates the video to public after processing. This repository never ships anyone else’s Google client secret.
 
-Spoken Reels and Shorts also need a Fal.ai key and `ffmpeg` on the WordPress host. Those are not Google charges.
+Spoken Reels and Shorts need a Fal.ai key. Local `ffmpeg` is used when present; otherwise Fal muxes the spoken MP4. Those are not Google charges.
 
 ## What this repository never includes
 

@@ -5549,6 +5549,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         add_filter('tr_ai_wire_ffmpeg_path', function () {
             return '/tmp/missing-ffmpeg-binary';
         });
+        delete_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION);
         $this->assertSame('', $this->invoke_private('social_ffmpeg_path'));
         $post_id = $this->factory()->post->create(array(
             'post_status' => 'publish',
@@ -5564,6 +5565,78 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('tr_ai_wire_reel_ffmpeg', $result->get_error_code());
         $this->assertStringContainsString('slideshow', strtolower($result->get_error_message()));
         remove_all_filters('tr_ai_wire_ffmpeg_path');
+    }
+
+    public function test_reel_without_ffmpeg_muxes_through_fal() {
+        add_filter('tr_ai_wire_ffmpeg_path', function () {
+            return '/tmp/missing-ffmpeg-binary';
+        });
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        $this->assertSame('', $this->invoke_private('social_ffmpeg_path'));
+        $this->assertTrue($this->invoke_private('social_reel_can_mux'));
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
+                $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
+                $captured['endpoint'] = $url;
+                return $this->mock_http_ok(array(
+                    'request_id' => 'fal-mux-1',
+                    'status' => 'IN_QUEUE',
+                ));
+            }
+            if (strpos($url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                return $this->mock_http_ok(array('video_url' => 'https://example.org/fal-mux.mp4'));
+            }
+            if (strpos($url, 'example.org/fal-mux.mp4') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => str_repeat('M', 2048),
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $tmp = sys_get_temp_dir() . '/tr-fal-mux-' . wp_generate_uuid4();
+        $this->assertTrue(mkdir($tmp, 0755, true));
+        $motion = $tmp . '/motion.mp4';
+        $audio = $tmp . '/voice.mp3';
+        $end = $tmp . '/end.jpg';
+        $out = $tmp . '/reel.mp4';
+        file_put_contents($motion, str_repeat('v', 2048));
+        file_put_contents($audio, str_repeat('a', 512));
+        file_put_contents($end, $this->tiny_jpeg_bytes() !== '' ? $this->tiny_jpeg_bytes() : str_repeat('j', 512));
+        $result = $this->invoke_private('compose_social_reel_motion', array(
+            $motion,
+            array(),
+            $end,
+            $audio,
+            $out,
+            18.0,
+        ));
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertFileExists($out);
+        $this->assertSame(2048, filesize($out));
+        $this->assertStringContainsString('ffmpeg-api/compose', (string) ($captured['endpoint'] ?? ''));
+        $this->assertCount(2, $captured['submit']['tracks'] ?? array());
+        $this->assertSame('video', $captured['submit']['tracks'][0]['type'] ?? '');
+        $this->assertSame('audio', $captured['submit']['tracks'][1]['type'] ?? '');
+        $this->assertGreaterThanOrEqual(2, count($captured['submit']['tracks'][0]['keyframes'] ?? array()));
+        foreach ((array) glob($tmp . '/*') as $file) {
+            @unlink($file);
+        }
+        @rmdir($tmp);
+        remove_all_filters('tr_ai_wire_ffmpeg_path');
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
+        remove_all_filters('pre_http_request');
     }
 
     public function test_reel_without_fal_key_does_not_fall_back_to_slideshow() {
