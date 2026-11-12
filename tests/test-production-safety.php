@@ -3160,8 +3160,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('https://', $copy['instagram']);
         $this->assertContains('ai', $copy['hashtags']);
         $this->assertContains('qualcomm', $copy['hashtags']);
+        $this->assertStringStartsWith('Your next phone chip has a server cousin', $copy['instagram']);
         $this->assertStringContainsString('Read the full story on TechnoRapper', $copy['instagram']);
         $this->assertStringContainsString('Link in bio.', $copy['instagram']);
+        $this->assertStringContainsString('Save this if it hits your phone', $copy['instagram']);
+        $first_line = trim(explode("\n", $copy['instagram'])[0]);
+        $this->assertStringNotContainsString('#', $first_line);
+        $this->assertStringNotContainsString('Link in bio', $first_line);
         $this->assertNotSame('', $copy['reel_script']);
         $this->assertGreaterThanOrEqual(3, count($copy['reel_captions']));
         $this->assertSame('Your next phone chip has a server cousin', $copy['youtube_title']);
@@ -3180,7 +3185,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'hook' => 'You won’t believe this Qualcomm server chip',
             'on_image_headline' => 'Wait for it: Qualcomm servers',
             'on_image_subhead' => 'This changes everything for phones',
-            'instagram_caption' => "Must see: Qualcomm wants AI servers.\n\nWait until the end.",
+            'instagram_caption' => "Must see: Qualcomm wants AI servers.\n\nWait until the end. Don't skip.",
             'x_text' => 'Shocking Qualcomm data-center push',
             'on_image_bullets' => array('Gone wrong? No — bandwidth is up.', 'This will blow your mind: 2x memory.'),
             'reel_script' => 'Wait for it. Qualcomm is chasing AI servers, not just phones, and that shift is why memory bandwidth is the story.',
@@ -3190,6 +3195,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('changes everything', $copy['on_image_subhead']);
         $this->assertStringNotContainsString('Must see', $copy['instagram']);
         $this->assertStringNotContainsString('Wait until the end', $copy['instagram']);
+        $this->assertStringNotContainsString('don\'t skip', strtolower($copy['instagram']));
         $this->assertStringNotContainsString('Shocking', $copy['x']);
         $this->assertStringContainsString('Qualcomm', $copy['hook']);
         $this->assertStringContainsString('Qualcomm', $copy['instagram']);
@@ -3468,6 +3474,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('6,300 tech jobs gone in 10 days. Is AI the biggest threat?', $copy['on_image_headline']);
         $this->assertStringContainsString('Photoreal office workers', $copy['visual_brief']);
         $this->assertSame('WHAT JUST HAPPENED IN 24 HOURS?', $this->invoke_private('social_poster_headline', array('What just happened in 24 hours?')));
+        $this->assertSame('6,300 TECH JOBS GONE IN 10', $this->invoke_private('social_overlay_headline', array('6,300 tech jobs gone in 10 days. Is AI the biggest threat?')));
+        $this->assertLessThanOrEqual(42, strlen($this->invoke_private('social_overlay_headline', array('6,300 tech jobs gone in 10 days. Is AI the biggest threat?'))));
     }
 
     public function test_social_poster_headline_uses_large_display_type() {
@@ -3571,13 +3579,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
     }
 
-    public function test_social_layout_version_stays_poster_v2() {
-        $this->assertSame('poster-v2', TechnoRapper_AI_Wire::SOCIAL_IMAGE_LAYOUT);
+    public function test_social_layout_version_stays_poster_v3() {
+        $this->assertSame('poster-v3', TechnoRapper_AI_Wire::SOCIAL_IMAGE_LAYOUT);
         $this->assertSame(
-            array('bottom-center', 'left-stack', 'kicker-bar', 'bottom-left', 'cover-top'),
+            array('photo-first', 'bottom-center', 'left-stack', 'kicker-bar', 'cover-top'),
             $this->invoke_private('social_poster_variants')
         );
-        $this->assertSame('bottom-center', $this->invoke_private('normalize_poster_variant', array('not-a-layout')));
+        $this->assertSame('photo-first', $this->invoke_private('normalize_poster_variant', array('not-a-layout')));
     }
 
     public function test_social_poster_variants_rotate_across_posts() {
@@ -3592,14 +3600,21 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $seen[] = $this->invoke_private('social_poster_variant_for_post', array($post));
             $cameras[] = $this->invoke_private('social_image_camera', array($post, 0));
         }
-        $this->assertGreaterThanOrEqual(3, count(array_unique($seen)));
+        $this->assertSame(array('photo-first'), array_values(array_unique($seen)));
         $this->assertGreaterThanOrEqual(3, count(array_unique($cameras)));
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Revision variant'));
         $first = $this->invoke_private('social_poster_variant_for_post', array(get_post($post_id)));
-        update_post_meta($post_id, '_tr_ai_wire_social_image_revision', 7);
-        $second = $this->invoke_private('social_poster_variant_for_post', array(get_post($post_id)));
+        $this->assertSame('photo-first', $first);
+        $revised = array();
+        for ($revision = 1; $revision <= 12; $revision++) {
+            update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision);
+            $revised[] = $this->invoke_private('social_poster_variant_for_post', array(get_post($post_id)));
+        }
         $this->assertContains($first, $this->invoke_private('social_poster_variants'));
-        $this->assertContains($second, $this->invoke_private('social_poster_variants'));
+        foreach ($revised as $variant) {
+            $this->assertContains($variant, $this->invoke_private('social_poster_variants'));
+        }
+        $this->assertGreaterThanOrEqual(3, count(array_unique($revised)));
     }
 
     public function test_social_image_prompt_uses_variant_safe_zone_and_camera() {
@@ -3614,7 +3629,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $cover = $this->invoke_private('social_image_prompt', array($post, array('_poster_variant' => 'cover-top')));
         $this->assertStringContainsString('Keep the upper third of the frame naturally darker', $cover);
         $default = $this->invoke_private('social_image_prompt', array($post, array('_poster_variant' => 'bottom-center')));
-        $this->assertStringContainsString('The lower half of the frame is naturally dark', $default);
+        $this->assertStringContainsString('Keep the bottom fifth of the frame naturally darker', $default);
+        $this->assertStringContainsString('This photograph is about: Safe zone article', $default);
+        $this->assertStringContainsString('Do not default to a generic server hall', $default);
     }
 
     public function test_branded_social_image_variants_keep_instagram_portrait() {
@@ -3646,7 +3663,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 'on_image_headline' => 'When big tech becomes politics',
                 'on_image_subhead' => 'Tech News',
             ),
-            'bottom-left' => array(
+            'photo-first' => array(
                 'on_image_headline' => 'Siri could edit photos and organize Safari tabs',
                 'on_image_subhead' => 'A reported roadmap points to action inside Apple apps',
             ),
@@ -4050,17 +4067,19 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             );
         }
         $cover = $this->invoke_private('social_cover_copy', array($posts, 'weekly_recap'));
-        $this->assertStringContainsString('THIS WEEK IN', $cover['on_image_headline']);
-        $this->assertStringContainsString('SWIPE', $cover['on_image_subhead']);
+        $this->assertStringContainsString('3 TECH STORIES', $cover['on_image_headline']);
+        $this->assertStringContainsString('Story 3 is last', $cover['on_image_subhead']);
         $numbered = $this->invoke_private('social_cover_copy', array($posts, 'numbered_roundup'));
-        $this->assertStringContainsString('Wait for the last one', $numbered['on_image_headline']);
+        $this->assertStringContainsString('3 tech shifts', $numbered['on_image_headline']);
+        $this->assertStringNotContainsString('Wait for the last one', $numbered['on_image_headline']);
         $product = $this->invoke_private('social_cover_copy', array($posts, 'product_roundup'));
-        $this->assertSame('SWIPE TO THE LAST ONE', $product['on_image_subhead']);
+        $this->assertSame('Story 3 is last', $product['on_image_subhead']);
         $curiosity = $this->invoke_private('social_curiosity_slide_copy', array($posts));
-        $this->assertSame('THE NEXT SLIDE IS THE ONE', $curiosity['on_image_headline']);
-        $this->assertStringContainsString('SWIPE', $curiosity['on_image_subhead']);
+        $this->assertSame('Third story', $curiosity['on_image_headline']);
+        $this->assertStringContainsString('One more swipe', $curiosity['on_image_subhead']);
         $caption = $this->invoke_private('instagram_pack_caption', array($posts));
-        $this->assertStringContainsString('Don\'t skip the last slide.', $caption);
+        $this->assertStringStartsWith('First story', $caption);
+        $this->assertStringNotContainsString('Don\'t skip the last slide.', $caption);
         $this->assertStringContainsString('First story', $caption);
         $this->assertStringContainsString('Link in bio.', $caption);
         $this->assertStringNotContainsString('http://', $caption);
@@ -4178,7 +4197,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertSame(5, $child_items);
         $this->assertSame(1, $parents);
-        $this->assertStringContainsString('Don\'t skip the last slide.', $pack_caption);
+        $this->assertStringStartsWith('13-inch or 15-inch Air?', $pack_caption);
+        $this->assertStringNotContainsString('Don\'t skip the last slide.', $pack_caption);
         $this->assertStringContainsString('Today on ' . get_bloginfo('name'), $pack_caption);
         $this->assertStringContainsString('13-inch or 15-inch Air?', $pack_caption);
         $this->assertStringContainsString('When fake IDs become easier to scale', $pack_caption);
@@ -6820,6 +6840,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('reader stake', $user);
         $this->assertStringContainsString('saves, and sends', $user);
         $this->assertStringContainsString('Never use: you won’t believe', $user);
+        $this->assertStringContainsString('don’t skip', $user);
+        $this->assertStringContainsString('3–6 words', $user);
+        $this->assertStringContainsString('feed preview', $user);
         $this->assertStringContainsString('save or send ask', $user);
         $this->assertStringContainsString('named hook in the first', $user);
         $this->assertStringContainsString('fully clothed', $user);

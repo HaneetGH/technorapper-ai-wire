@@ -152,7 +152,7 @@ PHPUnit covers onboarding gates, unique-article daily cap, mocked X publish, Ins
 - PHP GD is required for crop/branding; OpenAI image API access and a working site OpenAI key are required for image generation. Spoken Reels and YouTube Shorts also need `ffmpeg` (usually `ffprobe`) and a Fal.ai key, or those jobs are held.
 - At 10 articles/day for 30 days, 300 generated images × `$0.006` local reserve = about **$1.80/month** before retries or provider pricing differences. `$5/month` is the default local image budget. The existing Writer/Reviewer text spend is separate and already exists.
 - Social image and Reel storage grows in WordPress Media. X credits, Instagram quota, YouTube quota, and Fal motion are separate meters.
-- Image output is an editorial illustration with a deterministic title card; do not ask the image model to render factual text, logos, or a photorealistic depiction of a named news event/person.
+- Image output is a photoreal still with a short deterministic overlay; do not ask the image model to render factual text, logos, or a photorealistic depiction of a named news event/person. The photograph has to show a concrete object from this article.
 
 ## Risks to inspect before release
 
