@@ -10,9 +10,9 @@ if (!defined('ABSPATH')) {
  * A Ken Burns pass over those JPEGs is still a slideshow. This renderer
  * does none of that: one article, a voiceover as the timeline, captions
  * that follow the spoken words, Fal Veo motion from one B-roll still.
- * Motion loops instead of freezing. Default story edit is a no-face teaching
- * Reel: research-backed spoken lesson, moving B-roll, and animated caption
- * cards (image→short MP4) while the voice continues, then a brand sting.
+ * Default story edit is a no-face teaching Reel: research-backed spoken lesson,
+ * animated caption cards (image→short MP4) carrying most of the watch, with at
+ * most one or two short B-roll accents — never a looping motion bed — then sting.
  * Fal's compose video track accepts only video files — JPEG stills on that
  * track produced multi-hour broken outputs (still frame + voice). Talking-host
  * lip-sync remains an optional paid upsell.
@@ -602,7 +602,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             } else {
                 $parts[] = 'No-face teach Reel';
             }
-            $parts[] = 'motion + animated lesson cards';
+            $parts[] = 'lesson cards first + short B-roll accents';
             if (!isset($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_broll'])) {
                 $parts[] = 'B-roll and photos';
             }
@@ -1254,18 +1254,14 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $clips;
     }
 
+    /**
+     * Append one lesson-card beat (never a motion loop). Motion accents use
+     * social_reel_fal_append_motion_accent() so the laptop clip cannot fill the Reel.
+     */
     private function social_reel_fal_append_detail_beat(&$visual, &$clock, $post, $copy, $photo_bytes, $caption, $index, $seconds, $motion_url, $motion_source, $prefer_motion, $card_videos = array()) {
         $seconds = max(1.2, (float) $seconds);
-        if ($prefer_motion && $motion_url !== '') {
-            $loops = $this->social_fal_loop_keyframes($motion_url, $motion_source, $seconds, $clock);
-            if ($loops) {
-                foreach ($loops as $frame) {
-                    $visual[] = $frame;
-                }
-                $clock += $seconds;
-                return true;
-            }
-        }
+        // prefer_motion is ignored for teach cards-first: callers add accents separately.
+        unset($motion_url, $motion_source, $prefer_motion);
         $card_videos = is_array($card_videos) ? $card_videos : array();
         $pre = is_array($card_videos[$index] ?? null) ? $card_videos[$index] : null;
         if ($pre && !empty($pre['path'])) {
@@ -1300,6 +1296,29 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'url' => $card_url,
         );
         $clock += $seconds;
+        return true;
+    }
+
+    /** One short B-roll accent — a single play of the motion clip, never a multi-loop bed. */
+    private function social_reel_fal_append_motion_accent(&$visual, &$clock, $motion_url, $motion_source, $audio_seconds) {
+        if ($motion_url === '') {
+            return false;
+        }
+        $remain = max(0.0, (float) $audio_seconds - (float) $clock);
+        if ($remain < 1.0) {
+            return false;
+        }
+        $source = max(1.0, min(4.0, (float) $motion_source > 0 ? (float) $motion_source : 2.0));
+        $chunk = min($source, 2.5, $remain);
+        if ($chunk < 1.0) {
+            return false;
+        }
+        $visual[] = array(
+            'timestamp' => $this->social_reel_ms($clock),
+            'duration' => $this->social_reel_ms($chunk),
+            'url' => $motion_url,
+        );
+        $clock += $chunk;
         return true;
     }
 
@@ -1348,83 +1367,51 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
 
         $has_host = $host_url !== '';
-        $can_detail = ($motion_url !== '' || $photo_bytes !== '' || $card_videos);
+        $can_cards = ($photo_bytes !== '' || $card_videos);
 
-        // Teach cut: lesson card → motion → lesson card… Video track is MP4-only.
-        if (!$has_host && $can_detail) {
-            $cold = min(2.4, max(1.6, $audio_seconds * 0.12));
-            $added = $this->social_reel_fal_append_detail_beat(
-                $visual,
-                $clock,
-                $post,
-                $copy,
-                $photo_bytes,
-                $captions[0],
-                0,
-                $cold,
-                $motion_url,
-                $motion_source,
-                false,
-                $card_videos
-            );
-            if (is_wp_error($added)) {
-                return $added;
-            }
-        } elseif ($can_detail && $audio_seconds >= 8.0) {
-            $cold = min(2.6, max(1.8, $audio_seconds * 0.14));
-            $added = $this->social_reel_fal_append_detail_beat(
-                $visual,
-                $clock,
-                $post,
-                $copy,
-                $photo_bytes,
-                $captions[0],
-                0,
-                $cold,
-                $motion_url,
-                $motion_source,
-                $motion_url !== '',
-                $card_videos
-            );
-            if (is_wp_error($added)) {
-                return $added;
-            }
-        }
-
-        if ($has_host) {
-            $intro = min($host_len, max(2.4, min(3.6, $audio_seconds * 0.18)));
-            if ($clock < 0.4) {
-                $intro = min($host_len, max(3.0, min(5.0, $audio_seconds * 0.28)));
-            }
-            $visual[] = array('timestamp' => $this->social_reel_ms($clock), 'duration' => $this->social_reel_ms($intro), 'url' => $host_url);
-            $clock += $intro;
-        }
-
-        $left = max(0.0, $audio_seconds - $clock);
-        $beat_n = max(2, min(5, count($captions)));
-        if (!empty($settings['social_reel_include_slides'])) {
-            $beat_n = max($beat_n, $this->social_reel_fact_slides($settings));
-        }
+        // No-face teach cut: lesson cards carry the watch. Motion is at most two short accents.
         if (!$has_host) {
-            $beat_n = max($beat_n, 3);
-        }
-        $beat_n = min(5, $beat_n);
-        if ($left < 1.8) {
-            $beat_n = 1;
-        }
-        if ($left >= 0.8) {
-            $slice = $left / max(1, $beat_n);
-            $max_slice = $motion_source > 0 ? max(2.2, $motion_source) : 3.2;
-            $slice = min($slice, $max_slice);
-            for ($i = 0; $i < $beat_n; $i++) {
+            if (!$can_cards && $motion_url === '') {
+                return new WP_Error('tr_ai_wire_reel_frames', 'The Reel has no lesson cards or motion to assemble.');
+            }
+            $card_n = max(3, min(5, count($captions)));
+            if ($card_videos) {
+                $card_n = max($card_n, min(5, count($card_videos)));
+            }
+            if (!empty($settings['social_reel_include_slides'])) {
+                $card_n = max($card_n, min(5, $this->social_reel_fact_slides($settings)));
+            }
+            $accent_n = ($motion_url !== '' && $can_cards) ? (($audio_seconds >= 12.0) ? 2 : 1) : 0;
+            $accent_each = ($accent_n > 0)
+                ? min(2.5, max(1.2, $motion_source > 0 ? $motion_source : 2.0))
+                : 0.0;
+            $card_budget = max(3.0, $audio_seconds - ($accent_n * $accent_each));
+            $slice = $card_budget / max(1, $card_n);
+            $slice = max(1.6, min(4.0, $slice));
+            // Accents after card 1 and (if two) after the middle card — never as a looping bed.
+            $accent_after = array();
+            if ($accent_n >= 1) {
+                $accent_after[0] = true;
+            }
+            if ($accent_n >= 2) {
+                $accent_after[(int) floor(($card_n - 1) / 2)] = true;
+            }
+            for ($i = 0; $i < $card_n; $i++) {
                 $remain = max(0.0, $audio_seconds - $clock);
                 if ($remain < 0.8) {
                     break;
                 }
+                if (!$can_cards) {
+                    break;
+                }
                 $this_slice = min($slice, $remain);
+                // Last card eats leftover time instead of filling with looped B-roll.
+                if ($i === $card_n - 1) {
+                    $reserve = !empty($accent_after[$i]) ? min($accent_each, max(0.0, $remain - 1.2)) : 0.0;
+                    $this_slice = max(1.2, $remain - $reserve);
+                }
                 $caption = $captions[min($i, count($captions) - 1)];
-                // Alternate motion and animated lesson cards so the cut teaches, not freezes.
-                $prefer_motion = ($motion_url !== '') && ((!$has_host ? $i : ($i + 1)) % 2) === 0;
+                $card_index = min($i, max(0, count($card_videos) - 1));
                 $added = $this->social_reel_fal_append_detail_beat(
                     $visual,
                     $clock,
@@ -1432,31 +1419,101 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     $copy,
                     $photo_bytes,
                     $caption,
-                    min($i + 1, max(0, count($card_videos) - 1)),
+                    $card_index,
                     $this_slice,
-                    $motion_url,
-                    $motion_source,
-                    $prefer_motion,
+                    '',
+                    0.0,
+                    false,
+                    $card_videos
+                );
+                if (is_wp_error($added)) {
+                    return $added;
+                }
+                if (!empty($accent_after[$i])) {
+                    $this->social_reel_fal_append_motion_accent($visual, $clock, $motion_url, $motion_source, $audio_seconds);
+                }
+            }
+            // Cards missing: one motion play only (still not a multi-minute loop bed).
+            if (!$visual && $motion_url !== '') {
+                $this->social_reel_fal_append_motion_accent($visual, $clock, $motion_url, $motion_source, min($audio_seconds, max(2.0, $motion_source)));
+            }
+        } else {
+            // Host path: short cold-open card/B-roll, host hook, then card beats (motion accent at most once).
+            if ($can_cards && $audio_seconds >= 8.0) {
+                $cold = min(2.6, max(1.8, $audio_seconds * 0.14));
+                $added = $this->social_reel_fal_append_detail_beat(
+                    $visual,
+                    $clock,
+                    $post,
+                    $copy,
+                    $photo_bytes,
+                    $captions[0],
+                    0,
+                    $cold,
+                    '',
+                    0.0,
+                    false,
                     $card_videos
                 );
                 if (is_wp_error($added)) {
                     return $added;
                 }
             }
-        }
-
-        if ($clock + 0.4 < $audio_seconds && $motion_url !== '') {
-            $tail = $this->social_fal_loop_keyframes($motion_url, $motion_source, $audio_seconds - $clock, $clock);
-            foreach ($tail as $frame) {
-                $visual[] = $frame;
+            $intro = min($host_len, max(2.4, min(3.6, $audio_seconds * 0.18)));
+            if ($clock < 0.4) {
+                $intro = min($host_len, max(3.0, min(5.0, $audio_seconds * 0.28)));
             }
-            $clock = $audio_seconds;
+            $visual[] = array('timestamp' => $this->social_reel_ms($clock), 'duration' => $this->social_reel_ms($intro), 'url' => $host_url);
+            $clock += $intro;
+
+            $left = max(0.0, $audio_seconds - $clock);
+            $beat_n = max(2, min(5, count($captions)));
+            if (!empty($settings['social_reel_include_slides'])) {
+                $beat_n = max($beat_n, $this->social_reel_fact_slides($settings));
+            }
+            $beat_n = min(5, $beat_n);
+            if ($left < 1.8) {
+                $beat_n = 1;
+            }
+            $motion_used = false;
+            if ($left >= 0.8 && $can_cards) {
+                $slice = min(3.2, $left / max(1, $beat_n));
+                for ($i = 0; $i < $beat_n; $i++) {
+                    $remain = max(0.0, $audio_seconds - $clock);
+                    if ($remain < 0.8) {
+                        break;
+                    }
+                    if (!$motion_used && $motion_url !== '' && $i === 1 && $remain > 3.0) {
+                        $this->social_reel_fal_append_motion_accent($visual, $clock, $motion_url, $motion_source, $audio_seconds);
+                        $motion_used = true;
+                        $remain = max(0.0, $audio_seconds - $clock);
+                        if ($remain < 0.8) {
+                            break;
+                        }
+                    }
+                    $this_slice = ($i === $beat_n - 1) ? $remain : min($slice, $remain);
+                    $caption = $captions[min($i, count($captions) - 1)];
+                    $added = $this->social_reel_fal_append_detail_beat(
+                        $visual,
+                        $clock,
+                        $post,
+                        $copy,
+                        $photo_bytes,
+                        $caption,
+                        min($i + 1, max(0, count($card_videos) - 1)),
+                        $this_slice,
+                        '',
+                        0.0,
+                        false,
+                        $card_videos
+                    );
+                    if (is_wp_error($added)) {
+                        return $added;
+                    }
+                }
+            }
         }
 
-        if (!$visual && $motion_url !== '') {
-            $visual = $this->social_fal_loop_keyframes($motion_url, $motion_source, $audio_seconds, 0);
-            $clock = $audio_seconds;
-        }
         if (!$visual) {
             return new WP_Error('tr_ai_wire_reel_frames', 'The Reel has no video clip to assemble.');
         }
@@ -1505,7 +1562,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $card_sig .= '|' . (int) ($card_vid['id'] ?? 0);
         }
         $input_key = md5(implode('|', array(
-            'movie-v4-teach-video-only',
+            'movie-v5-cards-first',
             (string) $voice['key'],
             (int) ($host['id'] ?? 0),
             (int) ($motion['id'] ?? 0),
@@ -1552,13 +1609,19 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     $visual_seconds = max(3.0, min($host_seconds, $audio_seconds + 1.0));
                     $visual[] = array('timestamp' => 0, 'duration' => $this->social_reel_ms($visual_seconds), 'url' => $host_url);
                 } elseif ($motion) {
+                    // Legacy broll recipe only: one motion play (not a voice-length loop bed).
                     $motion_url = $this->social_reel_file_data_url((string) $motion['path'], 'video/mp4', 'tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
                     if (is_wp_error($motion_url)) {
                         return $motion_url;
                     }
                     $source = $this->social_reel_motion_source_seconds((string) $motion['path'], $settings);
-                    $visual = $this->social_fal_loop_keyframes($motion_url, $source, $audio_seconds, 0);
-                    $visual_seconds = $audio_seconds;
+                    $chunk = min(max(2.0, $source), 4.0, $audio_seconds);
+                    $visual = array(array(
+                        'timestamp' => 0,
+                        'duration' => $this->social_reel_ms($chunk),
+                        'url' => $motion_url,
+                    ));
+                    $visual_seconds = $chunk;
                 }
                 if (!$visual) {
                     return new WP_Error('tr_ai_wire_reel_frames', 'The Reel has no video clip to assemble.');
@@ -1929,7 +1992,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 return $cards;
             }
             $parts['card_videos'] = $cards;
-            $note = 'Assembling a teach Reel: motion + animated lesson cards (no stills on the video track).';
+            $note = 'Assembling a teach Reel: lesson cards first, short B-roll accents only.';
             if (!empty($plan['host']) && empty($plan['host_seek'])) {
                 $note = 'Assembling a scroll-stop story: cold-open details, short host hook, then news beats.';
             } elseif (!empty($plan['host_seek'])) {

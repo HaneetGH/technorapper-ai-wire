@@ -5570,6 +5570,125 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('tr_ai_wire_ffmpeg_path');
     }
 
+    public function test_noface_teach_cut_is_cards_first_not_looped_motion_bed() {
+        if (!function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render story detail frames.');
+        }
+        add_filter('tr_ai_wire_ffmpeg_path', function () {
+            return '/tmp/missing-ffmpeg-binary';
+        });
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'social_reel_recipe' => 'story',
+            'social_reel_dev_cheap' => 1,
+            'social_reel_include_host' => 0,
+            'social_reel_include_broll' => 1,
+            'social_reel_include_slides' => 1,
+            'social_reel_include_sting' => 1,
+        ));
+        $settings = $this->invoke_private('social_reel_effective_settings', array($settings));
+        $plan = $this->invoke_private('social_reel_plan', array($settings));
+        $this->assertFalse($plan['host']);
+        $this->assertTrue($plan['story']);
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
+                $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
+                return $this->mock_http_ok(array('request_id' => 'fal-mux-cards', 'status' => 'IN_QUEUE'));
+            }
+            if (strpos($url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                return $this->mock_http_ok(array('video_url' => 'https://example.org/fal-mux-cards.mp4'));
+            }
+            if (strpos($url, 'example.org/fal-mux-cards.mp4') !== false) {
+                return $this->mock_http_ok($this->fake_mp4_bytes(16));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Cards first'));
+        $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', $this->fake_mp3_bytes(120));
+        $motion = $this->create_reel_asset('motion.mp4', 'video/mp4', $this->fake_mp4_bytes(2.0));
+        $cards = array();
+        for ($i = 0; $i < 4; $i++) {
+            $cards[] = $this->create_reel_asset('card-' . $i . '.mp4', 'video/mp4', $this->fake_mp4_bytes(2.5));
+        }
+        $photo = $this->tiny_jpeg_bytes();
+        $result = $this->invoke_private('social_reel_assemble_with_fal', array(
+            get_post($post_id),
+            $settings,
+            array(
+                'hook' => 'Chip shortage bites',
+                'reel_captions' => array('Factories slow', 'Prices climb', 'Shipments slip', 'Plan ahead'),
+                'cta' => 'Read the full story',
+            ),
+            'Spoken teach script for the reel.',
+            $plan,
+            array(
+                'voice' => array('id' => $voice['id'], 'path' => $voice['path'], 'key' => 'voice-key', 'seconds' => 15.0),
+                'host' => null,
+                'motion' => array('id' => $motion['id'], 'path' => $motion['path']),
+                'card_videos' => $cards,
+            ),
+            $photo,
+            'Read the full story',
+        ));
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $visual = $captured['submit']['tracks'][0]['keyframes'] ?? array();
+        $this->assertGreaterThanOrEqual(4, count($visual));
+        $motion_url = $this->invoke_private('social_reel_file_data_url', array(
+            (string) $motion['path'],
+            'video/mp4',
+            'tr_ai_wire_reel_video',
+            'missing',
+        ));
+        $this->assertFalse(is_wp_error($motion_url));
+        $card_urls = array();
+        foreach ($cards as $card) {
+            $u = $this->invoke_private('social_reel_file_data_url', array(
+                (string) $card['path'],
+                'video/mp4',
+                'tr_ai_wire_reel_frames',
+                'missing',
+            ));
+            $this->assertFalse(is_wp_error($u));
+            $card_urls[(string) $u] = true;
+        }
+        $motion_hits = 0;
+        $card_hits = 0;
+        $card_ms = 0;
+        $motion_ms = 0;
+        $other = 0;
+        foreach ($visual as $frame) {
+            $dur = (int) ($frame['duration'] ?? 0);
+            $url = (string) ($frame['url'] ?? '');
+            if ($url === (string) $motion_url) {
+                $motion_hits++;
+                $motion_ms += $dur;
+                $this->assertLessThanOrEqual(2500, $dur, wp_json_encode($visual));
+            } elseif (!empty($card_urls[$url])) {
+                $card_hits++;
+                $card_ms += $dur;
+            } else {
+                $other++;
+            }
+        }
+        $this->assertLessThanOrEqual(2, $motion_hits);
+        $this->assertGreaterThanOrEqual(1, $motion_hits);
+        $this->assertGreaterThanOrEqual(3, $card_hits);
+        $this->assertSame(1, $other);
+        // PHPUnit: assertGreaterThan($expected, $actual) ⇒ $actual > $expected.
+        $this->assertGreaterThan($motion_ms, $card_ms);
+        remove_all_filters('tr_ai_wire_ffmpeg_path');
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
+        remove_all_filters('pre_http_request');
+    }
+
     public function test_reel_without_ffmpeg_assembles_a_movie_style_story_through_fal() {
         if (!function_exists('imagejpeg')) {
             $this->markTestSkipped('GD is required to render story detail frames.');
