@@ -4495,6 +4495,56 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1, (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social"));
     }
 
+    public function test_generate_reel_now_holds_for_review_when_auto_is_off() {
+        $this->onboard_social(array('instagram'));
+        $this->assertSame(0, (int) get_option(TechnoRapper_AI_Wire::OPTION, array())['social_reel_daily_limit']);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Manual reel story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 410);
+        $this->fire_social_publish($post_id);
+        $this->assertSame('single', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $queued = $this->invoke_private('force_generate_social_reel');
+        $this->assertSame($post_id, $queued);
+        $this->assertSame('reel', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
+        $this->assertSame('reel', (string) get_post_meta($post_id, '_tr_ai_wire_social_force_pack', true));
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $post_id), ARRAY_A);
+        $this->assertSame('queued', (string) ($row['status'] ?? ''));
+        $this->assertTrue($this->invoke_private('social_row_holds_reel_for_review', array($row)));
+        $this->assertTrue($this->invoke_private('social_row_is_forced_pack', array($row)));
+        $this->assertStringContainsString('Watch this Reel', $this->invoke_private('social_reel_hold_copy', array($row)));
+        $again = $this->invoke_private('force_generate_social_reel');
+        $this->assertTrue(is_wp_error($again));
+        $this->assertStringContainsString('waiting for review', $again->get_error_message());
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_social', array('status' => 'needs_review'), array('id' => (int) $row['id']));
+        $this->assertTrue($this->invoke_private('requeue_social_item', array((int) $row['id'], false)));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
+        $this->assertSame('queued', (string) $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", (int) $row['id'])));
+    }
+
+    public function test_auto_reel_does_not_hold_for_review() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_mix_saved' => 1,
+            'social_reel_daily_limit' => 1,
+            'social_carousel_daily_limit' => 0,
+            'social_collage_daily_limit' => 0,
+            'social_single_daily_limit' => 2,
+        )), false);
+        $settings = $this->plugin->sanitize_settings(get_option(TechnoRapper_AI_Wire::OPTION, array()));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Auto reel story',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_queue_id', 411);
+        $this->invoke_private('collect_social_article', array($post_id, $settings));
+        $this->assertSame('reel', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
+    }
+
     public function test_forced_pack_claims_same_format_siblings_when_mix_slide_count_is_one() {
         $this->onboard_social(array('instagram'));
         $settings = get_option(TechnoRapper_AI_Wire::OPTION, array());
@@ -6606,8 +6656,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('tr_ai_wire_run_social_queue', $html);
         $this->assertStringContainsString('Generate carousel now', $html);
         $this->assertStringContainsString('Generate collage now', $html);
+        $this->assertStringContainsString('Generate Reel now', $html);
         $this->assertStringContainsString('name="pack_kind" value="carousel"', $html);
         $this->assertStringContainsString('name="pack_kind" value="collage"', $html);
+        $this->assertStringContainsString('name="pack_kind" value="reel"', $html);
         $this->assertStringNotContainsString('Regenerate graphic and post again', $html);
     }
 
@@ -6646,6 +6698,49 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             get_post($post_id),
         ));
         $this->assertSame($attachment_id, $found);
+    }
+
+    public function test_social_queue_page_shows_held_reel_for_review() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Held reel preview',
+        ));
+        $upload = wp_upload_bits('technorapper-reel-test-' . wp_generate_uuid4() . '.mp4', null, 'fake-mp4');
+        if (!empty($upload['error'])) {
+            $this->markTestSkipped('Uploads are required to preview a held Reel.');
+        }
+        $video_id = wp_insert_attachment(array(
+            'post_mime_type' => 'video/mp4',
+            'post_title' => 'Spoken Reel',
+            'post_status' => 'inherit',
+        ), $upload['file'], $post_id, true);
+        if (is_wp_error($video_id) || (int) $video_id < 1) {
+            $this->markTestSkipped('Uploads are required to preview a held Reel.');
+        }
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_reel_id', (int) $video_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Held: Watch this Reel, then click Publish to Instagram. It has not been posted yet.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Held for review', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-preview-video', $html);
+        $this->assertStringContainsString('Publish Reel to Instagram', $html);
+        $this->assertStringContainsString('I reviewed this Reel and want it live', $html);
+        $this->assertStringNotContainsString('Post existing graphic to Instagram', $html);
     }
 
     public function test_instagram_missing_quota_field_still_publishes() {

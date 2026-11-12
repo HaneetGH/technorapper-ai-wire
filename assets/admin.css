@@ -338,6 +338,16 @@
     font-size: 12px;
 }
 
+.tr-ai-wire-social-preview-video {
+    display: block;
+    width: 160px;
+    max-height: 284px;
+    margin-top: 8px;
+    border-radius: 8px;
+    background: #09142b;
+    border: 1px solid #c3c4c7;
+}
+
 .tr-ai-wire-social-copy {
     min-width: 0;
 }
