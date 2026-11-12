@@ -3734,6 +3734,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function store_social_video($post, $bytes, $copy, $script, $settings = null) {
+        $old = $this->social_reel_id($post->ID);
         $name = 'technorapper-social-reel-' . (int) $post->ID . '.mp4';
         $upload = wp_upload_bits($name, null, $bytes);
         if (!empty($upload['error'])) {
@@ -3751,6 +3752,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
         update_post_meta($attachment_id, '_tr_ai_wire_social_layout', $this->social_reel_layout_key($settings));
         update_post_meta($attachment_id, '_tr_ai_wire_reel_script', sanitize_textarea_field((string) $script));
+        if ($old > 0 && $old !== (int) $attachment_id && get_post_meta($old, '_tr_ai_wire_social_asset', true) === '1') {
+            wp_delete_attachment($old, true);
+        }
         return (int) $attachment_id;
     }
 

@@ -6192,6 +6192,33 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(4000, (int) $short_loops[0]['duration']);
     }
 
+    public function test_purge_social_reel_assets_deletes_old_media_and_can_force_new_script() {
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Purge old reel'));
+        $motion = $this->create_reel_asset('motion.mp4', 'video/mp4', str_repeat('v', 2048));
+        $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', str_repeat('a', 512));
+        $reel = $this->create_reel_asset('reel.mp4', 'video/mp4', str_repeat('r', 2048));
+        update_post_meta($post_id, '_tr_ai_wire_social_motion_id', $motion['id']);
+        update_post_meta($post_id, '_tr_ai_wire_social_voice_id', $voice['id']);
+        update_post_meta($post_id, '_tr_ai_wire_social_reel_id', $reel['id']);
+        update_post_meta($post_id, '_tr_ai_wire_reel_lesson', wp_json_encode(array('key' => 'old', 'reel_script' => 'old script')));
+        update_post_meta($post_id, '_tr_ai_wire_social_copy', wp_json_encode(array(
+            'x' => 'x',
+            'instagram' => 'ig',
+            'reel_script' => 'Old spoken script that should be rewritten.',
+        )));
+        $deleted = $this->invoke_private('purge_social_reel_assets', array($post_id, array(
+            'keep_broll' => true,
+            'regen_script' => true,
+        )));
+        $this->assertGreaterThanOrEqual(3, (int) $deleted);
+        $this->assertNull(get_post($motion['id']));
+        $this->assertNull(get_post($voice['id']));
+        $this->assertNull(get_post($reel['id']));
+        $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_copy', true));
+        $this->assertSame('1', (string) get_post_meta($post_id, '_tr_ai_wire_reel_regen_script', true));
+    }
+
     public function test_host_scene_keeps_the_same_face_but_changes_place_per_reel() {
         $jpeg = $this->tiny_jpeg_bytes();
         if ($jpeg === '') {
@@ -7240,6 +7267,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Resume building this Reel', $html);
         $this->assertStringContainsString('tr_ai_wire_resume_reel', $html);
         $this->assertStringContainsString('Start over with a new Reel', $html);
+        $this->assertStringContainsString('Generate script again', $html);
+        $this->assertStringContainsString('tr_ai_wire_regen_reel_script', $html);
         $this->assertStringContainsString('Saved pieces', $html);
         $this->assertStringContainsString('voice MP3', $html);
         $this->assertStringContainsString('Upload Reel MP4', $html);
