@@ -3472,6 +3472,10 @@ trait TechnoRapper_AI_Wire_Social {
         ) as $reel_meta) {
             delete_post_meta($post_id, $reel_meta);
         }
+        for ($detail_i = 0; $detail_i < 6; $detail_i++) {
+            delete_post_meta($post_id, '_tr_ai_wire_reel_detail_' . (string) $detail_i);
+        }
+        delete_post_meta($post_id, '_tr_ai_wire_social_host_scene_id');
         $revision = (int) get_post_meta($post_id, '_tr_ai_wire_social_image_revision', true);
         update_post_meta($post_id, '_tr_ai_wire_social_image_revision', $revision + 1);
         update_post_meta($post_id, '_tr_ai_wire_social_regenerate_image', '1');
@@ -5071,8 +5075,8 @@ trait TechnoRapper_AI_Wire_Social {
         if ($live && !empty($progress['detail'])) {
             echo '<p class="description tr-ai-wire-reel-build-detail">' . esc_html((string) $progress['detail']) . '</p>';
         }
-        if (!empty($plan['cutaways_skipped'])) {
-            echo '<p class="description">This WordPress host has no ffmpeg, so the presenter plays unbroken and B-roll cutaways are skipped. That keeps the lips in step with the voice and saves the B-roll cost.</p>';
+        if (!empty($plan['story']) && empty($plan['host_seek']) && !empty($plan['host'])) {
+            echo '<p class="description">Movie-style story: the presenter speaks the opening, then the cut moves to news detail video and photos while the voice continues. Mid-speech camera switches need ffmpeg on the server; until then the host stays in the opening only.</p>';
         }
         $spent = $this->social_reel_spent_usd($post->ID);
         if ($spent > 0) {
