@@ -5763,6 +5763,68 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('tr_ai_wire_reel_video_wait', $result->get_error_code());
     }
 
+    public function test_fal_queue_status_uses_app_path_not_full_endpoint() {
+        $this->assertSame('fal-ai/kling-video', $this->invoke_private('social_fal_queue_app', array('fal-ai/kling-video/ai-avatar/v2/standard')));
+        $this->assertSame('fal-ai/veo3.1', $this->invoke_private('social_fal_queue_app', array('fal-ai/veo3.1/lite/image-to-video')));
+        $this->assertSame('fal-ai/ffmpeg-api', $this->invoke_private('social_fal_queue_app', array('fal-ai/ffmpeg-api/compose')));
+        $this->assertSame('fal-ai/codeformer', $this->invoke_private('social_fal_queue_app', array('fal-ai/codeformer')));
+        $urls = $this->invoke_private('social_fal_queue_urls', array(
+            'fal-ai/kling-video/ai-avatar/v2/standard',
+            'req-avatar-1',
+            array(),
+        ));
+        $this->assertSame('https://queue.fal.run/fal-ai/kling-video/requests/req-avatar-1/status', $urls[0]);
+        $this->assertSame('https://queue.fal.run/fal-ai/kling-video/requests/req-avatar-1', $urls[1]);
+        $this->assertStringNotContainsString('ai-avatar', $urls[0]);
+        $this->assertStringNotContainsString('lite/image-to-video', $this->invoke_private('social_fal_queue_urls', array(
+            'fal-ai/veo3.1/lite/image-to-video',
+            'req-veo-1',
+            array(),
+        ))[0]);
+    }
+
+    public function test_fal_await_polls_kling_app_path_and_downloads_video() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            if (strpos($url, '/status') !== false) {
+                $captured['status'] = $url;
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                $captured['result'] = $url;
+                return $this->mock_http_ok(array('video' => array('url' => 'https://example.org/kling-host.mp4')));
+            }
+            if (strpos($url, 'example.org/kling-host.mp4') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => str_repeat('k', 2048),
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $bytes = $this->invoke_private('social_fal_await', array(
+            'fal-ai/kling-video/ai-avatar/v2/standard',
+            'kling-done-1',
+            array(),
+            'talking host',
+        ));
+        $this->assertFalse(is_wp_error($bytes), is_wp_error($bytes) ? $bytes->get_error_message() : '');
+        $this->assertSame(2048, strlen((string) $bytes));
+        $this->assertSame('https://queue.fal.run/fal-ai/kling-video/requests/kling-done-1/status', $captured['status'] ?? '');
+        $this->assertSame('https://queue.fal.run/fal-ai/kling-video/requests/kling-done-1', $captured['result'] ?? '');
+        $this->assertStringNotContainsString('ai-avatar', (string) ($captured['status'] ?? ''));
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
+        remove_all_filters('pre_http_request');
+    }
+
     public function test_reel_mux_is_hard_cuts_with_voiceover() {
         $ffmpeg = $this->invoke_private('social_ffmpeg_path');
         if ($ffmpeg === '' || !function_exists('imagejpeg')) {

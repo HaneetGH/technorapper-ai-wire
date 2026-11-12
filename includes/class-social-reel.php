@@ -1240,7 +1240,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $pending = json_decode((string) get_post_meta($post->ID, '_tr_ai_wire_fal_host_request', true), true);
         if (is_array($pending) && !empty($pending['request_id']) && !empty($pending['endpoint'])) {
-            $polled = $this->social_fal_await($pending['endpoint'], (string) $pending['request_id']);
+            $polled = $this->social_fal_await($pending['endpoint'], (string) $pending['request_id'], $pending, 'talking host');
             if (is_wp_error($polled)) {
                 if ($polled->get_error_code() !== 'tr_ai_wire_reel_video_wait') {
                     delete_post_meta($post->ID, '_tr_ai_wire_fal_host_request');
@@ -1276,12 +1276,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return $submitted;
         }
         update_option($month_key, round($usage + $estimate, 6), false);
-        update_post_meta($post->ID, '_tr_ai_wire_fal_host_request', wp_json_encode(array(
-            'request_id' => (string) $submitted['request_id'],
-            'endpoint' => $endpoint,
-            'estimated_usd' => $estimate,
-        )));
-        $polled = $this->social_fal_await($endpoint, (string) $submitted['request_id']);
+        update_post_meta($post->ID, '_tr_ai_wire_fal_host_request', wp_json_encode($this->social_fal_pending_meta($submitted, $endpoint, $estimate)));
+        $polled = $this->social_fal_await($endpoint, (string) $submitted['request_id'], $submitted, 'talking host');
         if (is_wp_error($polled)) {
             if ($polled->get_error_code() !== 'tr_ai_wire_reel_video_wait') {
                 delete_post_meta($post->ID, '_tr_ai_wire_fal_host_request');
@@ -1428,7 +1424,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $pending = json_decode((string) get_post_meta($image_id, '_tr_ai_wire_fal_face_request', true), true);
         if (is_array($pending) && !empty($pending['request_id']) && !empty($pending['endpoint'])) {
-            $polled = $this->social_fal_await($pending['endpoint'], (string) $pending['request_id']);
+            $polled = $this->social_fal_await($pending['endpoint'], (string) $pending['request_id'], $pending, 'host face');
             if (is_wp_error($polled)) {
                 if ($polled->get_error_code() !== 'tr_ai_wire_reel_video_wait') {
                     delete_post_meta($image_id, '_tr_ai_wire_fal_face_request');
@@ -1451,12 +1447,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (is_wp_error($submitted)) {
             return $submitted;
         }
-        update_post_meta($image_id, '_tr_ai_wire_fal_face_request', wp_json_encode(array(
-            'request_id' => (string) $submitted['request_id'],
-            'endpoint' => 'fal-ai/codeformer',
-            'estimated_usd' => self::SOCIAL_REEL_FACE_ENHANCE_USD,
-        )));
-        $polled = $this->social_fal_await('fal-ai/codeformer', (string) $submitted['request_id']);
+        update_post_meta($image_id, '_tr_ai_wire_fal_face_request', wp_json_encode($this->social_fal_pending_meta($submitted, 'fal-ai/codeformer', self::SOCIAL_REEL_FACE_ENHANCE_USD)));
+        $polled = $this->social_fal_await('fal-ai/codeformer', (string) $submitted['request_id'], $submitted, 'host face');
         if (is_wp_error($polled)) {
             if ($polled->get_error_code() !== 'tr_ai_wire_reel_video_wait') {
                 delete_post_meta($image_id, '_tr_ai_wire_fal_face_request');
@@ -1657,7 +1649,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $pending = json_decode((string) get_post_meta($post->ID, '_tr_ai_wire_fal_request', true), true);
         if (is_array($pending) && !empty($pending['request_id']) && !empty($pending['endpoint'])) {
-            $polled = $this->social_fal_await($pending['endpoint'], (string) $pending['request_id']);
+            $polled = $this->social_fal_await($pending['endpoint'], (string) $pending['request_id'], $pending, 'B-roll motion');
             if (is_wp_error($polled)) {
                 if ($polled->get_error_code() !== 'tr_ai_wire_reel_video_wait') {
                     delete_post_meta($post->ID, '_tr_ai_wire_fal_request');
@@ -1692,12 +1684,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return $submitted;
         }
         update_option($month_key, round($usage + $estimate, 6), false);
-        update_post_meta($post->ID, '_tr_ai_wire_fal_request', wp_json_encode(array(
-            'request_id' => (string) $submitted['request_id'],
-            'endpoint' => $endpoint,
-            'estimated_usd' => $estimate,
-        )));
-        $polled = $this->social_fal_await($endpoint, (string) $submitted['request_id']);
+        update_post_meta($post->ID, '_tr_ai_wire_fal_request', wp_json_encode($this->social_fal_pending_meta($submitted, $endpoint, $estimate)));
+        $polled = $this->social_fal_await($endpoint, (string) $submitted['request_id'], $submitted, 'B-roll motion');
         if (is_wp_error($polled)) {
             if ($polled->get_error_code() !== 'tr_ai_wire_reel_video_wait') {
                 delete_post_meta($post->ID, '_tr_ai_wire_fal_request');
@@ -1724,22 +1712,85 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!is_array($result)) {
             return '';
         }
-        foreach (array('video_url', 'image_url') as $key) {
-            $url = (string) ($result[$key] ?? '');
-            if ($url !== '') {
-                return $url;
+        foreach (array($result, $result['data'] ?? array(), $result['output'] ?? array(), $result['response'] ?? array()) as $node) {
+            if (!is_array($node) || !$node) {
+                continue;
             }
-        }
-        foreach (array('video', 'image') as $key) {
-            $url = (string) ($result[$key]['url'] ?? '');
-            if ($url !== '') {
-                return $url;
+            foreach (array('video_url', 'image_url', 'url') as $key) {
+                $url = (string) ($node[$key] ?? '');
+                if ($url !== '' && wp_http_validate_url($url)) {
+                    return $url;
+                }
             }
-        }
-        if (!empty($result['images'][0]['url'])) {
-            return (string) $result['images'][0]['url'];
+            foreach (array('video', 'image', 'audio') as $key) {
+                $url = (string) ($node[$key]['url'] ?? '');
+                if ($url !== '' && wp_http_validate_url($url)) {
+                    return $url;
+                }
+            }
+            if (!empty($node['images'][0]['url'])) {
+                $url = (string) $node['images'][0]['url'];
+                if ($url !== '' && wp_http_validate_url($url)) {
+                    return $url;
+                }
+            }
         }
         return '';
+    }
+
+    private function social_fal_queue_app($endpoint) {
+        $parts = array_values(array_filter(explode('/', trim((string) $endpoint, '/'))));
+        if (count($parts) >= 2) {
+            return $parts[0] . '/' . $parts[1];
+        }
+        return implode('/', $parts);
+    }
+
+    private function social_fal_pending_meta($submitted, $endpoint, $estimate) {
+        $submitted = is_array($submitted) ? $submitted : array();
+        return array(
+            'request_id' => (string) ($submitted['request_id'] ?? ''),
+            'endpoint' => (string) $endpoint,
+            'status_url' => (string) ($submitted['status_url'] ?? ''),
+            'response_url' => (string) ($submitted['response_url'] ?? ''),
+            'estimated_usd' => (float) $estimate,
+        );
+    }
+
+    private function social_fal_https_url($url) {
+        $url = is_string($url) ? $url : '';
+        return ($url !== '' && wp_http_validate_url($url) && strpos($url, 'https://') === 0) ? $url : '';
+    }
+
+    private function social_fal_queue_urls($endpoint, $request_id, $urls = array()) {
+        $urls = is_array($urls) ? $urls : array();
+        $app = $this->social_fal_queue_app($endpoint);
+        $id = rawurlencode((string) $request_id);
+        $status = $this->social_fal_https_url($urls['status_url'] ?? '');
+        $response = $this->social_fal_https_url($urls['response_url'] ?? '');
+        if ($status === '') {
+            $status = 'https://queue.fal.run/' . $app . '/requests/' . $id . '/status';
+        }
+        if ($response === '') {
+            $response = 'https://queue.fal.run/' . $app . '/requests/' . $id;
+        }
+        return array($status, $response);
+    }
+
+    private function social_fal_download_media($file_url) {
+        if ($file_url === '' || !wp_http_validate_url($file_url)) {
+            return new WP_Error('tr_ai_wire_reel_video', 'Fal completed without a media URL.');
+        }
+        $download = wp_remote_get($file_url, array('timeout' => 60));
+        if (is_wp_error($download)) {
+            return new WP_Error('tr_ai_wire_reel_video', $download->get_error_message());
+        }
+        $code = (int) wp_remote_retrieve_response_code($download);
+        $bytes = wp_remote_retrieve_body($download);
+        if ($code < 200 || $code >= 300 || !is_string($bytes) || strlen($bytes) < 512) {
+            return new WP_Error('tr_ai_wire_reel_video', 'Fal returned an empty media file.');
+        }
+        return $bytes;
     }
 
     private function social_fal_submit($endpoint, $payload) {
@@ -1771,51 +1822,63 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $data;
     }
 
-    private function social_fal_await($endpoint, $request_id) {
+    private function social_fal_await($endpoint, $request_id, $urls = array(), $label = '') {
         $key = $this->fal_api_key();
         if ($key === '') {
             return new WP_Error('tr_ai_wire_reel_fal_key', 'Instagram Reels need a Fal.ai API key to generate motion.');
         }
-        $request_id = rawurlencode((string) $request_id);
-        $base = 'https://queue.fal.run/' . ltrim((string) $endpoint, '/') . '/requests/' . $request_id;
+        $request_id = (string) $request_id;
+        if ($request_id === '') {
+            return new WP_Error('tr_ai_wire_reel_video', 'Fal did not return a request id.');
+        }
+        list($status_url, $response_url) = $this->social_fal_queue_urls($endpoint, $request_id, $urls);
         $headers = array(
             'Authorization' => 'Key ' . $key,
             'Accept' => 'application/json',
         );
-        $deadline = time() + max(0, (int) apply_filters('tr_ai_wire_fal_poll_seconds', 75));
+        $what = $label !== '' ? $label : 'Reel motion';
+        $deadline = time() + max(0, (int) apply_filters('tr_ai_wire_fal_poll_seconds', 240));
         do {
-            $status_response = wp_remote_get($base . '/status', array('timeout' => 30, 'headers' => $headers));
+            $status_response = wp_remote_get($status_url, array('timeout' => 30, 'headers' => $headers));
             if (is_wp_error($status_response)) {
                 return new WP_Error('tr_ai_wire_reel_video', $status_response->get_error_message());
             }
-            $payload = json_decode((string) wp_remote_retrieve_body($status_response), true);
+            $code = (int) wp_remote_retrieve_response_code($status_response);
+            $body = (string) wp_remote_retrieve_body($status_response);
+            $payload = json_decode($body, true);
+            $payload = is_array($payload) ? $payload : array();
+            if (in_array($code, array(401, 403, 404, 405, 422), true)) {
+                return new WP_Error('tr_ai_wire_reel_video', 'Fal status HTTP ' . $code . ' for ' . $what . '.');
+            }
+            if ($code < 200 || $code >= 300) {
+                $message = sanitize_text_field($payload['detail'] ?? ($payload['error'] ?? ('Fal status HTTP ' . $code . '.')));
+                return new WP_Error('tr_ai_wire_reel_video', $message !== '' ? $message : ('Fal status HTTP ' . $code . '.'));
+            }
             $state = strtoupper((string) ($payload['status'] ?? ''));
-            if ($state === 'COMPLETED') {
-                $result_response = wp_remote_get($base, array('timeout' => 45, 'headers' => $headers));
+            $inline = $this->social_fal_result_file_url($payload);
+            if ($inline !== '' && ($state === '' || in_array($state, array('COMPLETED', 'SUCCESS', 'OK'), true))) {
+                return $this->social_fal_download_media($inline);
+            }
+            if (in_array($state, array('COMPLETED', 'SUCCESS', 'OK'), true)) {
+                $result_url = $this->social_fal_https_url($payload['response_url'] ?? '') ?: $response_url;
+                $result_response = wp_remote_get($result_url, array('timeout' => 45, 'headers' => $headers));
                 if (is_wp_error($result_response)) {
                     return new WP_Error('tr_ai_wire_reel_video', $result_response->get_error_message());
                 }
+                $result_code = (int) wp_remote_retrieve_response_code($result_response);
                 $result = json_decode((string) wp_remote_retrieve_body($result_response), true);
+                if ($result_code < 200 || $result_code >= 300) {
+                    return new WP_Error('tr_ai_wire_reel_video', 'Fal result HTTP ' . $result_code . ' for ' . $what . '.');
+                }
                 $file_url = $this->social_fal_result_file_url(is_array($result) ? $result : array());
-                if ($file_url === '' || !wp_http_validate_url($file_url)) {
-                    return new WP_Error('tr_ai_wire_reel_video', 'Fal completed without a media URL.');
-                }
-                $download = wp_remote_get($file_url, array('timeout' => 60));
-                if (is_wp_error($download)) {
-                    return new WP_Error('tr_ai_wire_reel_video', $download->get_error_message());
-                }
-                $bytes = wp_remote_retrieve_body($download);
-                if (!is_string($bytes) || strlen($bytes) < 512) {
-                    return new WP_Error('tr_ai_wire_reel_video', 'Fal returned an empty media file.');
-                }
-                return $bytes;
+                return $this->social_fal_download_media($file_url);
             }
             if (in_array($state, array('FAILED', 'CANCELLED', 'ERROR'), true)) {
-                $message = sanitize_text_field($payload['error'] ?? ('Fal video job ' . strtolower($state) . '.'));
+                $message = sanitize_text_field($payload['error'] ?? ('Fal ' . $what . ' ' . strtolower($state) . '.'));
                 return new WP_Error('tr_ai_wire_reel_video', $message);
             }
             if (time() >= $deadline) {
-                return new WP_Error('tr_ai_wire_reel_video_wait', 'Fal is still generating the Reel motion. The job will retry shortly.');
+                return new WP_Error('tr_ai_wire_reel_video_wait', 'Fal is still generating the ' . $what . '. The job will retry shortly.');
             }
             sleep(4);
         } while (true);
@@ -2093,7 +2156,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (is_wp_error($submitted)) {
             return $submitted;
         }
-        $polled = $this->social_fal_await(self::SOCIAL_REEL_MUX_ENDPOINT, (string) ($submitted['request_id'] ?? ''));
+        $polled = $this->social_fal_await(self::SOCIAL_REEL_MUX_ENDPOINT, (string) ($submitted['request_id'] ?? ''), $submitted, 'spoken MP4');
         if (is_wp_error($polled)) {
             return $polled;
         }

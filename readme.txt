@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.72
+Stable tag: 0.2.73
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.73 =
+* Fal already billed Kling Avatar, then the queue stuck on “still generating” because status was polled on the full model path (HTTP 405). Poll now uses fal-ai/kling-video/requests/{id}. Retry building this Reel downloads that completed talking-host clip.
 
 = 0.2.72 =
 * Download video and Post to Instagram were missing when the host had no ffmpeg, because the job stopped before storing an MP4. Retry building this Reel now generates the video (Fal mux, or the motion clip) without a checkbox. Those buttons appear on the row when the file is ready.
@@ -147,6 +150,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.73 =
+Retry building this Reel picks up a completed Fal Kling Avatar job that the queue could not download.
 
 = 0.2.72 =
 If Download and Post are missing on a held Reel, click Retry building this Reel. The host does not need ffmpeg.
