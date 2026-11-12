@@ -864,7 +864,7 @@ trait TechnoRapper_AI_Wire_Social {
             $this->queue_site_context_job(false);
         }
         if (($this->social_wants_reel($settings) || (int) ($settings['social_reel_daily_limit'] ?? 0) > 0) && function_exists('set_time_limit')) {
-            set_time_limit(300);
+            set_time_limit(480);
         }
         $credentials = $this->social_credentials();
         $limit = $this->social_article_daily_limit($settings);
@@ -920,7 +920,7 @@ trait TechnoRapper_AI_Wire_Social {
             }
             if ($this->social_row_holds_reel_for_review($row)) {
                 if (function_exists('set_time_limit')) {
-                    set_time_limit(300);
+                    set_time_limit(480);
                 }
                 $prepared = $this->prepare_social_delivery($row, $settings);
                 if (is_wp_error($prepared)) {
