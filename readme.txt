@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.81
+Stable tag: 0.2.84
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,21 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.84 =
+* Local ffmpeg helper no longer treats a successful encode as failure when PHP already reaped the process (fixes a PHP 8.2 CI flake that surfaced as an ffmpeg version-banner error).
+
+= 0.2.83 =
+* Every Reel (no-face, B-roll recipe, talking host, local ffmpeg, Fal, laptop kit) now uses one cards-first timeline. Lesson cards carry the voice; the B-roll clip appears at most twice for up to 2.5s each and is never looped or stretched.
+* A guard checks the timeline before any mux and stops the build with a clear error if cards are missing, motion would run long, or the cut would not cover the voice. There is no motion-only fallback any more.
+* Lesson cards are baked at their exact on-screen length and must all be ready before the final assemble. A broken card clip stops the build instead of being muxed.
+* Lesson cards are readable: big centred text in the Instagram safe zone over a blurred, darkened backdrop, with step labels and progress dots.
+* Finished Reels from older cuts are no longer reused, previewed, or posted. Resume deletes them and rebuilds the new cut, held for review.
+* The laptop kit renders the same cut (card images, short accents, end card) and packs every file its script needs.
+* Settings, progress steps, and preview copy no longer describe a looping motion cut.
+
+= 0.2.82 =
+* No-face teach cut is cards-first: lesson cards carry the Reel; B-roll motion is at most one or two short accents (no looping laptop bed).
 
 = 0.2.81 =
 * Finished-Reel duration check no longer ignores multi-hour muxes (the short-clip helper capped at 90s and could treat a 2h freeze as OK). Overlong voice MP3s are discarded instead of reused.
@@ -184,6 +199,15 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.84 =
+Same as 0.2.83 for operators — this patch only hardens local ffmpeg status handling.
+
+= 0.2.83 =
+Update, keep Dev cheap on, then click Resume (or Start over) on any Reel row. Old looping Reels are deleted automatically and rebuilt cards-first, held for review.
+
+= 0.2.82 =
+Update, keep Dev cheap on, then Start over or Generate script again so the new cards-first cut replaces the looping B-roll Reel.
 
 = 0.2.81 =
 Update, then Start over or Generate script again on any old multi-hour Reel. Resume alone keeps the broken file.

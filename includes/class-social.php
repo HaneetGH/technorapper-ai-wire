@@ -2927,7 +2927,7 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_reel_preview_id($post_id) {
         $post_id = (int) $post_id;
         $video_id = (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true);
-        if ($video_id < 1) {
+        if ($video_id < 1 || $this->social_reel_cut_is_stale($video_id)) {
             return 0;
         }
         $path = get_attached_file($video_id);
@@ -3540,6 +3540,7 @@ trait TechnoRapper_AI_Wire_Social {
             '_tr_ai_wire_reel_auto_retries',
             '_tr_ai_wire_reel_lesson',
             '_tr_ai_wire_reel_audio_seconds',
+            '_tr_ai_wire_reel_cards_state',
         ) as $meta) {
             delete_post_meta($post_id, $meta);
         }
@@ -5013,7 +5014,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $copy = json_decode((string) get_post_meta($post_id, '_tr_ai_wire_social_copy', true), true);
         $copy = is_array($copy) ? $copy : array();
-        $stored = $this->store_social_video($post, $bytes, $copy, (string) ($copy['reel_script'] ?? ''), $this->settings());
+        $stored = $this->store_social_video($post, $bytes, $copy, (string) ($copy['reel_script'] ?? ''), $this->settings(), 'upload');
         if (is_wp_error($stored)) {
             wp_die(esc_html($stored->get_error_message()));
         }
@@ -5109,11 +5110,11 @@ trait TechnoRapper_AI_Wire_Social {
             return;
         }
         if ($partial_kind === 'host') {
-            echo '<p class="description"><strong>Talking-host take only</strong> — this is the full lip-sync readout used as an ingredient. It is not the finished story Reel. After assembly you get host opening + news-detail video/photos + sting.</p>';
+            echo '<p class="description"><strong>Talking-host take only</strong> — this is the full lip-sync readout used as an ingredient. It is not the finished Reel. After assembly you get a short host hook, then lesson cards and the sting.</p>';
             return;
         }
         if ($partial_kind === 'broll') {
-            echo '<p class="description"><strong>B-roll piece only</strong> (usually ~4–8s, silent). Not the finished story Reel. Voice, on-screen hooks, news-detail beats, and sting are assembled next.</p>';
+            echo '<p class="description"><strong>B-roll accent only</strong> (a few seconds, silent). This is not the Reel. The finished Reel is lesson cards carrying the voice, with this clip shown at most twice for about 2 seconds.</p>';
             return;
         }
         echo '<p class="description">Preview of one finished piece only. The finished Reel is still being assembled, then Download video and Post appear here.</p>';
@@ -5128,7 +5129,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $parts = array(
             'talking host clip' => $this->social_host_id($post->ID),
-            'B-roll clip (silent)' => $this->social_motion_id($post->ID),
+            'B-roll accent (silent)' => $this->social_motion_id($post->ID),
             'voice MP3' => $this->social_voice_id($post->ID),
             'kit zip' => $this->social_reel_kit_id($post->ID),
         );
@@ -5196,8 +5197,10 @@ trait TechnoRapper_AI_Wire_Social {
         if ($live && !empty($progress['detail'])) {
             echo '<p class="description tr-ai-wire-reel-build-detail">' . esc_html((string) $progress['detail']) . '</p>';
         }
-        if (!empty($plan['story']) && empty($plan['host_seek'])) {
-            echo '<p class="description">Scroll-stop cut: cold-open on news video/photos, a short host hook, then more detail beats while the voice continues. Not a full talking-head readout. Mid-speech host returns need ffmpeg on the server.</p>';
+        if (!empty($plan['host'])) {
+            echo '<p class="description">Teach cut: a cold-open lesson card, one short host hook, then lesson cards while the voice continues. B-roll appears at most once as a short accent. Not a full talking-head readout.</p>';
+        } else {
+            echo '<p class="description">Teach cut: numbered lesson cards carry the voice from start to finish. The B-roll clip appears at most twice, about 2 seconds each, and is never looped. If cards cannot be made, the build stops instead of posting a looping clip.</p>';
         }
         $spent = $this->social_reel_spent_usd($post->ID);
         if ($spent > 0) {
