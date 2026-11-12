@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.69
+Stable tag: 0.2.70
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.70 =
+* Hosts without ffmpeg can still make Reels: Fal assembles the spoken MP4 when possible, otherwise Social queue offers Download motion/voice/kit so you can run ffmpeg on a laptop, upload reel.mp4, and Publish to Instagram.
 
 = 0.2.69 =
 * Spoken Reels are configurable from Social settings: recipe (B-roll vs story edit), spoken length, male/female/neutral Mini TTS voice, weekly cap, cameras, and sting. Story edit is a talking host plus moving B-roll cutaways with captions — no still news cards. Social queue has Generate Reel now: it builds one video, holds it on the dashboard for review, and only posts when you click Publish. Auto Reels still go out when Reel posts per day is above 0.
@@ -137,6 +140,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.70 =
+If this WordPress host has no ffmpeg, Generate Reel still builds motion and voice. Download the kit, mux on your laptop, upload the MP4, then Publish to Instagram.
 
 = 0.2.69 =
 Reel recipe, spoken length, voice, weekly cap, and an optional avatar-face upsell are now on Social settings, with a cleaner dashboard for the mix, queue, and costs. Generate Reel now builds one video for review, then Publish sends it live. Existing installs keep the B-roll Reel and $10 video budget until you change them.
