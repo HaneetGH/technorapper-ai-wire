@@ -390,7 +390,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <?php endforeach; ?>
                     </div>
                     <h3>How the video is cut</h3>
-                    <p class="description">Every shot stays in motion: talking host, B-roll cutaways, captions on the video. No still news cards. Story edit is the talking-tech cut (host on camera, then product/demo B-roll).</p>
+                    <p class="description">Story edit is movie-style storytelling: speech, then news details on other video or photos, then the brand sting — like a short film about the article.</p>
                     <div class="tr-ai-wire-choice">
                         <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'broll') ? ' is-selected' : ''; ?>">
                             <input id="tr-reel-recipe-broll" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="broll" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'broll'); ?>>
@@ -400,7 +400,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? ' is-selected' : ''; ?>">
                             <input id="tr-reel-recipe-story" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="story" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'story'); ?>>
                             <strong>Story edit</strong>
-                            <span class="description">Talking host close/medium, then moving B-roll cutaways with captions. Like a tech presenter Reel — no slideshow.</span>
+                            <span class="description">Host speaks the hook, then cutaways show news details on B-roll video and captioned photos while the voice keeps going.</span>
                         </label>
                     </div>
                     <div data-tr-reveal="tr-reel-recipe-story"<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? '' : ' hidden'; ?>>
@@ -478,7 +478,7 @@ trait TechnoRapper_AI_Wire_Admin {
                             <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="1" <?php checked(!empty($s['social_reel_include_slides'])); ?>> Extra B-roll cuts</label>
                             <label for="tr-reel-fact-slides">Count</label>
                             <select id="tr-reel-fact-slides" name="<?php echo esc_attr($option); ?>[social_reel_fact_slides]"><?php foreach (array(1, 2, 3, 4) as $slide_n) : ?><option value="<?php echo esc_attr((string) $slide_n); ?>" <?php selected((int) ($s['social_reel_fact_slides'] ?? 2), $slide_n); ?>><?php echo esc_html((string) $slide_n); ?></option><?php endforeach; ?></select>
-                            <span class="description">More moving cutaways with captions. Not still news cards.</span>
+                            <span class="description">More news-detail beats (captioned photos and B-roll) in the middle of the story.</span>
                             <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="0">
                             <label><input id="tr-reel-include-broll" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="1" <?php checked(!isset($s['social_reel_include_broll']) || !empty($s['social_reel_include_broll'])); ?>> B-roll motion</label>
                             <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_sting]" value="0">

@@ -5567,9 +5567,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('tr_ai_wire_ffmpeg_path');
     }
 
-    public function test_reel_without_ffmpeg_assembles_the_host_unbroken_through_fal() {
+    public function test_reel_without_ffmpeg_assembles_a_movie_style_story_through_fal() {
         if (!function_exists('imagejpeg')) {
-            $this->markTestSkipped('GD is required to render the end card.');
+            $this->markTestSkipped('GD is required to render story detail frames.');
         }
         add_filter('tr_ai_wire_ffmpeg_path', function () {
             return '/tmp/missing-ffmpeg-binary';
@@ -5589,8 +5589,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ));
         $plan = $this->invoke_private('social_reel_plan', array($story));
         $this->assertTrue($plan['host']);
-        $this->assertFalse($plan['motion']);
-        $this->assertTrue($plan['cutaways_skipped']);
+        $this->assertTrue($plan['motion']);
+        $this->assertTrue($plan['details']);
+        $this->assertFalse($plan['cutaways_skipped']);
+        $this->assertFalse($plan['host_seek']);
         $captured = array();
         add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
             $url = (string) $url;
@@ -5613,31 +5615,42 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Fal assembly'));
         $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', $this->fake_mp3_bytes(100));
         $host = $this->create_reel_asset('host.mp4', 'video/mp4', $this->fake_mp4_bytes(12.4));
+        $motion = $this->create_reel_asset('motion.mp4', 'video/mp4', $this->fake_mp4_bytes(4.0));
+        $photo = $this->tiny_jpeg_bytes();
         $result = $this->invoke_private('social_reel_assemble_with_fal', array(
             get_post($post_id),
             $story,
-            array('hook' => 'Fal assembly'),
+            array(
+                'hook' => 'Chip shortage bites',
+                'reel_captions' => array('Factories slow', 'Prices climb', 'Shipments slip'),
+                'cta' => 'Read the full story',
+            ),
             'Spoken script',
             $plan,
             array(
                 'voice' => array('id' => $voice['id'], 'path' => $voice['path'], 'key' => 'voice-key', 'seconds' => 12.0),
                 'host' => array('id' => $host['id'], 'path' => $host['path']),
-                'motion' => null,
+                'motion' => array('id' => $motion['id'], 'path' => $motion['path']),
             ),
-            '',
+            $photo,
             'Read the full story',
         ));
         $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
         $this->assertStringContainsString('ffmpeg-api/compose', (string) ($captured['endpoint'] ?? ''));
         $tracks = $captured['submit']['tracks'] ?? array();
         $this->assertCount(2, $tracks);
-        $this->assertSame('video', $tracks[0]['type'] ?? '');
-        $this->assertSame('audio', $tracks[1]['type'] ?? '');
         $visual = $tracks[0]['keyframes'] ?? array();
-        $this->assertCount(2, $visual);
+        $this->assertGreaterThanOrEqual(4, count($visual));
         $this->assertSame(0, (int) $visual[0]['timestamp']);
-        $this->assertSame(12400, (int) $visual[0]['duration']);
-        $this->assertSame(12400, (int) $visual[1]['timestamp']);
+        $this->assertLessThan(12000, (int) $visual[0]['duration']);
+        $this->assertGreaterThan(3000, (int) $visual[0]['duration']);
+        $kinds = 0;
+        foreach ($visual as $frame) {
+            if (!empty($frame['url'])) {
+                $kinds++;
+            }
+        }
+        $this->assertSame(count($visual), $kinds);
         $this->assertSame(12000, (int) $tracks[1]['keyframes'][0]['duration']);
         $this->assertSame((int) $result['id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
         $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_fal_compose_request', true));

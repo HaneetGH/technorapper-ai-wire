@@ -10,8 +10,11 @@ if (!defined('ABSPATH')) {
  * A Ken Burns pass over those JPEGs is still a slideshow. This renderer
  * does none of that: one article, a voiceover as the timeline, captions
  * that follow the spoken words, Fal Veo motion from one B-roll still.
- * Motion loops instead of freezing. Story edit intercuts a talking host
- * with captioned B-roll cutaways, then a short brand sting.
+ * Motion loops instead of freezing. Story edit is movie-style storytelling:
+ * the host speaks the hook, then the cut moves to captioned B-roll / news
+ * detail photos while the voice continues, then a short brand sting.
+ * Without local ffmpeg the host only appears at the start (Fal cannot seek
+ * mid-clip for lip-sync), but the detail beats still play.
  */
 trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_wants_reel($settings = null, $post_id = 0) {
@@ -436,8 +439,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             } else {
                 $parts[] = 'no talking host';
             }
+            $parts[] = 'movie-style news details';
             if (!isset($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_broll'])) {
-                $parts[] = 'captioned B-roll cuts';
+                $parts[] = 'B-roll and photos';
             }
             if (!isset($settings['social_reel_include_sting']) || !empty($settings['social_reel_include_sting'])) {
                 $parts[] = 'sting';
@@ -761,25 +765,35 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $settings = is_array($settings) ? $settings : $this->settings();
         $local = $this->social_ffmpeg_path() !== '';
         if ($this->social_reel_recipe($settings) !== 'story') {
-            return array('story' => false, 'host' => false, 'motion' => true, 'sting' => true, 'local' => $local, 'cutaways_skipped' => false);
+            return array(
+                'story' => false,
+                'host' => false,
+                'motion' => true,
+                'details' => true,
+                'sting' => true,
+                'local' => $local,
+                'cutaways_skipped' => false,
+                'host_seek' => false,
+            );
         }
         $host = !empty($settings['social_reel_include_host']);
-        $broll = !empty($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_slides']);
-        if (!$host && !$broll) {
-            $broll = true;
+        $motion = !empty($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_slides']);
+        if (!$host && !$motion) {
+            $motion = true;
         }
         $sting = array_key_exists('social_reel_include_sting', $settings) ? !empty($settings['social_reel_include_sting']) : true;
-        // Cutting between the host and B-roll needs frame-accurate trims. Without local
-        // ffmpeg the Fal assembler can only play a clip from its start, which would put
-        // the host's lips out of step with the voice, so the host plays unbroken instead.
-        $motion = $broll && ($local || !$host);
+        // Movie storytelling always keeps detail beats (B-roll and/or captioned news
+        // photos) after the opening host. Without local ffmpeg we cannot seek into the
+        // middle of the talking-host clip, so the host only appears up front.
         return array(
             'story' => true,
             'host' => $host,
             'motion' => $motion,
+            'details' => true,
             'sting' => $sting,
             'local' => $local,
-            'cutaways_skipped' => $broll && !$motion,
+            'cutaways_skipped' => false,
+            'host_seek' => $local && $host,
         );
     }
 
@@ -916,6 +930,143 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return (int) round(max(0.0, (float) $seconds) * 1000);
     }
 
+    private function social_reel_detail_frame($post, $copy, $photo_bytes, $caption, $index) {
+        $caption = trim(wp_strip_all_tags((string) $caption));
+        if ($caption === '') {
+            $caption = trim(wp_strip_all_tags((string) ($copy['hook'] ?? $post->post_title)));
+        }
+        $kind = (is_string($photo_bytes) && $photo_bytes !== '') ? 'broll' : 'slide';
+        $key = md5($kind . '|' . $caption . '|' . (string) $index . '|' . self::site_brand_name());
+        $meta = '_tr_ai_wire_reel_detail_' . (string) ((int) $index);
+        $existing = (int) get_post_meta($post->ID, $meta, true);
+        if ($existing > 0 && (string) get_post_meta($existing, '_tr_ai_wire_endcard_key', true) === $key) {
+            $path = get_attached_file($existing);
+            if ($path && file_exists($path)) {
+                return array('id' => $existing, 'path' => $path);
+            }
+        }
+        $jpeg = $this->render_social_reel_frame($kind, $copy, is_string($photo_bytes) ? $photo_bytes : '', $caption);
+        if (is_wp_error($jpeg)) {
+            return $jpeg;
+        }
+        return $this->social_reel_store_asset_image(
+            $post,
+            $jpeg,
+            'technorapper-social-detail-' . (int) $post->ID . '-' . (string) ((int) $index) . '.jpg',
+            'Reel news detail',
+            $meta,
+            $key
+        );
+    }
+
+    private function social_reel_fal_movie_keyframes($post, $settings, $copy, $plan, $parts, $photo_bytes, $audio_seconds, $use_sting, $sting_seconds, $end_caption) {
+        $host = is_array($parts['host'] ?? null) ? $parts['host'] : null;
+        $motion = is_array($parts['motion'] ?? null) ? $parts['motion'] : null;
+        $visual = array();
+        $clock = 0.0;
+        $photo_bytes = is_string($photo_bytes) ? $photo_bytes : '';
+
+        if ($host) {
+            $host_url = $this->social_reel_file_data_url((string) $host['path'], 'video/mp4', 'tr_ai_wire_reel_host', 'The talking-host clip is missing.');
+            if (is_wp_error($host_url)) {
+                return $host_url;
+            }
+            $host_len = $this->social_video_duration((string) $host['path'], $audio_seconds);
+            // Opening host only — lips match from t=0. Later return-cuts need ffmpeg seeks.
+            $intro = min($host_len, max(3.5, min(8.0, $audio_seconds * 0.32)));
+            if (!$motion && $photo_bytes === '') {
+                $intro = max(3.0, min($host_len, $audio_seconds * 0.55));
+            }
+            $visual[] = array('timestamp' => 0, 'duration' => $this->social_reel_ms($intro), 'url' => $host_url);
+            $clock = $intro;
+        }
+
+        $left = max(0.0, $audio_seconds - $clock);
+        $captions = $this->social_reel_cutaway_captions($copy);
+        if (!$captions) {
+            foreach (array($copy['hook'] ?? '', $copy['on_image_headline'] ?? '', $copy['cta'] ?? '') as $line) {
+                $line = $this->clip_social_text(trim(wp_strip_all_tags((string) $line)), 72);
+                if ($line !== '' && !in_array($line, $captions, true)) {
+                    $captions[] = $line;
+                }
+            }
+        }
+        $beat_n = max(2, min(4, count($captions) ?: 2));
+        if (!empty($settings['social_reel_include_slides'])) {
+            $beat_n = max($beat_n, $this->social_reel_fact_slides($settings));
+        }
+        $beat_n = min(4, $beat_n);
+        if ($left < 1.6) {
+            $beat_n = max(1, min($beat_n, 1));
+        }
+
+        $motion_url = '';
+        $motion_source = 0.0;
+        if ($motion) {
+            $motion_url = $this->social_reel_file_data_url((string) $motion['path'], 'video/mp4', 'tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
+            if (is_wp_error($motion_url)) {
+                return $motion_url;
+            }
+            $motion_source = $this->social_video_duration((string) $motion['path'], 4.0);
+        }
+
+        if ($left >= 0.8) {
+            $slice = $left / max(1, $beat_n);
+            for ($i = 0; $i < $beat_n; $i++) {
+                $caption = $captions[$i] ?? ($captions[0] ?? (string) ($copy['hook'] ?? ''));
+                $prefer_motion = ($motion_url !== '') && ($photo_bytes === '' || ($i % 2) === 0);
+                if ($prefer_motion) {
+                    $loops = $this->social_fal_loop_keyframes($motion_url, $motion_source, $slice, $clock);
+                    if ($loops) {
+                        foreach ($loops as $frame) {
+                            $visual[] = $frame;
+                        }
+                        $clock += $slice;
+                        continue;
+                    }
+                }
+                $card = $this->social_reel_detail_frame($post, $copy, $photo_bytes, $caption, $i);
+                if (is_wp_error($card)) {
+                    return $card;
+                }
+                $card_url = $this->social_reel_file_data_url((string) $card['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'A Reel news detail frame is missing.');
+                if (is_wp_error($card_url)) {
+                    return $card_url;
+                }
+                $visual[] = array(
+                    'timestamp' => $this->social_reel_ms($clock),
+                    'duration' => $this->social_reel_ms(max(1.4, $slice)),
+                    'url' => $card_url,
+                );
+                $clock += max(1.4, $slice);
+            }
+        }
+
+        if (!$visual && $motion_url !== '') {
+            $visual = $this->social_fal_loop_keyframes($motion_url, $motion_source, $audio_seconds, 0);
+            $clock = $audio_seconds;
+        }
+        if (!$visual) {
+            return new WP_Error('tr_ai_wire_reel_frames', 'The Reel has no video clip to assemble.');
+        }
+        if ($use_sting) {
+            $endcard = $this->social_reel_endcard($post, $copy, $photo_bytes, $end_caption);
+            if (is_wp_error($endcard)) {
+                return $endcard;
+            }
+            $end_url = $this->social_reel_file_data_url((string) $endcard['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
+            if (is_wp_error($end_url)) {
+                return $end_url;
+            }
+            $visual[] = array(
+                'timestamp' => $this->social_reel_ms(max($clock, $audio_seconds)),
+                'duration' => $this->social_reel_ms($sting_seconds),
+                'url' => $end_url,
+            );
+        }
+        return $visual;
+    }
+
     private function social_reel_assemble_with_fal($post, $settings, $copy, $script, $plan, $parts, $photo_bytes, $end_caption) {
         $voice = $parts['voice'];
         $host = is_array($parts['host'] ?? null) ? $parts['host'] : null;
@@ -923,49 +1074,72 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $audio_seconds = max(6.0, (float) $voice['seconds']);
         $sting_seconds = !empty($plan['sting']) ? ($plan['story'] ? (float) $this->social_reel_sting_seconds($settings) : 2.0) : 0.0;
         $use_sting = $sting_seconds > 0 && (string) get_post_meta($post->ID, '_tr_ai_wire_reel_no_sting', true) !== '1';
+        $movie = !empty($plan['story']);
         $input_key = md5(implode('|', array(
+            'movie-v1',
             (string) $voice['key'],
             (int) ($host['id'] ?? 0),
             (int) ($motion['id'] ?? 0),
+            $movie ? 'story' : 'broll',
             $use_sting ? '1' : '0',
+            md5((string) $photo_bytes),
             $end_caption,
         )));
-        $payload = function () use ($post, $copy, $voice, $host, $motion, $audio_seconds, $use_sting, $sting_seconds, $photo_bytes, $end_caption) {
+        $payload = function () use ($post, $settings, $copy, $plan, $parts, $voice, $host, $motion, $audio_seconds, $use_sting, $sting_seconds, $photo_bytes, $end_caption, $movie) {
             $voice_url = $this->social_reel_file_data_url((string) $voice['path'], 'audio/mpeg', 'tr_ai_wire_reel_tts', 'The Reel voiceover file is missing.');
             if (is_wp_error($voice_url)) {
                 return $voice_url;
             }
-            $visual = array();
-            $visual_seconds = $audio_seconds;
-            if ($host) {
-                $host_url = $this->social_reel_file_data_url((string) $host['path'], 'video/mp4', 'tr_ai_wire_reel_host', 'The talking-host clip is missing.');
-                if (is_wp_error($host_url)) {
-                    return $host_url;
+            if ($movie) {
+                $visual = $this->social_reel_fal_movie_keyframes(
+                    $post,
+                    $settings,
+                    $copy,
+                    $plan,
+                    $parts,
+                    $photo_bytes,
+                    $audio_seconds,
+                    $use_sting,
+                    $sting_seconds,
+                    $end_caption
+                );
+                if (is_wp_error($visual)) {
+                    return $visual;
                 }
-                $host_seconds = $this->social_video_duration((string) $host['path'], $audio_seconds);
-                $visual_seconds = max(3.0, min($host_seconds, $audio_seconds + 1.0));
-                $visual[] = array('timestamp' => 0, 'duration' => $this->social_reel_ms($visual_seconds), 'url' => $host_url);
-            } elseif ($motion) {
-                $motion_url = $this->social_reel_file_data_url((string) $motion['path'], 'video/mp4', 'tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
-                if (is_wp_error($motion_url)) {
-                    return $motion_url;
+            } else {
+                $visual = array();
+                $visual_seconds = $audio_seconds;
+                if ($host) {
+                    $host_url = $this->social_reel_file_data_url((string) $host['path'], 'video/mp4', 'tr_ai_wire_reel_host', 'The talking-host clip is missing.');
+                    if (is_wp_error($host_url)) {
+                        return $host_url;
+                    }
+                    $host_seconds = $this->social_video_duration((string) $host['path'], $audio_seconds);
+                    $visual_seconds = max(3.0, min($host_seconds, $audio_seconds + 1.0));
+                    $visual[] = array('timestamp' => 0, 'duration' => $this->social_reel_ms($visual_seconds), 'url' => $host_url);
+                } elseif ($motion) {
+                    $motion_url = $this->social_reel_file_data_url((string) $motion['path'], 'video/mp4', 'tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
+                    if (is_wp_error($motion_url)) {
+                        return $motion_url;
+                    }
+                    $source = $this->social_video_duration((string) $motion['path']);
+                    $visual = $this->social_fal_loop_keyframes($motion_url, $source, $audio_seconds, 0);
+                    $visual_seconds = $audio_seconds;
                 }
-                $source = $this->social_video_duration((string) $motion['path']);
-                $visual = $this->social_fal_loop_keyframes($motion_url, $source, $audio_seconds, 0);
-            }
-            if (!$visual) {
-                return new WP_Error('tr_ai_wire_reel_frames', 'The Reel has no video clip to assemble.');
-            }
-            if ($use_sting) {
-                $endcard = $this->social_reel_endcard($post, $copy, $photo_bytes, $end_caption);
-                if (is_wp_error($endcard)) {
-                    return $endcard;
+                if (!$visual) {
+                    return new WP_Error('tr_ai_wire_reel_frames', 'The Reel has no video clip to assemble.');
                 }
-                $end_url = $this->social_reel_file_data_url((string) $endcard['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
-                if (is_wp_error($end_url)) {
-                    return $end_url;
+                if ($use_sting) {
+                    $endcard = $this->social_reel_endcard($post, $copy, $photo_bytes, $end_caption);
+                    if (is_wp_error($endcard)) {
+                        return $endcard;
+                    }
+                    $end_url = $this->social_reel_file_data_url((string) $endcard['path'], 'image/jpeg', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
+                    if (is_wp_error($end_url)) {
+                        return $end_url;
+                    }
+                    $visual[] = array('timestamp' => $this->social_reel_ms($visual_seconds), 'duration' => $this->social_reel_ms($sting_seconds), 'url' => $end_url);
                 }
-                $visual[] = array('timestamp' => $this->social_reel_ms($visual_seconds), 'duration' => $this->social_reel_ms($sting_seconds), 'url' => $end_url);
             }
             return array('tracks' => array(
                 array('id' => 'visual', 'type' => 'video', 'keyframes' => $visual),
@@ -1058,7 +1232,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $info = $describe('_tr_ai_wire_fal_compose_request');
         $done = $this->social_reel_id($post_id) > 0;
-        $steps[] = array('key' => 'assemble', 'label' => 'Assemble the MP4', 'state' => $done ? 'done' : ($info['active'] ? 'active' : 'todo'), 'detail' => $done ? '' : $info['detail']);
+        $steps[] = array(
+            'key' => 'assemble',
+            'label' => !empty($plan['story']) ? 'Assemble the story (speech + news details)' : 'Assemble the MP4',
+            'state' => $done ? 'done' : ($info['active'] ? 'active' : 'todo'),
+            'detail' => $done ? '' : $info['detail'],
+        );
         return $steps;
     }
 
@@ -1266,10 +1445,20 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $duration = (float) $voice['seconds'];
         $end_caption = (string) ($copy['cta'] ?? ('Full story on ' . self::site_brand_name()));
         if (!$plan['local']) {
-            if ($plan['cutaways_skipped']) {
-                $this->social_reel_progress_note($post->ID, 'This host cannot cut between the presenter and B-roll without ffmpeg, so the presenter plays unbroken.');
+            $photo = '';
+            if (is_string($broll_path) && $broll_path !== '' && file_exists($broll_path)) {
+                $bytes = file_get_contents($broll_path);
+                if (is_string($bytes)) {
+                    $photo = $bytes;
+                }
             }
-            return $this->social_reel_assemble_with_fal($post, $settings, $copy, $script, $plan, $parts, '', $end_caption);
+            $this->social_reel_progress_note(
+                $post->ID,
+                empty($plan['host_seek'])
+                    ? 'Assembling a movie-style story: host speaks first, then news details on video and photos.'
+                    : 'Assembling the story Reel at Fal.'
+            );
+            return $this->social_reel_assemble_with_fal($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
         }
         $this->social_reel_progress_note($post->ID, 'Assembling the MP4 on this server.');
         $tmp = get_temp_dir() . 'tr-ai-wire-reel-' . wp_generate_password(8, false, false);

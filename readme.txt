@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.74
+Stable tag: 0.2.75
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.75 =
+* Story edit is movie-style storytelling on hosts without ffmpeg: the presenter speaks the opening, then the cut moves to news detail B-roll and captioned photos while the voice continues, then the brand sting.
 
 = 0.2.74 =
 * Reel builds no longer get stuck on "processing". Every Fal job is saved by request id, so Resume never pays twice. Each step (voiceover, talking host, B-roll, assembly) is checked in short rounds and the row shows live progress with Check now and Resume building this Reel.
@@ -157,6 +160,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.75 =
+Set Reel recipe to Story edit, turn on talking host and B-roll, then Resume. The finished Reel cuts from speech into news details instead of one unbroken talking head.
 
 = 0.2.74 =
 Open Social queue and click Resume building this Reel on a stuck row. Finished Fal steps are kept and not billed again. Leave the page open while it builds.
