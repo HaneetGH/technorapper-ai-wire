@@ -257,6 +257,7 @@ trait TechnoRapper_AI_Wire_Social {
             $this->queue_site_context_job(!$was_connected);
         }
         $this->process_social_ideas_from_request();
+        $this->process_reel_host_image_from_request($new_settings);
         wp_safe_redirect(add_query_arg(array(
             'page' => 'tr-ai-wire-social-settings',
             'social_credentials_saved' => '1',
@@ -327,6 +328,27 @@ trait TechnoRapper_AI_Wire_Social {
             'enabled' => empty($item['enabled']) ? 0 : 1,
             'created_at' => sanitize_text_field((string) ($item['created_at'] ?? current_time('mysql', true))),
         );
+    }
+
+    private function process_reel_host_image_from_request($settings) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        $host_id = absint($settings['social_reel_host_image_id'] ?? 0);
+        if (!empty($_FILES['social_reel_host_image']['name']) && !empty($_FILES['social_reel_host_image']['tmp_name'])) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            $uploaded = media_handle_upload('social_reel_host_image', 0);
+            if (!is_wp_error($uploaded)) {
+                $host_id = (int) $uploaded;
+                update_post_meta($host_id, '_tr_ai_wire_social_host', '1');
+            }
+        } elseif (!empty($_POST['remove_reel_host_image'])) {
+            $host_id = 0;
+        }
+        if ((int) ($settings['social_reel_host_image_id'] ?? 0) !== $host_id) {
+            $settings['social_reel_host_image_id'] = $host_id;
+            update_option(self::OPTION, $settings, false);
+        }
     }
 
     private function process_social_ideas_from_request() {
@@ -1761,7 +1783,7 @@ trait TechnoRapper_AI_Wire_Social {
         $brand = !empty($profile['site_name']) ? $profile['site_name'] : 'this site';
         $comic = $this->post_is_comic($post);
         $system = $this->social_copy_system_prompt($brand, $comic);
-        $user = $this->social_copy_user_prompt($brand, $profile, $snapshot, $comic);
+        $user = $this->social_copy_user_prompt($brand, $profile, $snapshot, $comic, $s);
         $copy_settings = $s;
         $copy_settings['max_output_tokens'] = min(1600, max(400, (int) ($s['max_output_tokens'] ?? 1600)));
         return $this->ai_json($s['writer_model'] ?? 'gpt-6-luna', $system, $user, $copy_settings, false);
@@ -1778,7 +1800,7 @@ trait TechnoRapper_AI_Wire_Social {
         return $prompt . 'Safe for a news brand: no nudity, and keep the wording suitable for a general audience. Return JSON only.';
     }
 
-    private function social_copy_user_prompt($brand, $profile, $snapshot, $comic = false) {
+    private function social_copy_user_prompt($brand, $profile, $snapshot, $comic = false, $settings = null) {
         $user = 'Write the package a growth editor would actually post to get views, saves, and sends. Lead with a specific name, number, or mechanism from the article; a reader stake (phone, job, money, privacy, or status); then pay the curiosity off in the next lines with saveable bullets. Short. No throat-clearing. '
             . (!empty($comic) ? 'One dry wink is enough. ' : '')
             . 'Never use: you won’t believe, wait for it, wait until the end, must see, gone wrong, shocking, this changes everything, this will blow your mind. Those lines look like bait and Instagram withholds them. Open a loop only if the caption pays it off in the next sentence. '
@@ -1792,7 +1814,7 @@ trait TechnoRapper_AI_Wire_Social {
             . (!empty($comic) ? 'Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. ' : '')
             . 'Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
-            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. 40–55 spoken words, about 15–18 seconds, THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. '
+            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings) . ' THIS article only. The viewer must learn the takeaway in the first sentence, without opening the article. Three beats: named hook in the first 1–3 seconds; the one fact or mechanism from key_takeaways (or the lede if none); what that changes for the viewer\'s phone, job, or money. '
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
             . 'Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
             . 'reel_captions: 3–5 short on-screen lines that match spoken phrases, max 6 words each. These are captions under a voiceover, not poster headlines. '
@@ -2535,7 +2557,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         delete_post_meta($post_id, '_tr_ai_wire_social_skip');
         $left = $this->social_mix_remaining($settings);
-        if ($left['reel'] > 0) {
+        if ($left['reel'] > 0 && $this->social_reel_weekly_remaining($settings) > 0) {
             $this->enqueue_social_article($post_id, 'reel');
             $this->social_mix_add('reel');
             $this->kick_social_queue(30);
@@ -2746,6 +2768,27 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $mix[$kind] += max(1, (int) $by);
         update_option($this->social_mix_option_name(), $mix, false);
+        if ($kind === 'reel') {
+            $week = $this->social_reel_week_count();
+            update_option($this->social_reel_week_option_name(), $week + max(1, (int) $by), false);
+        }
+    }
+
+    private function social_reel_week_option_name() {
+        return self::SOCIAL_MIX_OPTION . '_week_' . gmdate('oW');
+    }
+
+    private function social_reel_week_count() {
+        return max(0, (int) get_option($this->social_reel_week_option_name(), 0));
+    }
+
+    private function social_reel_weekly_remaining($settings = null) {
+        $settings = is_array($settings) ? $settings : $this->settings();
+        $cap = min(14, max(0, absint($settings['social_reel_weekly_limit'] ?? 0)));
+        if ($cap < 1) {
+            return 99;
+        }
+        return max(0, $cap - $this->social_reel_week_count());
     }
 
     private function social_row_is_pack($row, $settings) {

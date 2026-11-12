@@ -42,6 +42,23 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_video_budget_usd' => 10,
             'social_reel_video_model' => 'veo-lite',
             'social_reel_clip_seconds' => 8,
+            'social_reel_recipe' => 'broll',
+            'social_reel_include_host' => 0,
+            'social_reel_include_slides' => 0,
+            'social_reel_include_broll' => 1,
+            'social_reel_include_sting' => 1,
+            'social_reel_host_model' => 'kling-avatar-pro',
+            'social_reel_host_image_id' => 0,
+            'social_reel_generate_host_face' => 0,
+            'social_reel_enhance_host_face' => 0,
+            'social_reel_host_seconds' => 20,
+            'social_reel_close_camera' => 1,
+            'social_reel_medium_camera' => 1,
+            'social_reel_fact_slides' => 2,
+            'social_reel_target_seconds' => 18,
+            'social_reel_sting_seconds' => 2,
+            'social_reel_tts_voice' => 'cedar',
+            'social_reel_weekly_limit' => 0,
             'social_post_format' => 'single',
             'social_slide_count' => 5,
             'social_carousel_daily_limit' => 3,
@@ -89,6 +106,23 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_video_budget_usd',
             'social_reel_video_model',
             'social_reel_clip_seconds',
+            'social_reel_recipe',
+            'social_reel_include_host',
+            'social_reel_include_slides',
+            'social_reel_include_broll',
+            'social_reel_include_sting',
+            'social_reel_host_model',
+            'social_reel_host_image_id',
+            'social_reel_generate_host_face',
+            'social_reel_enhance_host_face',
+            'social_reel_host_seconds',
+            'social_reel_close_camera',
+            'social_reel_medium_camera',
+            'social_reel_fact_slides',
+            'social_reel_target_seconds',
+            'social_reel_sting_seconds',
+            'social_reel_tts_voice',
+            'social_reel_weekly_limit',
             'social_post_format',
             'social_slide_count',
             'social_carousel_daily_limit',
@@ -291,6 +325,49 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_reel_video_model'] = in_array($video_model, $video_models, true) ? $video_model : 'veo-lite';
         $clip = absint($input['social_reel_clip_seconds'] ?? $defaults['social_reel_clip_seconds']);
         $out['social_reel_clip_seconds'] = in_array($clip, array(4, 5, 6, 8, 10, 15), true) ? $clip : 8;
+        $recipe = sanitize_key((string) ($input['social_reel_recipe'] ?? $defaults['social_reel_recipe']));
+        $out['social_reel_recipe'] = in_array($recipe, array('broll', 'story'), true) ? $recipe : 'broll';
+        $out['social_reel_include_host'] = empty($input['social_reel_include_host']) ? 0 : 1;
+        $out['social_reel_include_slides'] = empty($input['social_reel_include_slides']) ? 0 : 1;
+        $out['social_reel_include_broll'] = array_key_exists('social_reel_include_broll', $input)
+            ? (empty($input['social_reel_include_broll']) ? 0 : 1)
+            : 1;
+        $out['social_reel_include_sting'] = array_key_exists('social_reel_include_sting', $input)
+            ? (empty($input['social_reel_include_sting']) ? 0 : 1)
+            : 1;
+        if ($out['social_reel_recipe'] === 'story'
+            && empty($out['social_reel_include_host'])
+            && empty($out['social_reel_include_slides'])
+            && empty($out['social_reel_include_broll'])
+        ) {
+            $out['social_reel_include_broll'] = 1;
+        }
+        $host_models = array_keys($this->social_reel_host_models());
+        $host_model = sanitize_key((string) ($input['social_reel_host_model'] ?? $defaults['social_reel_host_model']));
+        $out['social_reel_host_model'] = in_array($host_model, $host_models, true) ? $host_model : 'kling-avatar-pro';
+        $out['social_reel_host_image_id'] = array_key_exists('social_reel_host_image_id', $input)
+            ? absint($input['social_reel_host_image_id'])
+            : absint($current['social_reel_host_image_id'] ?? $defaults['social_reel_host_image_id']);
+        $out['social_reel_generate_host_face'] = empty($input['social_reel_generate_host_face']) ? 0 : 1;
+        $out['social_reel_enhance_host_face'] = empty($input['social_reel_enhance_host_face']) ? 0 : 1;
+        $out['social_reel_host_seconds'] = min(45, max(8, absint($input['social_reel_host_seconds'] ?? $defaults['social_reel_host_seconds'])));
+        $out['social_reel_close_camera'] = array_key_exists('social_reel_close_camera', $input)
+            ? (empty($input['social_reel_close_camera']) ? 0 : 1)
+            : 1;
+        $out['social_reel_medium_camera'] = array_key_exists('social_reel_medium_camera', $input)
+            ? (empty($input['social_reel_medium_camera']) ? 0 : 1)
+            : 1;
+        if ($out['social_reel_include_host'] && empty($out['social_reel_close_camera']) && empty($out['social_reel_medium_camera'])) {
+            $out['social_reel_close_camera'] = 1;
+        }
+        $out['social_reel_fact_slides'] = min(4, max(1, absint($input['social_reel_fact_slides'] ?? $defaults['social_reel_fact_slides'])));
+        $target = absint($input['social_reel_target_seconds'] ?? $defaults['social_reel_target_seconds']);
+        $out['social_reel_target_seconds'] = in_array($target, array(15, 18, 30, 45), true) ? $target : 18;
+        $out['social_reel_sting_seconds'] = min(4, max(1, absint($input['social_reel_sting_seconds'] ?? $defaults['social_reel_sting_seconds'])));
+        $voices = array_keys($this->social_reel_tts_voices());
+        $voice = sanitize_key((string) ($input['social_reel_tts_voice'] ?? $defaults['social_reel_tts_voice']));
+        $out['social_reel_tts_voice'] = in_array($voice, $voices, true) ? $voice : 'cedar';
+        $out['social_reel_weekly_limit'] = min(14, max(0, absint($input['social_reel_weekly_limit'] ?? $defaults['social_reel_weekly_limit'])));
         $formats = array('single', 'carousel', 'collage', 'reel');
         $format = sanitize_key((string) ($input['social_post_format'] ?? $defaults['social_post_format']));
         $out['social_post_format'] = in_array($format, $formats, true) ? $format : 'single';

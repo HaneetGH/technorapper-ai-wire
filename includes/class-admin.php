@@ -284,7 +284,8 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X still gets the still poster.</span></p>
                     <div data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>
                     <p><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"></p>
-                    <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label> <input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"> <span class="description">Default $10 covers about one 8s Veo Lite clip per day. Raise this before switching to Fast, full Veo, or Kling. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
+                    <p><label for="tr-social-reel-weekly">Reel posts per week</label> <input id="tr-social-reel-weekly" type="number" min="0" max="14" name="<?php echo esc_attr($option); ?>[social_reel_weekly_limit]" value="<?php echo esc_attr((int) ($s['social_reel_weekly_limit'] ?? 0)); ?>"> <span class="description">0 means no weekly cap. Use 2 for a 1–2 Reels/week desk. The daily mix still applies.</span></p>
+                    <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label> <input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"> <span class="description">Default $10 covers about one 8s Veo Lite clip per day. Raise this before switching to Fast, full Veo, Kling, or a talking host. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
                     <fieldset id="tr-social-reel-model">
                         <legend>Reel motion model</legend>
                         <p class="description">Suggested: <strong>Veo 3.1 Lite</strong> on a $10 budget. Click the info icon on a model for its price, or open the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> page.</p>
@@ -321,13 +322,105 @@ trait TechnoRapper_AI_Wire_Admin {
                         </div>
                         <?php endforeach; ?>
                     </fieldset>
-                    <p><label for="tr-social-reel-clip">Generated motion length</label> <select id="tr-social-reel-clip" name="<?php echo esc_attr($option); ?>[social_reel_clip_seconds]"><?php foreach (array(4, 5, 6, 8, 10, 15) as $clip_n) : ?><option value="<?php echo esc_attr((string) $clip_n); ?>" <?php selected((int) ($s['social_reel_clip_seconds'] ?? 8), $clip_n); ?>><?php echo esc_html((string) $clip_n); ?> seconds</option><?php endforeach; ?></select> <span class="description">Veo allows 4/6/8s. Kling allows 5–15s; the worker sends the nearest length that model accepts. Writer voiceover can run 15–18s; extra time holds the last frame, then the brand sting.</span></p>
+                    <p><label for="tr-social-reel-clip">Generated motion length</label> <select id="tr-social-reel-clip" name="<?php echo esc_attr($option); ?>[social_reel_clip_seconds]"><?php foreach (array(4, 5, 6, 8, 10, 15) as $clip_n) : ?><option value="<?php echo esc_attr((string) $clip_n); ?>" <?php selected((int) ($s['social_reel_clip_seconds'] ?? 8), $clip_n); ?>><?php echo esc_html((string) $clip_n); ?> seconds</option><?php endforeach; ?></select> <span class="description">Veo allows 4/6/8s. Kling allows 5–15s; the worker sends the nearest length that model accepts. Extra B-roll time holds the last frame, then the brand sting.</span></p>
+                    <p><label for="tr-social-reel-target">Spoken length</label> <select id="tr-social-reel-target" name="<?php echo esc_attr($option); ?>[social_reel_target_seconds]"><?php foreach (array(15 => '15 seconds', 18 => '18 seconds (default)', 30 => '30 seconds', 45 => '45 seconds') as $target_n => $target_label) : ?><option value="<?php echo esc_attr((string) $target_n); ?>" <?php selected((int) ($s['social_reel_target_seconds'] ?? 18), $target_n); ?>><?php echo esc_html($target_label); ?></option><?php endforeach; ?></select> <span class="description">The Writer script and Mini TTS follow this length. 45s needs a higher video budget if the host is on camera.</span></p>
+                    <p><label for="tr-social-reel-voice">Voice</label> <select id="tr-social-reel-voice" name="<?php echo esc_attr($option); ?>[social_reel_tts_voice]"><?php foreach ($this->social_reel_tts_voices() as $voice_id => $voice_label) : ?><option value="<?php echo esc_attr($voice_id); ?>" <?php selected((string) ($s['social_reel_tts_voice'] ?? 'cedar'), $voice_id); ?>><?php echo esc_html($voice_label); ?></option><?php endforeach; ?></select></p>
+                    <fieldset>
+                        <legend>Reel recipe</legend>
+                        <p class="description">Default stays a spoken B-roll clip. Story edit is opt-in: a talking host, fact slides, B-roll, and a sting, with camera changes.</p>
+                        <p>
+                            <label><input id="tr-reel-recipe-broll" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="broll" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'broll'); ?>> <strong>B-roll spoken Reel</strong></label>
+                            <span class="description"> — one article, Fal motion, captions, last-frame hold, sting. Same as today.</span>
+                        </p>
+                        <p>
+                            <label><input id="tr-reel-recipe-story" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="story" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'story'); ?>> <strong>Story edit</strong></label>
+                            <span class="description"> — host close/medium, news slides, B-roll, sting. Turn each piece on below.</span>
+                        </p>
+                    </fieldset>
+                    <div data-tr-reveal="tr-reel-recipe-story"<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? '' : ' hidden'; ?>>
+                        <p>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="0">
+                            <label><input id="tr-reel-include-host" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="1" <?php checked(!empty($s['social_reel_include_host'])); ?>> <strong>Talking host (avatar face)</strong></label>
+                            <span class="description">Optional upsell. Lip-syncs a still portrait to the voiceover. Needs a face below.</span>
+                        </p>
+                        <div data-tr-reveal="tr-reel-include-host"<?php echo !empty($s['social_reel_include_host']) ? '' : ' hidden'; ?>>
+                            <?php
+                            $host_id = absint($s['social_reel_host_image_id'] ?? 0);
+                            $host_src = $host_id ? wp_get_attachment_image_url($host_id, 'medium') : '';
+                            ?>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_host_image_id]" value="<?php echo esc_attr((string) $host_id); ?>">
+                            <p><label for="tr-reel-host-image"><strong>Avatar face</strong></label><br>
+                            <input id="tr-reel-host-image" name="social_reel_host_image" type="file" accept="image/jpeg,image/png,image/webp">
+                            <span class="description">Front-facing adult portrait, head and shoulders, no logos. This is the face Kling Avatar lip-syncs.</span></p>
+                            <?php if ($host_src) : ?>
+                            <p><img src="<?php echo esc_url($host_src); ?>" alt="Saved avatar face" style="max-width:160px;height:auto;border-radius:8px;">
+                            <br><label><input type="checkbox" name="remove_reel_host_image" value="1"> Remove saved avatar face</label></p>
+                            <?php elseif (!empty($s['social_reel_include_host']) && empty($s['social_reel_generate_host_face'])) : ?>
+                            <div class="notice notice-warning inline"><p>Talking host is on but there is no avatar face yet. Upload a portrait or turn on Generate a presenter face.</p></div>
+                            <?php endif; ?>
+                            <p>
+                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="0">
+                                <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_generate_host_face]" value="1" <?php checked(!empty($s['social_reel_generate_host_face'])); ?>> Generate a presenter face if none is uploaded</label>
+                                <span class="description">Uses GPT Image 2 low (~$0.006, image budget) for a fictional adult news presenter. Saved and reused.</span>
+                            </p>
+                            <p>
+                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="0">
+                                <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enhance_host_face]" value="1" <?php checked(!empty($s['social_reel_enhance_host_face'])); ?>> <strong>Enhance avatar face</strong></label>
+                                <span class="description">Optional upsell: CodeFormer restores and upscales the portrait before lip-sync (~$0.01 from the video budget, once per face).</span>
+                            </p>
+                            <fieldset>
+                                <legend>Avatar model</legend>
+                                <?php
+                                $selected_host = (string) ($s['social_reel_host_model'] ?? 'kling-avatar-pro');
+                                foreach ($this->social_reel_host_models() as $value => $spec) :
+                                    $host_example = $this->social_reel_host_seconds($s);
+                                    $host_cost = round($host_example * (float) $spec['usd_per_second'], 4);
+                                    ?>
+                                <div style="margin:8px 0 12px;">
+                                    <label for="tr-reel-host-<?php echo esc_attr($value); ?>">
+                                        <input id="tr-reel-host-<?php echo esc_attr($value); ?>" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_host_model]" value="<?php echo esc_attr($value); ?>" <?php checked($selected_host, $value); ?>>
+                                        <strong><?php echo esc_html((string) $spec['label']); ?></strong>
+                                        <?php if (!empty($spec['recommended'])) : ?><span class="description">(suggested upsell)</span><?php endif; ?>
+                                        — <?php echo esc_html((string) $spec['short']); ?>
+                                    </label>
+                                    <p class="description" style="margin:4px 0 0 24px;"><?php echo esc_html((string) $spec['blurb']); ?>
+                                    <?php echo esc_html((string) $host_example); ?>s ≈ $<?php echo esc_html(number_format_i18n($host_cost, 2)); ?>.
+                                    <a href="<?php echo esc_url((string) $spec['docs']); ?>" target="_blank" rel="noopener noreferrer">Fal page</a></p>
+                                </div>
+                                <?php endforeach; ?>
+                            </fieldset>
+                            <p><label for="tr-reel-host-seconds">Host on-camera seconds</label> <input id="tr-reel-host-seconds" type="number" min="8" max="45" name="<?php echo esc_attr($option); ?>[social_reel_host_seconds]" value="<?php echo esc_attr((int) ($s['social_reel_host_seconds'] ?? 20)); ?>"></p>
+                            <p>
+                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_close_camera]" value="0">
+                                <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_close_camera]" value="1" <?php checked(!isset($s['social_reel_close_camera']) || !empty($s['social_reel_close_camera'])); ?>> Close-up camera</label>
+                                <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_medium_camera]" value="0">
+                                <label style="margin-left:12px;"><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_medium_camera]" value="1" <?php checked(!isset($s['social_reel_medium_camera']) || !empty($s['social_reel_medium_camera'])); ?>> Medium camera</label>
+                            </p>
+                        </div>
+                        <p>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="0">
+                            <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_slides]" value="1" <?php checked(!empty($s['social_reel_include_slides'])); ?>> Fact slides</label>
+                            <label for="tr-reel-fact-slides" style="margin-left:8px;">Count</label>
+                            <select id="tr-reel-fact-slides" name="<?php echo esc_attr($option); ?>[social_reel_fact_slides]"><?php foreach (array(1, 2, 3, 4) as $slide_n) : ?><option value="<?php echo esc_attr((string) $slide_n); ?>" <?php selected((int) ($s['social_reel_fact_slides'] ?? 2), $slide_n); ?>><?php echo esc_html((string) $slide_n); ?></option><?php endforeach; ?></select>
+                        </p>
+                        <p>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="0">
+                            <label><input id="tr-reel-include-broll" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_broll]" value="1" <?php checked(!isset($s['social_reel_include_broll']) || !empty($s['social_reel_include_broll'])); ?>> B-roll motion</label>
+                        </p>
+                        <p>
+                            <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_sting]" value="0">
+                            <label><input type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_sting]" value="1" <?php checked(!isset($s['social_reel_include_sting']) || !empty($s['social_reel_include_sting'])); ?>> Brand sting</label>
+                            <label for="tr-reel-sting-seconds" style="margin-left:8px;">Seconds</label>
+                            <input id="tr-reel-sting-seconds" type="number" min="1" max="4" name="<?php echo esc_attr($option); ?>[social_reel_sting_seconds]" value="<?php echo esc_attr((int) ($s['social_reel_sting_seconds'] ?? 2)); ?>">
+                        </p>
+                    </div>
                     <p><label for="tr-fal-key">Fal.ai API key</label><br><input id="tr-fal-key" name="social[fal_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo $this->fal_api_key() !== '' ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Required for Reel motion (Veo via Fal)'); ?>"></p>
                     <?php if ($this->fal_api_key() !== '') : ?><p><label><input type="checkbox" name="remove_fal_api_key" value="1"> Remove saved Fal.ai key</label></p><?php endif; ?>
                     <?php
                     $clip_cost = $this->social_reel_video_estimate_usd($s);
+                    $reel_cost = $this->social_reel_total_estimate_usd($s);
                     ?>
-                    <p class="description">This clip estimate: $<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?>. At one Reel/day that is about $<?php echo esc_html(number_format_i18n($clip_cost * 30, 2)); ?>/month on the selected model. See <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> for every model.</p>
+                    <p class="description">B-roll clip estimate: $<?php echo esc_html(number_format_i18n($clip_cost, 2)); ?>. This recipe estimate: $<?php echo esc_html(number_format_i18n($reel_cost, 2)); ?> per Reel (host + B-roll; Mini TTS is on the image budget). See <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> for every model.</p>
                     <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->social_ffmpeg_path() === '') : ?>
                     <div class="notice notice-warning inline"><p>Reels need <code>ffmpeg</code> on this host. Until it is installed, Instagram Reel jobs will be held for review. The plugin will not fall back to a slideshow of posters.</p></div>
                     <?php endif; ?>
@@ -345,7 +438,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p><label for="tr-social-single-daily">Normal / single-story posts per day</label> <input id="tr-social-single-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_single_daily_limit]" value="<?php echo esc_attr($s['social_single_daily_limit'] ?? 2); ?>"> <span class="description">One website article, one social post.</span></p>
                     <p class="description">Artwork is GPT Image 2 low; type is overlaid locally for stills. Image estimate $0.006 each. X API charges are separate. That file is a social asset only — it never becomes the article featured image.</p>
                     </div>
-                    <p class="description" data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal model you selected to animate the social photograph, and ffmpeg to mux captions. One article only — not a roundup of the day’s posts. Mini TTS about $0.004.</p>
+                    <p class="description" data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, the Fal models you selected, and ffmpeg to mux the edit. One article only — not a roundup of the day’s posts. Mini TTS about $0.004. Avatar Pro and face enhance are optional upsells on the video budget.</p>
                     </div>
                 </div>
                 <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
@@ -404,6 +497,35 @@ trait TechnoRapper_AI_Wire_Admin {
                 </tbody>
             </table>
             <p class="description">Writer GPT script tokens stay on the article budget. Mini TTS is about $0.004 per voiceover on the image budget. X API credits, Instagram quota, and YouTube Data API quota are separate. Fal bills the motion clip; the plugin only reserves the local estimate above. YouTube uploads have no Google per-video fee.</p>
+            <h2>Talking host (optional avatar-face upsell)</h2>
+            <p>Off by default. Story recipe can lip-sync a still portrait with Kling Avatar. Upload a face, or generate a fictional presenter (~$0.006, image budget). <strong>Enhance avatar face</strong> runs Fal CodeFormer first (~$<?php echo esc_html(number_format_i18n(self::SOCIAL_REEL_FACE_ENHANCE_USD, 2)); ?> once per face, video budget).</p>
+            <table class="widefat striped" style="max-width:960px;">
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Per second</th>
+                        <th>20s host</th>
+                        <th>2 Reels/week</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($this->social_reel_host_models() as $value => $spec) :
+                    $host_each = round(20 * (float) $spec['usd_per_second'], 4);
+                    $host_month = $host_each * (2 * 52 / 12);
+                    ?>
+                    <tr id="tr-cost-<?php echo esc_attr($value); ?>">
+                        <td>
+                            <strong><?php echo esc_html((string) $spec['label']); ?></strong>
+                            <?php if (!empty($spec['recommended'])) : ?>— suggested upsell<?php endif; ?>
+                            <br><span class="description"><?php echo esc_html((string) $spec['blurb']); ?></span>
+                        </td>
+                        <td>$<?php echo esc_html(number_format_i18n((float) $spec['usd_per_second'], 3)); ?></td>
+                        <td>$<?php echo esc_html(number_format_i18n($host_each, 2)); ?></td>
+                        <td>$<?php echo esc_html(number_format_i18n($host_month, 2)); ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
             <h2>Social stills</h2>
             <p>GPT Image 2 low is about <strong>$0.006</strong> per branded poster. Default image budget is $5/month. Details: plugin file <code>docs/IMAGE-GENERATION-COST.md</code>.</p>
         </div>

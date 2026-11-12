@@ -3717,6 +3717,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(10.0, (float) $reel['social_video_budget_usd']);
         $this->assertSame('veo-lite', $reel['social_reel_video_model']);
         $this->assertSame(8, (int) $reel['social_reel_clip_seconds']);
+        $this->assertSame('broll', $reel['social_reel_recipe']);
+        $this->assertSame(0, (int) $reel['social_reel_include_host']);
+        $this->assertSame(0, (int) $reel['social_reel_enhance_host_face']);
+        $this->assertSame(0, (int) $reel['social_reel_generate_host_face']);
+        $this->assertSame('kling-avatar-pro', $reel['social_reel_host_model']);
+        $this->assertSame(0, (int) $reel['social_reel_weekly_limit']);
         $upgraded = $this->plugin->sanitize_settings(array(
             'social_post_format' => 'reel',
             'social_video_budget_usd' => 40,
@@ -5680,6 +5686,136 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         @rmdir($tmp);
     }
 
+    public function test_social_reel_recipe_and_avatar_face_are_configurable() {
+        $story = $this->plugin->sanitize_settings(array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 1,
+            'social_reel_include_slides' => 1,
+            'social_reel_include_broll' => 1,
+            'social_reel_include_sting' => 1,
+            'social_reel_host_model' => 'kling-avatar-std',
+            'social_reel_generate_host_face' => 1,
+            'social_reel_enhance_host_face' => 1,
+            'social_reel_target_seconds' => 45,
+            'social_reel_weekly_limit' => 2,
+            'social_reel_tts_voice' => 'marin',
+            'social_reel_close_camera' => 1,
+            'social_reel_medium_camera' => 0,
+            'social_reel_fact_slides' => 3,
+            'social_reel_host_seconds' => 24,
+            'social_reel_sting_seconds' => 3,
+        ));
+        $this->assertSame('story', $story['social_reel_recipe']);
+        $this->assertSame(1, (int) $story['social_reel_include_host']);
+        $this->assertSame(1, (int) $story['social_reel_enhance_host_face']);
+        $this->assertSame(1, (int) $story['social_reel_generate_host_face']);
+        $this->assertSame('kling-avatar-std', $story['social_reel_host_model']);
+        $this->assertSame(45, (int) $story['social_reel_target_seconds']);
+        $this->assertSame(2, (int) $story['social_reel_weekly_limit']);
+        $this->assertSame('marin', $story['social_reel_tts_voice']);
+        $this->assertSame(1, (int) $story['social_reel_close_camera']);
+        $this->assertSame(0, (int) $story['social_reel_medium_camera']);
+        $this->assertSame(3, (int) $story['social_reel_fact_slides']);
+        $this->assertSame(24, (int) $story['social_reel_host_seconds']);
+        $this->assertSame(3, (int) $story['social_reel_sting_seconds']);
+        $this->assertSame('110–140 spoken words, about 40–45 seconds.', $this->invoke_private('social_reel_script_brief', array($story)));
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_STORY_LAYOUT, $this->invoke_private('social_reel_layout_key', array($story)));
+        $empty = $this->plugin->sanitize_settings(array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 0,
+            'social_reel_include_slides' => 0,
+            'social_reel_include_broll' => 0,
+            'social_reel_include_sting' => 0,
+            'social_reel_close_camera' => 0,
+            'social_reel_medium_camera' => 0,
+        ));
+        $this->assertSame(1, (int) $empty['social_reel_include_broll']);
+        $host_only = $this->plugin->sanitize_settings(array(
+            'social_reel_recipe' => 'story',
+            'social_reel_include_host' => 1,
+            'social_reel_close_camera' => 0,
+            'social_reel_medium_camera' => 0,
+        ));
+        $this->assertSame(1, (int) $host_only['social_reel_close_camera']);
+        $clips = $this->invoke_private('build_social_reel_story_timeline', array(
+            array(
+                'on_image_headline' => 'Phone chip has a server cousin',
+                'on_image_subhead' => 'The rack is the prize',
+                'hook' => 'Cloud GPUs set the price',
+                'cta' => 'Read the full story on TechnoRapper',
+            ),
+            30,
+            $story,
+        ));
+        $kinds = array();
+        foreach ($clips as $clip) {
+            $kinds[] = $clip['kind'] . ':' . ($clip['crop'] ?? 'full');
+        }
+        $this->assertSame(array('host:close', 'slide:full', 'broll:full', 'slide:full', 'slide:full', 'end:full'), $kinds);
+        $this->assertGreaterThan(0.0, $this->invoke_private('social_reel_host_estimate_usd', array($story)));
+        $this->assertSame(0.0, $this->invoke_private('social_reel_host_estimate_usd', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(99, $this->invoke_private('social_reel_weekly_remaining', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertSame(2, $this->invoke_private('social_reel_weekly_remaining', array($story)));
+        $held = $this->invoke_private('ensure_social_reel_host_portrait', array(array_merge(
+            TechnoRapper_AI_Wire::defaults(),
+            array(
+                'social_reel_include_host' => 1,
+                'social_reel_generate_host_face' => 0,
+                'social_reel_host_image_id' => 0,
+            )
+        )));
+        $this->assertWPError($held);
+        $this->assertSame('tr_ai_wire_reel_host_image', $held->get_error_code());
+    }
+
+    public function test_avatar_face_enhance_uses_codeformer() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to enhance an avatar face.');
+        }
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        $captured = array();
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'codeformer') !== false && strpos($url, '/requests/') === false) {
+                $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
+                $captured['endpoint'] = $url;
+                return $this->mock_http_ok(array(
+                    'request_id' => 'fal-face-1',
+                    'status' => 'IN_QUEUE',
+                ));
+            }
+            if (strpos($url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                return $this->mock_http_ok(array('image' => array('url' => 'https://example.org/enhanced-face.jpg')));
+            }
+            if (strpos($url, 'example.org/enhanced-face.jpg') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => str_repeat('e', 2048),
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $enhanced = $this->invoke_private('ensure_social_reel_host_face_enhanced', array($attachment_id, TechnoRapper_AI_Wire::defaults()));
+        $this->assertFalse(is_wp_error($enhanced), is_wp_error($enhanced) ? $enhanced->get_error_message() : '');
+        $this->assertGreaterThan(0, (int) $enhanced);
+        $this->assertTrue(!empty($captured['submit']['face_upscale']));
+        $this->assertSame(2, (int) ($captured['submit']['upscale_factor'] ?? 0));
+        $this->assertStringContainsString('codeformer', (string) ($captured['endpoint'] ?? ''));
+        $this->assertSame((int) $enhanced, (int) get_post_meta($attachment_id, '_tr_ai_wire_host_face_enhanced_id', true));
+        $again = $this->invoke_private('ensure_social_reel_host_face_enhanced', array($attachment_id, TechnoRapper_AI_Wire::defaults()));
+        $this->assertSame((int) $enhanced, (int) $again);
+    }
+
     public function test_site_context_needs_refresh_until_a_successful_read() {
         delete_option(TechnoRapper_AI_Wire::SOCIAL_CONTEXT_OPTION);
         $this->assertTrue($this->plugin->site_context_needs_refresh());
@@ -5956,6 +6092,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Reel posts per day', $html);
         $this->assertStringContainsString('Monthly Reel video budget', $html);
         $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_reel_daily_limit]"', $html);
+        $this->assertStringContainsString('Avatar face', $html);
+        $this->assertStringContainsString('Enhance avatar face', $html);
+        $this->assertStringContainsString('Generate a presenter face', $html);
+        $this->assertStringContainsString('Talking host (avatar face)', $html);
+        $this->assertStringContainsString('id="tr-reel-recipe-story"', $html);
 
         update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
             'social_reel_daily_limit' => 2,

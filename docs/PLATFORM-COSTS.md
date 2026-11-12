@@ -21,7 +21,7 @@ You pay OpenAI for:
 - Social copy (hook, captions, and the spoken Reel script — same Writer model, no second research pass)
 - One social graphic per article (GPT Image 2 low by default, about **$0.006** in the plugin’s local estimate)
 - GPT-4o Mini TTS when Instagram format is Reel (about **$0.004** per voiceover, counted against the social image budget)
-- Fal.ai motion when Instagram format is Reel. **Suggested: Veo 3.1 Lite** (8s silent 720p, about **$0.24** per clip). Separate **$10/month** video budget. Social settings lists Veo Fast, Veo 3.1, Kling 3.0 Standard, and Kling 3.0 Pro with a price info icon and a **Price estimate** page.
+- Fal.ai motion when Instagram format is Reel. **Suggested: Veo 3.1 Lite** (8s silent 720p, about **$0.24** per clip). Separate **$10/month** video budget. Social settings lists Veo Fast, Veo 3.1, Kling 3.0 Standard, and Kling 3.0 Pro with a price info icon and a **Price estimate** page. Story recipe, talking host (Kling Avatar), and avatar-face enhance are off by default.
 
 Social images have a **separate** monthly budget (default **$5**) so they do not silently spend the Writer/Reviewer ceiling. If the graphic already exists, **Post existing graphic** does not generate another image.
 

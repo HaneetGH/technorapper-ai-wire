@@ -20,7 +20,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.2.68';
+    const VERSION = '0.2.69';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -40,11 +40,13 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_IMAGE_ESTIMATED_USD = 0.006;
     const SOCIAL_IMAGE_LAYOUT = 'poster-v2';
     const SOCIAL_REEL_LAYOUT = 'reel-v1';
+    const SOCIAL_REEL_STORY_LAYOUT = 'reel-story-v1';
     const SOCIAL_TTS_MODEL = 'gpt-4o-mini-tts';
     const SOCIAL_TTS_VOICE = 'cedar';
     const SOCIAL_TTS_ESTIMATED_USD = 0.004;
     const SOCIAL_INSTAGRAM_STILL_SPACING = 10800;
     const SOCIAL_REEL_VIDEO_DEFAULT = 'veo-lite';
+    const SOCIAL_REEL_FACE_ENHANCE_USD = 0.01;
     const INSTAGRAM_GRAPH_VERSION = 'v22.0';
     const SOCIAL_CONTEXT_TTL = 1209600;
     const TABLE_SUFFIX = 'tr_ai_wire_items';

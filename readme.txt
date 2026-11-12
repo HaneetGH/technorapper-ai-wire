@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.68
+Stable tag: 0.2.69
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,10 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.69 =
+* Spoken Reels are configurable from Social settings: recipe (B-roll vs story edit), spoken length, voice, weekly cap, slides, cameras, and sting.
+* Optional avatar-face upsell: upload a host portrait, generate a fictional presenter, enhance the face with CodeFormer, and lip-sync with Kling Avatar Standard or Pro. Defaults stay B-roll, Reels off, $10 video budget.
 
 = 0.2.68 =
 * A queued carousel or collage no longer sits on “Graphic not generated yet” for the 3-hour gap between single Instagram posts. Opening the Social queue starts the worker, which builds the graphics and posts that carousel or collage. Single stills still wait 3 hours.
@@ -132,6 +136,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.69 =
+Reel recipe, spoken length, voice, weekly cap, and an optional avatar-face upsell are now on Social settings. Existing installs keep the B-roll Reel and $10 video budget until you change them.
 
 = 0.2.68 =
 Open the Social queue if a carousel is sitting there with no graphics. The worker generates them and posts the carousel. Single Instagram posts still wait 3 hours.
