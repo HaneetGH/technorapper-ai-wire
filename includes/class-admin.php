@@ -346,7 +346,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <h3 style="margin-top:0;">Dev — cheap test</h3>
                         <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_dev_cheap]" value="0">
                         <p><label><input id="tr-reel-dev-cheap" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_dev_cheap]" value="1" <?php checked(!empty($s['social_reel_dev_cheap'])); ?>> <strong>Use cheapest models while testing</strong></label></p>
-                        <p class="description">Forces Avatar Standard + Veo Lite 4s + 15s voice. Face enhance and per-Reel scene restyle stay off. Your production picks below stay saved and are used again when you uncheck this.</p>
+                        <p class="description">Forces no talking face + story hooks + Veo Lite 4s + 15s voice. Your production picks below (including host) stay saved and are used again when you uncheck this.</p>
                         <?php if (!empty($s['social_reel_dev_cheap'])) : ?>
                         <div class="notice notice-warning inline"><p><?php echo esc_html($this->social_reel_dev_cheap_summary($s)); ?></p></div>
                         <?php endif; ?>
@@ -399,24 +399,24 @@ trait TechnoRapper_AI_Wire_Admin {
                     <?php endforeach; ?>
                     </div>
                     <h3>How the video is cut</h3>
-                    <p class="description">Story edit is movie-style storytelling: speech, then news details on other video or photos, then the brand sting — like a short film about the article.</p>
+                    <p class="description">Recommended: no-face story — a pattern-interrupt hook on screen, then news-detail B-roll and captioned photos while the voice keeps going, then the brand sting. Talking face is optional and expensive.</p>
                     <div class="tr-ai-wire-choice">
-                        <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'broll') ? ' is-selected' : ''; ?>">
-                            <input id="tr-reel-recipe-broll" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="broll" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'broll'); ?>>
+                        <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'story') === 'story') ? ' is-selected' : ''; ?>">
+                            <input id="tr-reel-recipe-story" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="story" <?php checked((string) ($s['social_reel_recipe'] ?? 'story'), 'story'); ?>>
+                            <strong>No-face hook story</strong>
+                            <span class="description">Scroll-stop cut: big hook line, motion + captioned news beats, sting. No avatar required.</span>
+                        </label>
+                        <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'story') === 'broll') ? ' is-selected' : ''; ?>">
+                            <input id="tr-reel-recipe-broll" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="broll" <?php checked((string) ($s['social_reel_recipe'] ?? 'story'), 'broll'); ?>>
                             <strong>B-roll spoken Reel</strong>
                             <span class="description">One article, Fal motion, captions on the moving clip, sting. Motion loops instead of freezing.</span>
                         </label>
-                        <label class="tr-ai-wire-choice-card<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? ' is-selected' : ''; ?>">
-                            <input id="tr-reel-recipe-story" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_recipe]" value="story" <?php checked((string) ($s['social_reel_recipe'] ?? 'broll'), 'story'); ?>>
-                            <strong>Story edit</strong>
-                            <span class="description">Host speaks the hook, then cutaways show news details on B-roll video and captioned photos while the voice keeps going.</span>
-                        </label>
                     </div>
-                    <div data-tr-reveal="tr-reel-recipe-story"<?php echo ((string) ($s['social_reel_recipe'] ?? 'broll') === 'story') ? '' : ' hidden'; ?>>
+                    <div data-tr-reveal="tr-reel-recipe-story"<?php echo ((string) ($s['social_reel_recipe'] ?? 'story') === 'story') ? '' : ' hidden'; ?>>
                         <p>
                             <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="0">
                             <label><input id="tr-reel-include-host" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_include_host]" value="1" <?php checked(!empty($s['social_reel_include_host'])); ?>> <strong>Talking host (avatar face)</strong></label>
-                            <span class="description">Optional upsell. Same face on every Reel; outfit, place, and backdrop can change per video.</span>
+                            <span class="description">Optional paid upsell (~$1+). Leave off for the cheap no-face hook story. Same face on every Reel when enabled.</span>
                         </p>
                         <div class="tr-ai-wire-panel" data-tr-reveal="tr-reel-include-host"<?php echo !empty($s['social_reel_include_host']) ? '' : ' hidden'; ?>>
                             <?php

@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.77
+Stable tag: 0.2.78
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,11 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.78 =
+* Default Reel is a no-face hook story: pattern-interrupt on-screen hook, captioned news-detail beats and B-roll, then sting. Talking host stays an optional paid upsell.
+* Dev cheap test forces no face + Veo Lite so tests do not burn Avatar credits. Hard caps stop multi-minute freezes when a 4s motion clip was stretched past its length.
+* Spoken scripts are trimmed to the target length before TTS so Fal assemble cannot run out to ~2 minutes on a long voice file.
 
 = 0.2.77 =
 * Dev cheap test mode: one button/checkbox forces Avatar Standard + Veo Lite 4s + short voice while your production model picks stay saved. Turn it off to spend the configured Pro/Fast recipe again.
@@ -167,6 +172,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.78 =
+Turn off Talking host for the cheap no-face hook story. Use Dev cheap test, then Start over on an old Reel so assemble uses the new cut (Resume alone keeps the old MP4).
 
 = 0.2.77 =
 On Social queue use Dev — cheap test while credits are low. Switch to production config when the pipeline looks right.
