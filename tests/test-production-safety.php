@@ -6437,7 +6437,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Avatar face', $html);
         $this->assertStringContainsString('Enhance avatar face', $html);
         $this->assertStringContainsString('Generate a presenter face', $html);
-        $this->assertStringContainsString('every Reel uses this same face', $html);
+        $this->assertStringContainsString('kept the same across Reels', $html);
+        $this->assertStringContainsString('New outfit / place per Reel', $html);
         $this->assertStringContainsString('Talking host (avatar face)', $html);
         $this->assertStringContainsString('id="tr-reel-recipe-story"', $html);
         $this->assertStringContainsString('Male voices', $html);
