@@ -473,14 +473,20 @@ trait TechnoRapper_AI_Wire_AI {
         if ($block !== '') {
             return new WP_Error('tr_ai_wire_limit', $block);
         }
+        // OpenAI rejects web_search together with JSON mode (400: "Web Search cannot
+        // be used with JSON mode."). Keep json_object only for plain calls; with
+        // search, ask for JSON in the prompt and parse the text reply.
+        $system_text = (string) $system;
+        if ($web_search) {
+            $system_text .= ' After any search, reply with one JSON object only — no markdown fences, no prose before or after the JSON.';
+        }
         $payload = array(
             'model' => $model,
             'input' => array(
-                array('role' => 'system', 'content' => array(array('type' => 'input_text', 'text' => $system))),
+                array('role' => 'system', 'content' => array(array('type' => 'input_text', 'text' => $system_text))),
                 array('role' => 'user', 'content' => array(array('type' => 'input_text', 'text' => $user))),
             ),
             'max_output_tokens' => (int) $s['max_output_tokens'],
-            'text' => array('format' => array('type' => 'json_object')),
             // Luna/Terra default to medium reasoning, which consumes max_output_tokens
             // and routinely exceeds a short HTTP timeout for JSON drafting.
             'reasoning' => array('effort' => 'none'),
@@ -489,6 +495,8 @@ trait TechnoRapper_AI_Wire_AI {
             $payload['tools'] = array(array('type' => 'web_search', 'search_context_size' => 'low'));
             $payload['tool_choice'] = 'required';
             $payload['max_tool_calls'] = 1;
+        } else {
+            $payload['text'] = array('format' => array('type' => 'json_object'));
         }
         $response = wp_remote_post(self::API_URL, array(
             'timeout' => self::API_TIMEOUT,
@@ -543,11 +551,38 @@ trait TechnoRapper_AI_Wire_AI {
         if (in_array($status, array('failed', 'incomplete', 'cancelled'), true)) {
             return new WP_Error('tr_ai_wire_api', 'AI response was ' . $status . '.');
         }
-        $parsed = json_decode($text, true);
+        $parsed = $this->ai_decode_json_object($text);
         if (!is_array($parsed)) {
             return new WP_Error('tr_ai_wire_json', 'AI returned invalid JSON.');
         }
         return $parsed;
+    }
+
+    /** Parse a JSON object from model text, including optional ```json fences. */
+    private function ai_decode_json_object($text) {
+        $text = trim((string) $text);
+        if ($text === '') {
+            return null;
+        }
+        $parsed = json_decode($text, true);
+        if (is_array($parsed)) {
+            return $parsed;
+        }
+        if (preg_match('/```(?:json)?\s*(\{.*\})\s*```/is', $text, $m)) {
+            $parsed = json_decode($m[1], true);
+            if (is_array($parsed)) {
+                return $parsed;
+            }
+        }
+        $start = strpos($text, '{');
+        $end = strrpos($text, '}');
+        if ($start !== false && $end !== false && $end > $start) {
+            $parsed = json_decode(substr($text, $start, $end - $start + 1), true);
+            if (is_array($parsed)) {
+                return $parsed;
+            }
+        }
+        return null;
     }
 
     private function prompt_was_flagged($code, $data) {

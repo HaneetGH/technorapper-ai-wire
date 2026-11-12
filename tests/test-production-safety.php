@@ -585,6 +585,50 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
     }
 
+    public function test_web_search_ai_json_does_not_use_json_mode() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $captured = null;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
+            if (strpos($url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $captured = json_decode((string) ($args['body'] ?? ''), true);
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array(
+                    'status' => 'completed',
+                    'output' => array(
+                        array('type' => 'web_search_call'),
+                        array(
+                            'type' => 'message',
+                            'content' => array(array(
+                                'type' => 'output_text',
+                                'text' => "Here you go:\n```json\n{\"score\":90,\"verdict\":\"pass\"}\n```",
+                            )),
+                        ),
+                    ),
+                    'usage' => array('input_tokens' => 10, 'output_tokens' => 5),
+                )),
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        }, 10, 3);
+        $result = $this->invoke_private('ai_json', array(
+            'gpt-6-luna',
+            'Return JSON.',
+            'Test input.',
+            TechnoRapper_AI_Wire::defaults(),
+            true,
+        ));
+        remove_all_filters('pre_http_request');
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame(90, (int) ($result['score'] ?? 0));
+        $this->assertSame('web_search', (string) ($captured['tools'][0]['type'] ?? ''));
+        $this->assertArrayNotHasKey('text', (array) $captured);
+        $this->assertStringContainsString('JSON object only', (string) ($captured['input'][0]['content'][0]['text'] ?? ''));
+    }
+
     public function test_incomplete_api_response_is_retryable() {
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
         $callback = function ($preempt, $args, $url) {
