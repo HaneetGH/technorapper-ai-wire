@@ -5950,6 +5950,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         imagedestroy($card);
     }
 
+    public function test_ffmpeg_error_message_skips_version_banner() {
+        $msg = $this->invoke_private('social_ffmpeg_error_message', array(
+            "ffmpeg version 6.1.1 Copyright (c) 2000-2023\nbuilt with gcc\nconfiguration: --prefix=/usr\nError opening input file missing.mp4.\nError opening input files: No such file or directory\n",
+            '',
+            1,
+        ));
+        $this->assertStringContainsString('Error opening input', $msg);
+        $this->assertStringNotContainsString('ffmpeg version', $msg);
+    }
+
     public function test_local_ffmpeg_teach_cut_plays_cards_and_never_loops_the_motion_clip() {
         $ffmpeg = $this->invoke_private('social_ffmpeg_path');
         if ($ffmpeg === '' || !function_exists('imagettftext')) {

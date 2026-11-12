@@ -3828,12 +3828,19 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         stream_set_blocking($pipes[2], false);
         $stdout = '';
         $stderr = '';
+        $exit = null;
         $deadline = time() + $timeout;
         do {
             $status = proc_get_status($process);
             $stdout .= (string) stream_get_contents($pipes[1]);
             $stderr .= (string) stream_get_contents($pipes[2]);
             if (empty($status['running'])) {
+                // proc_get_status may already have reaped the child; remember that
+                // exit code. proc_close() often returns -1 afterward and must not
+                // be treated as a failed ffmpeg run (CI flake on PHP 8.2).
+                if (array_key_exists('exitcode', $status) && $status['exitcode'] !== -1) {
+                    $exit = (int) $status['exitcode'];
+                }
                 break;
             }
             if (time() > $deadline) {
@@ -3847,13 +3854,40 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         } while (true);
         fclose($pipes[1]);
         fclose($pipes[2]);
-        $code = proc_close($process);
-        if ($code !== 0) {
-            $message = trim(wp_strip_all_tags($stderr !== '' ? $stderr : $stdout));
-            $message = $this->clip_social_text($message !== '' ? $message : ('ffmpeg exited ' . (string) $code . '.'), 240);
+        $closed = proc_close($process);
+        if ($exit === null) {
+            $exit = (int) $closed;
+        }
+        if ($exit !== 0) {
+            $message = $this->social_ffmpeg_error_message($stderr, $stdout, $exit);
             return new WP_Error('tr_ai_wire_reel_ffmpeg', $message);
         }
         return $stdout;
+    }
+
+    /** Prefer the real ffmpeg failure line over the version banner on stderr. */
+    private function social_ffmpeg_error_message($stderr, $stdout, $code) {
+        $raw = trim((string) ($stderr !== '' ? $stderr : $stdout));
+        $lines = preg_split('/\R/', $raw) ?: array();
+        $useful = array();
+        foreach ($lines as $line) {
+            $line = trim((string) $line);
+            if ($line === '') {
+                continue;
+            }
+            if (stripos($line, 'ffmpeg version') === 0 || stripos($line, 'built with') === 0 || stripos($line, 'configuration:') === 0) {
+                continue;
+            }
+            if (stripos($line, 'libav') === 0 || stripos($line, 'copyright') !== false) {
+                continue;
+            }
+            $useful[] = $line;
+        }
+        $message = $useful ? implode(' · ', array_slice($useful, -4)) : $raw;
+        if ($message === '') {
+            $message = 'ffmpeg exited ' . (string) (int) $code . '.';
+        }
+        return $this->clip_social_text($message, 240);
     }
 
     private function social_reel_cleanup($dir) {
