@@ -6884,7 +6884,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'post_id' => $post_id,
             'platform' => 'instagram',
             'status' => 'needs_review',
-            'error_text' => 'Held: Watch this Reel, then click Publish to Instagram. It has not been posted yet.',
+            'error_text' => 'Held: Watch this Reel, then click Post to Instagram. It has not been posted yet.',
             'created_at' => $now,
             'updated_at' => $now,
         ));
@@ -6893,10 +6893,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $html = ob_get_clean();
         $this->assertStringContainsString('Held for review', $html);
         $this->assertStringContainsString('tr-ai-wire-social-preview-video', $html);
-        $this->assertStringContainsString('Publish Reel to Instagram', $html);
-        $this->assertStringContainsString('I reviewed this Reel and want it live', $html);
+        $this->assertStringContainsString('>Post to Instagram</button>', $html);
+        $this->assertStringContainsString('I reviewed this video', $html);
+        $this->assertStringContainsString('tr-ai-wire-reel-post', $html);
         $this->assertStringNotContainsString('Post existing graphic to Instagram', $html);
-        $this->assertStringContainsString('Download Reel MP4', $html);
+        $this->assertStringContainsString('Download video', $html);
+        $this->assertStringContainsString('action=tr_ai_wire_download_reel', $html);
     }
 
     public function test_reel_laptop_kit_is_downloadable_when_ffmpeg_is_missing() {
@@ -6984,10 +6986,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ob_start();
         $this->plugin->social_distribution_page();
         $html = ob_get_clean();
-        $this->assertStringContainsString('Download motion video', $html);
-        $this->assertStringContainsString('Download voice MP3', $html);
+        $this->assertStringContainsString('Download video', $html);
+        $this->assertStringContainsString('action=tr_ai_wire_download_reel', $html);
+        $this->assertStringContainsString('voice.mp3', $html);
         $this->assertStringContainsString('Upload Reel MP4', $html);
-        $this->assertStringContainsString('gyan.dev/ffmpeg', $html);
         $this->assertStringContainsString('tr-ai-wire-social-preview-video', $html);
     }
 
