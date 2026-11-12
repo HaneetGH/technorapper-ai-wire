@@ -16,11 +16,12 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Social;
+    use TechnoRapper_AI_Wire_Social_Review;
     use TechnoRapper_AI_Wire_Social_Reel;
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.2.69';
+    const VERSION = '0.2.70';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -36,6 +37,8 @@ final class TechnoRapper_AI_Wire {
     const CRON_HOOK = 'tr_ai_wire_process_feeds';
     const SOCIAL_CRON_HOOK = 'tr_ai_wire_process_social_queue';
     const SOCIAL_CONTEXT_CRON_HOOK = 'tr_ai_wire_learn_site_context';
+    const SOCIAL_REVIEW_CRON_HOOK = 'tr_ai_wire_review_social';
+    const SOCIAL_REVIEW_OPTION = 'tr_ai_wire_social_review';
     const SOCIAL_IMAGE_MODEL = 'gpt-image-2';
     const SOCIAL_IMAGE_ESTIMATED_USD = 0.006;
     const SOCIAL_IMAGE_LAYOUT = 'poster-v3';
@@ -57,7 +60,7 @@ final class TechnoRapper_AI_Wire {
     const JOB_LOCK_OPTION = 'tr_ai_wire_background_job_lock';
     const JOB_HOOK = 'tr_ai_wire_background_job';
     const PROCESSING_LOCK_TTL = 2700;
-    const SCHEMA_VERSION = '10';
+    const SCHEMA_VERSION = '11';
     const VIEWS_TABLE_SUFFIX = 'tr_ai_wire_views';
     const QUARANTINE_TABLE_SUFFIX = 'tr_ai_wire_quarantine';
 
@@ -103,6 +106,8 @@ final class TechnoRapper_AI_Wire {
         add_action('transition_post_status', array($this, 'queue_social_for_post'), 10, 3);
         add_action(self::SOCIAL_CRON_HOOK, array($this, 'process_social_queue'));
         add_action(self::SOCIAL_CONTEXT_CRON_HOOK, array($this, 'process_site_context'));
+        add_action(self::SOCIAL_REVIEW_CRON_HOOK, array($this, 'process_social_review'));
+        add_action('init', array($this, 'maybe_schedule_social_review'), 13);
         add_action('init', array($this, 'maybe_requeue_instagram_quota_field_failures'), 12);
         add_action('admin_post_tr_ai_wire_save_social_credentials', array($this, 'save_social_credentials'));
         add_action('admin_post_tr_ai_wire_retry_social_item', array($this, 'retry_social_item'));
@@ -110,6 +115,7 @@ final class TechnoRapper_AI_Wire {
         add_action('admin_post_tr_ai_wire_refresh_site_context', array($this, 'refresh_site_context_request'));
         add_action('admin_post_tr_ai_wire_run_now', array($this, 'run_now'));
         add_action('admin_post_tr_ai_wire_run_social_queue', array($this, 'run_social_queue_now'));
+        add_action('admin_post_tr_ai_wire_run_social_review', array($this, 'run_social_review_now'));
         add_action('admin_post_tr_ai_wire_generate_social_pack', array($this, 'generate_social_pack_request'));
         add_action('admin_post_tr_ai_wire_retry_item', array($this, 'retry_item'));
         add_action('admin_post_tr_ai_wire_stop_run', array($this, 'stop_run'));

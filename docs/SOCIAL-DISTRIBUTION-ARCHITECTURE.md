@@ -82,6 +82,7 @@ The plugin does **not** ship separate `tr_ai_wire_distributions` / `tr_ai_wire_s
 | `copy_json` | Validated social copy snapshot |
 | `remote_id`, `remote_url` | Platform media/post ID and permalink (YouTube video ID while processing) |
 | `error_text` | Safe operator-facing error; never secrets |
+| `insights_json`, `insights_at` | Last Instagram Graph insights snapshot (schema v11). Storing insights does not bump `updated_at` (that timestamp drives the 3-hour still gap). |
 | `created_at`, `updated_at` | Lifecycle timestamps |
 
 Unique constraint: `(post_id, platform)`.
@@ -176,7 +177,17 @@ Keep three measurements distinct:
 
 1. **Article analytics:** WordPress/GA4 and first-party article reads.
 2. **Social delivery:** queued, published, needs_review, retry, destination, local cost estimates.
-3. **Social performance:** platform-reported metrics and referral sessions — not merged into the editorial quality score.
+3. **Social performance:** Instagram Graph insights for the last 7 days (`impressions` / `plays` / `views`, plus reach and saves). Stored on the social row and summarized on the Social queue. **Not** merged into the editorial quality score. First-party `tr_ai_wire_views` counts are shown as **site reads** only.
+
+Daily cron `tr_ai_wire_review_social` (and **Refresh last 7 days now**) pulls insights, then a deterministic decide step:
+
+- Fewer than three posts, or no measured Graph insights: keep the current mix. Say so.
+- Single stills median under 30: move those daily still slots into carousels; keep photo-first overlay/caption notes.
+- Carousels at least 2× stills and ≥50: shift half the remaining still slots to carousel.
+- Reels 3× better than stills: recommend raising Reels on Social settings. **Never auto-apply** — Reels spend Fal.
+- Caption/image prompts get a ≤280 character 7-day brief when the review is fresh.
+
+Setting `social_review_apply_mix` (default on) applies still/carousel tweaks to today’s mix. It never raises the Reel count.
 
 ## Observability and acceptance
 

@@ -24,6 +24,10 @@ trait TechnoRapper_AI_Wire_Jobs {
             check_ajax_referer('tr_ai_wire_run_social_queue');
             wp_send_json_success($this->public_job($this->enqueue_background_job('social')));
         }
+        if ($job_action === 'tr_ai_wire_run_social_review') {
+            check_ajax_referer('tr_ai_wire_run_social_review');
+            wp_send_json_success($this->public_job($this->enqueue_background_job('social_review')));
+        }
         if ($job_action === 'tr_ai_wire_generate_social_pack') {
             check_ajax_referer('tr_ai_wire_generate_social_pack');
             $pack_kind = sanitize_key(wp_unslash($_POST['pack_kind'] ?? ''));
@@ -128,6 +132,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                 'tr_ai_wire_run_now',
                 'tr_ai_wire_retry_item',
                 'tr_ai_wire_run_social_queue',
+                'tr_ai_wire_run_social_review',
                 'tr_ai_wire_generate_social_pack',
                 'tr_ai_wire_retry_social_item',
                 'tr_ai_wire_repair_home',
@@ -377,6 +382,11 @@ trait TechnoRapper_AI_Wire_Jobs {
                     }
                     $this->finish_background_job('Queued a ' . (int) $queued . '-article ' . $kind . '. Processed ' . (int) $processed . ' social post' . ((int) $processed === 1 ? '' : 's') . '.', 'done');
                 }
+            } elseif ($job['kind'] === 'social_review') {
+                $this->note_background_progress(20, 'Reading last 7 days of Instagram views');
+                $review = $this->process_social_review();
+                $posts = (int) ($review['posts'] ?? 0);
+                $this->finish_background_job('Reviewed ' . $posts . ' Instagram post' . ($posts === 1 ? '' : 's') . ' from the last 7 days.', 'done');
             } elseif ($job['kind'] === 'social_retry') {
                 $this->note_background_progress(20, 'Requeueing social post');
                 $ok = $this->requeue_social_item((int) $job['item_id'], !empty($job['regenerate']));

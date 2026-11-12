@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.69
+Stable tag: 0.2.70
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.70 =
+* Social queue reviews the last 7 days of Instagram views, decides whether stills or carousels earned distribution, and can move failing still slots into carousels. It never raises Reels (those spend Fal). Site reads stay labeled separately.
 
 = 0.2.69 =
 * Instagram stills are photo-first: a story-specific photograph, a 3–6 word overlay, and a caption whose first line is the feed preview. Queued posters on the older news-card layout regenerate. Carousel covers name the stories instead of empty “don’t skip” teases.
@@ -135,6 +138,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.70 =
+Social queue now shows last-7-day Instagram views and can shift failing still slots into carousels. Reels stay off unless you raise them.
 
 = 0.2.69 =
 Next Instagram stills use a photo-first overlay and a named hook as the caption’s first line. Queued graphics on the old news-card layout rebuild before they post.

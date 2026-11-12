@@ -43,6 +43,7 @@ For this project, the important permission is:
 You may also need:
 
 - `instagram_basic`
+- `instagram_manage_insights` (required for the last-7-day Social queue review; without it the plugin shows “views not available” and will not invent numbers)
 
 depending on the authentication/configuration used by your app.
 
@@ -271,7 +272,7 @@ Check:
 
 1. The token belongs to your Meta app.
 2. The token is still valid.
-3. `instagram_content_publish` is available.
+3. `instagram_content_publish` is available. `instagram_manage_insights` is required if you want last-7-day views on the Social queue.
 4. Your Instagram account is correctly authorized.
 5. You are using the API host appropriate for your authentication flow.
 6. The account ID belongs to the same Instagram account you authorized.
