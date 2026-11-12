@@ -5642,8 +5642,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $visual = $tracks[0]['keyframes'] ?? array();
         $this->assertGreaterThanOrEqual(4, count($visual));
         $this->assertSame(0, (int) $visual[0]['timestamp']);
-        $this->assertLessThan(12000, (int) $visual[0]['duration']);
-        $this->assertGreaterThan(3000, (int) $visual[0]['duration']);
+        // Cold-open detail/B-roll first, then a short host hook — not a full readout.
+        $this->assertLessThan(4000, (int) $visual[0]['duration']);
+        $hostish = 0;
+        foreach ($visual as $frame) {
+            $dur = (int) ($frame['duration'] ?? 0);
+            if ($dur >= 2400 && $dur <= 3600) {
+                $hostish++;
+            }
+        }
+        $this->assertGreaterThanOrEqual(1, $hostish);
         $kinds = 0;
         foreach ($visual as $frame) {
             if (!empty($frame['url'])) {
@@ -5921,8 +5929,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('marin', $story['social_reel_tts_voice']);
         $this->assertStringContainsString('Marin (female)', $this->invoke_private('social_reel_recipe_summary', array($story)));
         $this->assertStringContainsString('same host face', $this->invoke_private('social_reel_recipe_summary', array($story)));
-        $this->assertStringContainsString('Female news presenter', $this->invoke_private('social_reel_tts_instructions', array($story)));
-        $this->assertStringContainsString('Male news presenter', $this->invoke_private('social_reel_tts_instructions', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertStringContainsString('Female tech creator', $this->invoke_private('social_reel_tts_instructions', array($story)));
+        $this->assertStringContainsString('Male tech creator', $this->invoke_private('social_reel_tts_instructions', array(TechnoRapper_AI_Wire::defaults())));
+        $this->assertStringContainsString('never a flat robot newsreader', $this->invoke_private('social_reel_tts_instructions', array($story)));
+        $this->assertStringContainsString('scroll-stopping Reel', $this->invoke_private('social_reel_script_brief', array($story)));
         $this->assertSame('shimmer', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'shimmer'))['social_reel_tts_voice']);
         $this->assertSame('onyx', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'onyx'))['social_reel_tts_voice']);
         $this->assertSame('alloy', $this->plugin->sanitize_settings(array('social_reel_tts_voice' => 'alloy'))['social_reel_tts_voice']);
@@ -5932,7 +5942,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(3, (int) $story['social_reel_fact_slides']);
         $this->assertSame(24, (int) $story['social_reel_host_seconds']);
         $this->assertSame(3, (int) $story['social_reel_sting_seconds']);
-        $this->assertSame('110–140 spoken words, about 40–45 seconds.', $this->invoke_private('social_reel_script_brief', array($story)));
+        $this->assertStringContainsString('110–140 spoken words, about 40–45 seconds.', $this->invoke_private('social_reel_script_brief', array($story)));
         $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_STORY_LAYOUT, $this->invoke_private('social_reel_layout_key', array($story)));
         $empty = $this->plugin->sanitize_settings(array(
             'social_reel_recipe' => 'story',
@@ -7802,7 +7812,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('saves, and sends', $user);
         $this->assertStringContainsString('Never use: you won’t believe', $user);
         $this->assertStringContainsString('save or send ask', $user);
-        $this->assertStringContainsString('named hook in the first', $user);
+        $this->assertStringContainsString('pattern-interrupt hook', $user);
+        $this->assertStringContainsString('Not a robot reading a press release', $user);
         $this->assertStringContainsString('fully clothed', $user);
         $this->assertStringNotContainsString('One dry wink is enough', $user);
         $comic_user = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news'), true));
