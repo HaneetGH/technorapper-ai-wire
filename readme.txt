@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.90
+Stable tag: 0.2.93
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,16 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.93 =
+* Best roundup Reels now draw a unique 2D newsroom illustration for every story beat (Fal FLUX schnell, ~$0.003 each), then overlay the matching caption. The pictures match the packed desk stories. The look is a locked viral 2D newsroom, not a rotating stick-figure pose.
+
+= 0.2.92 =
+* Best roundup Reels leave no blank leftover. Unique stick-figure cards are timed to cover 100% of the voiceover; Fal will not pad the rest with a black screen. A mux shorter than the voice, or longer than the last card, is refused.
+
+= 0.2.91 =
+* Best roundup Reels never repeat a frame. The 3-second B-roll of a person watching is not looped, and Fal no longer leaves a still or blank screen after it. Every scene is a unique stick-figure card that covers the voiceover.
+* Fal assembles those cards on an image track so a short video clip cannot be reused to fill the rest of the Reel.
 
 = 0.2.90 =
 * Best roundup Reels keep at least 135 spoken words. 150 is not a cap — the voiceover can run 180–240 words when 4–5 stories need the room. Scenes follow the spoken words; the brand end card is not leftover filler.
@@ -224,6 +234,15 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.93 =
+Best Reels now illustrate each desk story as a unique 2D newsroom scene. The pictures match the voiceover stories.
+
+= 0.2.92 =
+Best Reels hold unique stick-figure cards through the whole voiceover. Fal will not leave a blank screen after the last scene.
+
+= 0.2.91 =
+Best Reels no longer loop a 3-second B-roll clip. Each stick-figure scene is unique and covers the spoken voiceover.
 
 = 0.2.90 =
 Best Reels keep a full roundup on screen. The script can go past 150 words when the stories need it. The TechnoRapper end card is no longer half the video.

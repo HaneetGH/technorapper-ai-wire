@@ -1955,7 +1955,7 @@ trait TechnoRapper_AI_Wire_Social {
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
             . ($this->social_reel_is_roundup($settings)
-                ? 'visual_brief: 2D clean vector stick-figure newsroom, one mascot at a desk or ticker, flat colour, no photoreal people, no letters or numbers in the artwork. '
+                ? 'visual_brief: viral 2D clean vector newsroom, midnight navy, cyan rim light, one yellow-head stick mascot, unique illustrated set per packed story, no photoreal people, no letters or numbers in the artwork. '
                 : ('visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). '
                     . (!empty($comic) ? 'Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. ' : '')
                     . 'Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '))
@@ -1967,7 +1967,7 @@ trait TechnoRapper_AI_Wire_Social {
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
             . 'Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL. '
             . ($this->social_reel_is_roundup($settings)
-                ? 'reel_captions: 12–24 short on-screen scene lines (max 6 words) that change every 3–4 seconds. '
+                ? 'reel_captions: 12–24 short on-screen scene lines (max 6 words) that change every 3–4 seconds and name the packed desk story on screen. reel_scene_briefs: one unique illustrated-set brief per caption (room, prop, mascot action) — never a generic desk twice. '
                 : 'reel_captions: 4–5 short on-screen lesson lines (max 6 words) matching those beats — big sparse text for animated cards and B-roll. ')
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. '
             . (!empty($comic) ? 'A dry wink is fine if the named change is still obvious. ' : '')
@@ -1979,7 +1979,9 @@ trait TechnoRapper_AI_Wire_Social {
             $user .= "Site context (follow this):\n" . wp_json_encode($profile) . "\n";
         }
         $user .= "Article JSON:\n" . wp_json_encode($snapshot)
-            . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array), reel_script, reel_captions (array), youtube_title, youtube_description, youtube_tags (array).";
+            . "\nReturn JSON keys: hook, on_image_headline, on_image_subhead, on_image_kicker, on_image_bullets (array), visual_brief, cta, x_text, instagram_caption, instagram_alt, hashtags (array), reel_script, reel_captions (array)"
+            . ($this->social_reel_is_roundup($settings) ? ', reel_scene_briefs (array)' : '')
+            . ', youtube_title, youtube_description, youtube_tags (array).';
         return $user;
     }
 
@@ -2045,6 +2047,9 @@ trait TechnoRapper_AI_Wire_Social {
         );
         $copy['reel_script'] = $this->sanitize_reel_script($raw['reel_script'] ?? '', $copy, $post, $settings);
         $copy['reel_captions'] = $this->sanitize_reel_captions($raw['reel_captions'] ?? array(), $copy['reel_script'], $settings);
+        if ($this->social_reel_is_roundup($settings)) {
+            $copy['reel_scene_briefs'] = $this->sanitize_reel_scene_briefs($raw['reel_scene_briefs'] ?? array(), $copy['reel_captions']);
+        }
         $copy['youtube_title'] = $this->sanitize_youtube_title($raw['youtube_title'] ?? '', $copy, $post);
         $copy['youtube_description'] = $this->sanitize_youtube_description($raw['youtube_description'] ?? '', $copy, $post);
         $copy['youtube_tags'] = $this->sanitize_youtube_tags($raw['youtube_tags'] ?? array(), $copy);
@@ -5279,7 +5284,9 @@ trait TechnoRapper_AI_Wire_Social {
         if ($live && !empty($progress['detail'])) {
             echo '<p class="description tr-ai-wire-reel-build-detail">' . esc_html((string) $progress['detail']) . '</p>';
         }
-        if (!empty($plan['host'])) {
+        if ($this->social_reel_is_roundup()) {
+            echo '<p class="description">Stick-figure roundup: every on-screen scene is unique and covers the voiceover. A 3-second B-roll clip is never repeated. If a scene cannot be drawn, the build stops.</p>';
+        } elseif (!empty($plan['host'])) {
             echo '<p class="description">Teach cut: a cold-open lesson card, one short host hook, then lesson cards while the voice continues. B-roll appears at most once as a short accent. Not a full talking-head readout.</p>';
         } else {
             echo '<p class="description">Teach cut: numbered lesson cards carry the voice from start to finish. The B-roll clip appears at most twice, about 2 seconds each, and is never looped. If cards cannot be made, the build stops instead of posting a looping clip.</p>';
