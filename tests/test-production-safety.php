@@ -15,6 +15,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         delete_option(TechnoRapper_AI_Wire::PROCESSING_LOCK_OPTION);
         delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
         delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
+        delete_option(TechnoRapper_AI_Wire::JOB_CANCEL_OPTION);
         wp_clear_scheduled_hook(TechnoRapper_AI_Wire::JOB_HOOK);
         delete_option(TechnoRapper_AI_Wire::LAST_RUN_OPTION);
         unset($_SERVER['REMOTE_ADDR']);
