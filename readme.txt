@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.85
+Stable tag: 0.2.87
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,15 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.87 =
+* Automatic processing can run at exact clock times (for example 09:00, 13:00, 18:00 in the site timezone), not only every N hours.
+* Instagram stills can use the same clock slots instead of a 3-hour gap. Leave the times blank to keep the hour gap (default 3, or 0 for no wait).
+
+= 0.2.86 =
+* Instagram stills keep posting while a Reel is building or held. A waiting Reel no longer stalls the social worker.
+* The 3-hour Instagram still gap ignores Reels, so a recent Reel does not delay a normal image post.
+* Enable Reels / YouTube Shorts no longer forces 1 auto Reel per day. Leave Reel posts per day at 0 for stills plus Generate Reel now.
 
 = 0.2.85 =
 * Independent web search no longer sends OpenAI JSON mode (API 400: Web Search cannot be used with JSON mode). Search replies are still parsed as JSON.
@@ -202,6 +211,12 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.87 =
+Optional: set exact run times on Feed tenants and Social settings. Interval schedules (every 3 hours, and so on) stay the default.
+
+= 0.2.86 =
+Update if Instagram image posts stalled after Reel work. Set Reel posts per day to 0 unless you want auto Reels; stills then post independently.
 
 = 0.2.85 =
 Update if Independent web search is on — review/Reel research was hitting OpenAI 400 with JSON mode.

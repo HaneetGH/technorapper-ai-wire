@@ -8,6 +8,7 @@ trait TechnoRapper_AI_Wire_Settings {
         return array(
             'feeds' => '',
             'cron_frequency' => 'manual',
+            'cron_times' => array(),
             'max_posts_per_day' => 0,
             'max_items_per_run' => 10,
             'monthly_budget_usd' => 5,
@@ -61,6 +62,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_reel_sting_seconds' => 2,
             'social_reel_tts_voice' => 'cedar',
             'social_reel_weekly_limit' => 0,
+            'social_reel_enabled' => 0,
             'social_post_format' => 'single',
             'social_slide_count' => 5,
             'social_carousel_daily_limit' => 3,
@@ -68,6 +70,8 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_single_daily_limit' => 2,
             'social_reel_daily_limit' => 0,
             'social_min_review_score' => 90,
+            'social_still_spacing_hours' => 3,
+            'social_post_times' => array(),
             'social_mix_saved' => 0,
             'social_news_formats' => array_keys(self::social_news_formats()),
             'seo_min_score' => 50,
@@ -127,6 +131,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_reel_sting_seconds',
             'social_reel_tts_voice',
             'social_reel_weekly_limit',
+            'social_reel_enabled',
             'social_post_format',
             'social_slide_count',
             'social_carousel_daily_limit',
@@ -134,6 +139,8 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_single_daily_limit',
             'social_reel_daily_limit',
             'social_min_review_score',
+            'social_still_spacing_hours',
+            'social_post_times',
             'social_mix_saved',
             'social_news_formats',
         );
@@ -170,7 +177,9 @@ trait TechnoRapper_AI_Wire_Settings {
     public function settings_updated($old_value, $value) {
         $old_frequency = $old_value['cron_frequency'] ?? 'hourly';
         $new_frequency = $value['cron_frequency'] ?? 'hourly';
-        if ($old_frequency !== $new_frequency) {
+        $old_times = self::sanitize_clock_times($old_value['cron_times'] ?? array());
+        $new_times = self::sanitize_clock_times($value['cron_times'] ?? array());
+        if ($old_frequency !== $new_frequency || $old_times !== $new_times) {
             self::schedule_cron();
         }
         $old = self::apply_social_platform_toggles(wp_parse_args(is_array($old_value) ? $old_value : array(), self::defaults()));
@@ -217,8 +226,9 @@ trait TechnoRapper_AI_Wire_Settings {
             $clean_lines[] = $url . ($label !== '' ? ' | ' . $label : '');
         }
         $out['feeds'] = implode("\n", array_unique($clean_lines));
-        $frequencies = array('hourly', 'every_3_hours', 'every_6_hours', 'every_12_hours', 'daily', 'manual');
+        $frequencies = array('hourly', 'every_3_hours', 'every_6_hours', 'every_12_hours', 'daily', 'at_times', 'manual');
         $out['cron_frequency'] = in_array($input['cron_frequency'] ?? '', $frequencies, true) ? $input['cron_frequency'] : $defaults['cron_frequency'];
+        $out['cron_times'] = self::sanitize_clock_times($input['cron_times'] ?? array());
         $out['max_posts_per_day'] = min(2000, max(0, absint($input['max_posts_per_day'] ?? $defaults['max_posts_per_day'])));
         $out['max_items_per_run'] = min(self::DAILY_POST_CAP, max(1, absint($input['max_items_per_run'] ?? $defaults['max_items_per_run'])));
         $out['monthly_budget_usd'] = min(10000, max(0, (float) ($input['monthly_budget_usd'] ?? $defaults['monthly_budget_usd'])));
@@ -386,9 +396,12 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_single_daily_limit'] = min($mix_budget, max(0, absint($input['social_single_daily_limit'] ?? $defaults['social_single_daily_limit'])));
         $out['social_reel_daily_limit'] = min($mix_budget, max(0, absint($input['social_reel_daily_limit'] ?? $defaults['social_reel_daily_limit'])));
         if (!empty($input['social_platform_toggles']) && array_key_exists('social_reel_enabled', $input)) {
-            $out['social_reel_daily_limit'] = empty($input['social_reel_enabled'])
-                ? 0
-                : min($mix_budget, max(1, $out['social_reel_daily_limit'] > 0 ? $out['social_reel_daily_limit'] : 1));
+            $out['social_reel_enabled'] = empty($input['social_reel_enabled']) ? 0 : 1;
+            if (empty($out['social_reel_enabled'])) {
+                $out['social_reel_daily_limit'] = 0;
+            }
+        } else {
+            $out['social_reel_enabled'] = ((int) ($current['social_reel_enabled'] ?? 0) === 1 || $out['social_reel_daily_limit'] > 0) ? 1 : 0;
         }
         $mix = $this->clamp_social_mix_counts(array(
             'reel' => $out['social_reel_daily_limit'],
@@ -401,6 +414,8 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_collage_daily_limit'] = $mix['collage'];
         $out['social_single_daily_limit'] = $mix['single'];
         $out['social_min_review_score'] = min(100, max(0, absint($input['social_min_review_score'] ?? $defaults['social_min_review_score'])));
+        $out['social_still_spacing_hours'] = min(12, max(0, absint($input['social_still_spacing_hours'] ?? $defaults['social_still_spacing_hours'])));
+        $out['social_post_times'] = self::sanitize_clock_times($input['social_post_times'] ?? array());
         $out['social_mix_saved'] = empty($input['social_mix_saved']) ? 0 : 1;
         if ($out['social_mix_saved']) {
             if ($out['social_reel_daily_limit'] > 0 && $out['social_carousel_daily_limit'] < 1 && $out['social_collage_daily_limit'] < 1 && $out['social_single_daily_limit'] < 1) {
@@ -603,5 +618,83 @@ trait TechnoRapper_AI_Wire_Settings {
             return;
         }
         update_option($option, $secret, false);
+    }
+
+    /**
+     * Normalize HH:MM clock times in the site timezone. Invalid values are dropped.
+     *
+     * @param mixed $raw Raw form array, comma-separated string, or already-clean list.
+     * @param int   $max Maximum times to keep.
+     * @return array<int, string>
+     */
+    public static function sanitize_clock_times($raw, $max = 8) {
+        $items = array();
+        if (is_string($raw)) {
+            $raw = preg_split('/[\s,;]+/', $raw);
+        }
+        foreach ((array) $raw as $item) {
+            $item = trim((string) $item);
+            if ($item === '') {
+                continue;
+            }
+            if (!preg_match('/^(\d{1,2}):(\d{2})$/', $item, $m)) {
+                continue;
+            }
+            $hour = (int) $m[1];
+            $minute = (int) $m[2];
+            if ($hour < 0 || $hour > 23 || $minute < 0 || $minute > 59) {
+                continue;
+            }
+            $items[] = sprintf('%02d:%02d', $hour, $minute);
+        }
+        $items = array_values(array_unique($items));
+        sort($items);
+        $max = max(1, (int) $max);
+        return array_slice($items, 0, $max);
+    }
+
+    /**
+     * Unix timestamp of the next clock slot strictly after $after, in the site timezone.
+     *
+     * @param mixed $times Clock times (HH:MM).
+     * @param int   $after Unix timestamp. 0 uses the current time.
+     * @return int 0 when no valid times remain.
+     */
+    public static function next_clock_timestamp($times, $after = 0) {
+        $times = self::sanitize_clock_times($times);
+        if (!$times) {
+            return 0;
+        }
+        $after = (int) $after;
+        if ($after < 1) {
+            $after = time();
+        }
+        $tz = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('UTC');
+        try {
+            $cursor = (new DateTimeImmutable('@' . $after))->setTimezone($tz);
+        } catch (Exception $e) {
+            return 0;
+        }
+        for ($day = 0; $day < 2; $day++) {
+            $date = $day === 0 ? $cursor : $cursor->modify('+' . $day . ' day');
+            foreach ($times as $hm) {
+                $parts = explode(':', $hm);
+                $slot = $date->setTime((int) $parts[0], (int) $parts[1], 0);
+                if ($slot->getTimestamp() > $after) {
+                    return $slot->getTimestamp();
+                }
+            }
+        }
+        return 0;
+    }
+
+    public static function site_timezone_label() {
+        if (function_exists('wp_timezone_string')) {
+            $label = wp_timezone_string();
+            if (is_string($label) && $label !== '') {
+                return $label;
+            }
+        }
+        return 'UTC';
     }
 }

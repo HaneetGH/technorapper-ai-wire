@@ -237,9 +237,32 @@ trait TechnoRapper_AI_Wire_Schema {
     private static function schedule_cron() {
         wp_clear_scheduled_hook(self::CRON_HOOK);
         $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
-        $frequency = $settings['cron_frequency'];
-        if ($frequency !== 'manual') {
-            wp_schedule_event(time() + 300, $frequency, self::CRON_HOOK);
+        $frequency = $settings['cron_frequency'] ?? 'manual';
+        if ($frequency === 'manual') {
+            return;
+        }
+        if ($frequency === 'at_times') {
+            self::ensure_clock_cron();
+            return;
+        }
+        wp_schedule_event(time() + 300, $frequency, self::CRON_HOOK);
+    }
+
+    /**
+     * Queue the next empty-args editorial tick for At exact times of day.
+     * Leaves retry/continue events (which carry args) alone.
+     */
+    private static function ensure_clock_cron() {
+        $settings = wp_parse_args(get_option(self::OPTION, array()), self::defaults());
+        if (($settings['cron_frequency'] ?? '') !== 'at_times') {
+            return;
+        }
+        if (wp_next_scheduled(self::CRON_HOOK)) {
+            return;
+        }
+        $next = self::next_clock_timestamp($settings['cron_times'] ?? array(), time());
+        if ($next > time()) {
+            wp_schedule_single_event($next, self::CRON_HOOK);
         }
     }
 }
