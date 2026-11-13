@@ -16,7 +16,9 @@ if (!defined('ABSPATH')) {
  * else. There is no motion-bed fallback — missing cards stop the build.
  * Fal's compose video track accepts only video files — JPEG stills on that
  * track produced multi-hour broken outputs (still frame + voice), so cards are
- * baked to MP4 clips of their exact slot length first. Talking-host lip-sync
+ * baked to MP4 clips of their exact slot length first. Best roundups skip B-roll
+ * and mux unique JPEG cards on an image track whose timestamps cover the whole
+ * voice — Fal must not pad the rest with a blank screen. Talking-host lip-sync
  * remains an optional paid upsell.
  */
 trait TechnoRapper_AI_Wire_Social_Reel {
@@ -2063,8 +2065,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($cards < 1) {
             return $this->social_reel_guard_error('there are no lesson cards');
         }
-        if (abs($total - $audio_ms) > 250) {
+        $slack = $roundup ? 50 : 250;
+        if (abs($total - $audio_ms) > $slack) {
             return $this->social_reel_guard_error('the cut covers ' . number_format($total / 1000, 1) . 's of a ' . number_format($audio_ms / 1000, 1) . 's voiceover');
+        }
+        if ($roundup && $total < $audio_ms) {
+            return $this->social_reel_guard_error('the pictures stop ' . number_format(($audio_ms - $total) / 1000, 1) . 's before the voiceover, which would leave a blank screen');
         }
         if ($roundup && $motion_n > 0) {
             return $this->social_reel_guard_error('a roundup cannot reuse a B-roll clip');
@@ -2300,6 +2306,47 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 );
             }
         }
+        $audio_ms = $this->social_reel_ms((float) ($teach['audio'] ?? 0));
+        return $this->social_reel_fill_visual_to_audio($visual, $audio_ms);
+    }
+
+    /** Last timestamp plus duration, in milliseconds. */
+    private function social_reel_visual_coverage_ms($visual) {
+        $end = 0;
+        foreach ((array) $visual as $frame) {
+            $end = max($end, (int) ($frame['timestamp'] ?? 0) + (int) ($frame['duration'] ?? 0));
+        }
+        return $end;
+    }
+
+    /**
+     * Fal pads a short picture track with black. Refuse gaps, then hold the
+     * last unique card through the rest of the voiceover.
+     */
+    private function social_reel_fill_visual_to_audio($visual, $audio_ms) {
+        $visual = array_values((array) $visual);
+        $audio_ms = (int) $audio_ms;
+        if (!$visual) {
+            return $this->social_reel_guard_error('the picture track is empty');
+        }
+        $clock = 0;
+        foreach ($visual as $i => $frame) {
+            $at = (int) ($frame['timestamp'] ?? -1);
+            $ms = (int) ($frame['duration'] ?? 0);
+            if ($ms <= 0) {
+                return $this->social_reel_guard_error('a scene has no length');
+            }
+            if ($at !== $clock) {
+                return $this->social_reel_guard_error('the picture track has a blank gap at ' . number_format($clock / 1000, 1) . 's');
+            }
+            $visual[$i]['timestamp'] = $at;
+            $visual[$i]['duration'] = $ms;
+            $clock += $ms;
+        }
+        if ($audio_ms > 0 && $clock < $audio_ms) {
+            $last = count($visual) - 1;
+            $visual[$last]['duration'] = (int) $visual[$last]['duration'] + ($audio_ms - $clock);
+        }
         return $visual;
     }
 
@@ -2357,14 +2404,21 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             if (is_wp_error($visual)) {
                 return $visual;
             }
+            $image_track = (($teach['visual_type'] ?? 'video') === 'image');
+            $cover_ms = $this->social_reel_visual_coverage_ms($visual);
+            $voice_ms = $this->social_reel_ms($audio_seconds);
+            if ($image_track) {
+                // Same length as the cards so Fal cannot pad leftover audio with black.
+                $voice_ms = max($voice_ms, $cover_ms);
+            }
             return array('tracks' => array(
-                array('id' => 'visual', 'type' => (($teach['visual_type'] ?? 'video') === 'image') ? 'image' : 'video', 'keyframes' => $visual),
+                array('id' => 'visual', 'type' => $image_track ? 'image' : 'video', 'keyframes' => $visual),
                 array('id' => 'voice', 'type' => 'audio', 'keyframes' => array(
-                    array('timestamp' => 0, 'duration' => $this->social_reel_ms($audio_seconds), 'url' => $voice_url),
+                    array('timestamp' => 0, 'duration' => $voice_ms, 'url' => $voice_url),
                 )),
             ));
         };
-        $store = function ($bytes) use ($post, $copy, $script, $settings, $audio_seconds) {
+        $store = function ($bytes) use ($post, $copy, $script, $settings, $audio_seconds, $teach) {
             if (!is_string($bytes) || strlen($bytes) < 1024) {
                 return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not return a usable Reel video.');
             }
@@ -2377,10 +2431,13 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             // treat a multi-hour freeze as 0 and keep it.
             $got = $path ? (float) $this->social_reel_output_seconds($path) : 0.0;
             $max = $this->social_reel_max_audio_seconds($settings) + 8.0;
+            $ceiling = $audio_seconds + (float) ($teach['sting_seconds'] ?? 0) + 1.25;
             $problem = '';
             if ($got > $max) {
                 $problem = 'Fal returned a broken overlong Reel (' . (string) (int) round($got) . 's). That usually means a still was muxed as video.';
-            } elseif ($got > 0 && $got < ($audio_seconds * 0.6)) {
+            } elseif ($got > $ceiling) {
+                $problem = 'Fal returned a Reel (' . number_format($got, 1) . 's) longer than the ' . number_format($audio_seconds, 1) . 's voiceover, so the leftover would be a blank or frozen screen.';
+            } elseif ($got > 0 && $got < ($audio_seconds * 0.95)) {
                 $problem = 'Fal returned a Reel (' . number_format($got, 1) . 's) much shorter than the ' . number_format($audio_seconds, 1) . 's voiceover.';
             }
             if ($problem !== '') {
@@ -2433,7 +2490,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $this->social_reel_progress_note(
             $post->ID,
             $this->social_reel_is_roundup($settings)
-                ? 'Assembling the stick-figure roundup on this server: unique scenes every 3–4s, no repeated B-roll.'
+                ? 'Assembling the stick-figure roundup on this server: unique scenes cover the whole voice, no blanks.'
                 : 'Assembling the teach cut on this server: lesson cards first, short B-roll accents only.'
         );
         $clips = array();
@@ -2521,7 +2578,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $roundup = $this->social_reel_is_roundup($settings);
         $steps[] = array(
             'key' => 'cards',
-            'label' => $roundup ? 'Unique stick-figure scenes (every 3–4s, never repeated)' : 'Lesson cards (they carry the Reel)',
+            'label' => $roundup ? 'Unique stick-figure scenes (cover the voice, never repeated, no blanks)' : 'Lesson cards (they carry the Reel)',
             'state' => $cards_done ? 'done' : (($cards_active || $cards_total > 0) ? 'active' : 'todo'),
             'detail' => (!$cards_done && $cards_total > 0) ? ((string) $cards_ready . ' of ' . (string) $cards_total . ' ready') : '',
         );
