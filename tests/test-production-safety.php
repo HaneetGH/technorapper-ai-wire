@@ -8466,6 +8466,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('When Big Tech Becomes Politics', $html);
         $this->assertStringContainsString('branded social card', $html);
         $this->assertStringContainsString('Instagram could not read the daily publishing quota', $html);
+        $this->assertStringContainsString('Not posted to Instagram', $html);
+        $this->assertStringContainsString('The graphic was generated and is saved', $html);
+        $this->assertStringNotContainsString('Not generated. Nothing was posted', $html);
         $this->assertStringContainsString('Post existing graphic to Instagram', $html);
         $this->assertStringContainsString('Generate a new graphic and retry', $html);
         $this->assertStringContainsString('name="regenerate_image"', $html);
@@ -8682,6 +8685,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $html = ob_get_clean();
         $this->assertStringContainsString('The Reel build stopped', $html);
         $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Reel was not finished', $html);
+        $this->assertStringContainsString('Nothing was posted to Instagram', $html);
         $this->assertStringContainsString('Fal could not assemble the finished MP4', $html);
         $this->assertStringContainsString('Resume building this Reel', $html);
         $this->assertStringContainsString('tr_ai_wire_resume_reel', $html);
@@ -10416,6 +10421,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     public function test_held_reel_copy_is_not_a_red_failure() {
         $this->assertFalse($this->invoke_private('social_error_is_failure', array('Held: Watch this Reel, then click Post to Instagram. It has not been posted yet.')));
         $this->assertTrue($this->invoke_private('social_error_is_failure', array('Fal could not assemble the finished MP4: no reason given.')));
+        $this->assertTrue($this->invoke_private('social_error_is_failure', array('Held: the social copy is not safe to publish (profanity). Edit the caption or regenerate copy.')));
+        $this->assertTrue($this->invoke_private('social_error_is_failure', array('OpenAI returned an invalid image payload.')));
         $this->assertFalse($this->invoke_private('social_error_is_failure', array('')));
     }
 
@@ -10447,6 +10454,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->queue_page();
         $html = ob_get_clean();
         $this->assertStringContainsString('tr-ai-wire-item-error', $html);
+        $this->assertStringContainsString('Not published.', $html);
         $this->assertStringContainsString('OpenAI returned HTTP 500.', $html);
         $this->assertStringContainsString('role="alert"', $html);
     }
@@ -10498,5 +10506,68 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('#tr-ai-wire-progress.is-error', $html);
         $this->assertStringContainsString('clearItemErrors', $html);
         $this->assertStringContainsString("box.classList.toggle('is-error', failed)", $html);
+    }
+
+    public function test_social_queue_says_when_a_still_was_not_generated() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Missing graphic',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'OpenAI returned an invalid image payload.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Not generated. Nothing was posted to Instagram.', $html);
+        $this->assertStringContainsString('OpenAI returned an invalid image payload.', $html);
+        $this->assertStringContainsString('Graphic was not generated. Nothing was posted.', $html);
+        $this->assertStringNotContainsString('The graphic was generated and is saved', $html);
+        $this->assertStringNotContainsString('Graphic not generated yet. The worker creates it before posting.', $html);
+    }
+
+    public function test_social_queue_says_when_an_x_still_was_not_posted() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to preview social graphics.');
+        }
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'X still failed',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'error_text' => 'X rejected the token.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Not posted to X.', $html);
+        $this->assertStringContainsString('The graphic was generated and is saved.', $html);
+        $this->assertStringContainsString('X rejected the token.', $html);
+        $this->assertStringNotContainsString('Not generated. Nothing was posted', $html);
+        $this->assertStringNotContainsString('Reel was not finished', $html);
     }
 }

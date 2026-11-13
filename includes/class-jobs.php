@@ -530,11 +530,19 @@ trait TechnoRapper_AI_Wire_Jobs {
     private function social_item_failure_message($item_id) {
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d",
+            "SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d",
             (int) $item_id
         ), ARRAY_A);
+        if (!is_array($row)) {
+            return '';
+        }
         $error = $this->social_error_copy((string) ($row['error_text'] ?? ''));
-        return $this->social_error_is_failure($error) ? $error : '';
+        if (!$this->social_error_is_failure($error)) {
+            return '';
+        }
+        $post = get_post((int) ($row['post_id'] ?? 0));
+        $headline = $this->social_failure_headline($row, $post instanceof WP_Post ? $post : null, $error);
+        return trim($headline . ' ' . $error);
     }
 
     private function enqueue_background_job($kind, $args = array()) {

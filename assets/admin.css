@@ -469,7 +469,13 @@
     border-left: 4px solid #d63638;
     padding: 8px 12px;
     margin: 8px 0;
-    font-weight: 600;
+}
+
+.tr-ai-wire-social-error strong,
+.tr-ai-wire-item-error strong {
+    display: block;
+    font-weight: 700;
+    margin: 0 0 4px;
 }
 
 .tr-ai-wire-social-copy label {
