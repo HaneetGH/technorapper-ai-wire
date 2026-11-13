@@ -4103,6 +4103,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1, (int) $best['social_reel_enabled']);
         $this->assertSame(1, (int) $best['social_reel_daily_limit']);
         $this->assertTrue($this->invoke_private('social_reel_is_roundup', array($best)));
+        $this->assertFalse($this->invoke_private('social_reel_plan', array($best))['motion']);
         $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_CUT, $this->invoke_private('social_reel_cut_name', array($best)));
         $this->assertSame(240, $this->invoke_private('social_reel_script_word_budget', array($best)));
         $this->assertStringContainsString('180–240', $this->invoke_private('social_reel_script_brief', array($best)));
@@ -4178,27 +4179,38 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         );
         $slots = $this->invoke_private('social_reel_teach_slots', array($best, $roundup_copy, null, 60.0, 5.0, 0.0, false));
         $roundup_cards = array();
+        $roundup_ms = 0;
         foreach ($slots as $slot) {
+            $this->assertNotSame('motion', $slot['kind'] ?? '', 'A roundup must never replay B-roll.');
+            $roundup_ms += (int) ($slot['ms'] ?? 0);
             if (($slot['kind'] ?? '') !== 'card') {
                 continue;
             }
             $roundup_cards[] = $slot;
             $this->assertNotEmpty($slot['roundup']);
-            $this->assertGreaterThanOrEqual(3000, (int) $slot['ms']);
-            $this->assertLessThanOrEqual(4500, (int) $slot['ms']);
         }
-        $this->assertGreaterThanOrEqual(12, count($roundup_cards));
-        $this->assertLessThanOrEqual(24, count($roundup_cards));
+        $this->assertSame(60000, $roundup_ms);
+        $this->assertGreaterThanOrEqual(1, count($roundup_cards));
+        $this->assertSame(count($roundup_cards), count(array_unique(wp_list_pluck($roundup_cards, 'caption'))));
         $this->assertSame('Hook', $roundup_cards[0]['label']);
         $this->assertSame('Follow', $roundup_cards[count($roundup_cards) - 1]['label']);
         $this->assertTrue($this->invoke_private('social_reel_teach_guard', array($slots, 60.0, 0.0)));
-        $long_vo = implode(' ', array_fill(0, 220, 'technorapper'));
+        $long_words = array();
+        for ($i = 0; $i < 220; $i++) {
+            $long_words[] = 'technorapper' . (string) $i;
+        }
+        $long_vo = implode(' ', $long_words);
         $kept_vo = $this->invoke_private('sanitize_reel_script', array($long_vo, array(), get_post($lead), $best));
         $this->assertSame(220, count(preg_split('/\s+/', $kept_vo, -1, PREG_SPLIT_NO_EMPTY)));
-        $trimmed_vo = $this->invoke_private('sanitize_reel_script', array(implode(' ', array_fill(0, 300, 'technorapper')), array(), get_post($lead), $best));
+        $trim_words = array();
+        for ($i = 0; $i < 300; $i++) {
+            $trim_words[] = 'technorapper' . (string) $i;
+        }
+        $trimmed_vo = $this->invoke_private('sanitize_reel_script', array(implode(' ', $trim_words), array(), get_post($lead), $best));
         $this->assertSame(240, count(preg_split('/\s+/', $trimmed_vo, -1, PREG_SPLIT_NO_EMPTY)));
         $scenes = $this->invoke_private('social_reel_spoken_scene_lines', array($long_vo, 16));
         $this->assertCount(16, $scenes);
+        $this->assertSame($scenes, array_values(array_unique($scenes)));
         $this->assertStringStartsWith('technorapper', $scenes[0]);
         $matched_slots = $this->invoke_private('social_reel_teach_slots', array($best, array(
             'hook' => 'Tech just moved overnight',
@@ -4206,13 +4218,23 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'reel_captions' => $caps,
         ), null, 60.0, 5.0, 0.0, false));
         $first_card = '';
+        $matched_cards = array();
         foreach ($matched_slots as $slot) {
+            $this->assertNotSame('motion', $slot['kind'] ?? '');
             if (($slot['kind'] ?? '') === 'card') {
-                $first_card = (string) $slot['caption'];
-                break;
+                if ($first_card === '') {
+                    $first_card = (string) $slot['caption'];
+                }
+                $matched_cards[] = $slot;
+                $this->assertGreaterThanOrEqual(3000, (int) $slot['ms']);
+                $this->assertLessThanOrEqual(4500, (int) $slot['ms']);
             }
         }
         $this->assertStringStartsWith('technorapper', $first_card);
+        $this->assertGreaterThanOrEqual(12, count($matched_cards));
+        $this->assertLessThanOrEqual(24, count($matched_cards));
+        $this->assertSame(count($matched_cards), count(array_unique(wp_list_pluck($matched_cards, 'caption'))));
+        $this->assertTrue($this->invoke_private('social_reel_teach_guard', array($matched_slots, 60.0, 0.0)));
         $budget = $this->plugin->sanitize_settings(array(
             'social_platform_toggles' => 1,
             'social_instagram_enabled' => 1,
@@ -6366,6 +6388,63 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'social_fal_loop_keyframes'));
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'compose_social_reel_motion'));
+        $repeat = $guard(array(
+            array('kind' => 'card', 'ms' => 30000, 'caption' => 'Same beat', 'roundup' => true),
+            array('kind' => 'card', 'ms' => 30000, 'caption' => 'Same beat', 'roundup' => true),
+        ), 60.0);
+        $this->assertWPError($repeat);
+        $this->assertStringContainsString('repeats', $repeat->get_error_message());
+        $broll = $guard(array(
+            array('kind' => 'card', 'ms' => 30000, 'caption' => 'Hook line', 'roundup' => true),
+            array('kind' => 'motion', 'ms' => 2000),
+            array('kind' => 'card', 'ms' => 28000, 'caption' => 'Follow line', 'roundup' => true),
+        ), 60.0);
+        $this->assertWPError($broll);
+        $this->assertStringContainsString('B-roll', $broll->get_error_message());
+    }
+
+    public function test_fal_roundup_keyframes_are_unique_images_and_refuse_a_reused_clip() {
+        $card_a = $this->create_reel_asset('card-a.jpg', 'image/jpeg', $this->tiny_jpeg_bytes() !== '' ? $this->tiny_jpeg_bytes() : str_repeat('j', 512));
+        $card_b = $this->create_reel_asset('card-b.jpg', 'image/jpeg', str_repeat('k', 640));
+        $motion = $this->create_reel_asset('motion.mp4', 'video/mp4', str_repeat('v', 2048));
+        $ok = $this->invoke_private('social_reel_fal_teach_keyframes', array(array(
+            'visual_type' => 'image',
+            'use_sting' => false,
+            'slots' => array(
+                array('kind' => 'card', 'ms' => 3500, 'card' => 0),
+                array('kind' => 'card', 'ms' => 3500, 'card' => 1),
+            ),
+            'assets' => array(
+                'cards' => array(
+                    0 => array('jpeg' => $card_a['path']),
+                    1 => array('jpeg' => $card_b['path']),
+                ),
+            ),
+        )));
+        $this->assertFalse(is_wp_error($ok), is_wp_error($ok) ? $ok->get_error_message() : '');
+        $this->assertCount(2, $ok);
+        $this->assertNotSame($ok[0]['url'], $ok[1]['url']);
+        $clip_a = $this->create_reel_asset('card-a.mp4', 'video/mp4', str_repeat('a', 2048));
+        $clip_b = $this->create_reel_asset('card-b.mp4', 'video/mp4', str_repeat('b', 2048));
+        $reused = $this->invoke_private('social_reel_fal_teach_keyframes', array(array(
+            'visual_type' => 'video',
+            'use_sting' => false,
+            'motion' => array('path' => $motion['path']),
+            'slots' => array(
+                array('kind' => 'card', 'ms' => 3000, 'card' => 0),
+                array('kind' => 'motion', 'ms' => 2000),
+                array('kind' => 'card', 'ms' => 3000, 'card' => 1),
+                array('kind' => 'motion', 'ms' => 2000),
+            ),
+            'assets' => array(
+                'cards' => array(
+                    0 => array('video' => $clip_a['path']),
+                    1 => array('video' => $clip_b['path']),
+                ),
+            ),
+        )));
+        $this->assertWPError($reused);
+        $this->assertStringContainsString('repeats', $reused->get_error_message());
     }
 
     public function test_stale_cut_reel_is_never_reused_previewed_or_posted() {

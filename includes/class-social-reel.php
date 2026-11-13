@@ -861,11 +861,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             } else {
                 $parts[] = $this->social_reel_is_roundup($settings) ? 'Stick-figure newsroom roundup' : 'No-face teach Reel';
             }
-            $parts[] = $this->social_reel_is_roundup($settings) ? 'scene every 3–4s' : 'lesson cards carry the Reel';
-            if (!isset($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_broll'])) {
+            $parts[] = $this->social_reel_is_roundup($settings) ? 'unique scene every 3–4s, no repeated B-roll' : 'lesson cards carry the Reel';
+            if (!$this->social_reel_is_roundup($settings) && (!isset($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_broll']))) {
                 $parts[] = 'at most 2 short B-roll accents';
             }
-            if (!isset($settings['social_reel_include_sting']) || !empty($settings['social_reel_include_sting'])) {
+            if (!$this->social_reel_is_roundup($settings) && (!isset($settings['social_reel_include_sting']) || !empty($settings['social_reel_include_sting']))) {
                 $parts[] = 'sting';
             }
         } else {
@@ -1448,12 +1448,13 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 'host_seek' => false,
             );
         }
-        $host = !empty($settings['social_reel_include_host']);
-        $motion = !empty($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_slides']);
-        if (!$host && !$motion) {
+        $roundup = $this->social_reel_is_roundup($settings);
+        $host = !$roundup && !empty($settings['social_reel_include_host']);
+        $motion = !$roundup && (!empty($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_slides']));
+        if (!$roundup && !$host && !$motion) {
             $motion = true;
         }
-        $sting = array_key_exists('social_reel_include_sting', $settings) ? !empty($settings['social_reel_include_sting']) : true;
+        $sting = !$roundup && (array_key_exists('social_reel_include_sting', $settings) ? !empty($settings['social_reel_include_sting']) : true);
         // Fal compose cannot seek into the talking-host clip, so only the local
         // ffmpeg cut keeps the host in sync after a cold-open card.
         return array(
@@ -1824,13 +1825,15 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!is_array($words) || !$words) {
             return array();
         }
-        $per = max(4, min(6, (int) ceil(count($words) / $count)));
+        $per = max(4, (int) ceil(count($words) / $count));
         $lines = array();
         for ($i = 0; $i < count($words) && count($lines) < $count; $i += $per) {
-            $lines[] = implode(' ', array_slice($words, $i, $per));
+            $chunk = implode(' ', array_slice($words, $i, $per));
+            if ($chunk !== '' && !in_array($chunk, $lines, true)) {
+                $lines[] = $chunk;
+            }
         }
-        $pad = $this->social_reel_card_lines(array('core' => $lines, 'extra' => array()), $count);
-        return array_slice($pad, 0, $count);
+        return $lines;
     }
 
     private function social_reel_card_label($index, $total, $settings = null) {
@@ -1871,6 +1874,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $audio = $audio_ms / 1000;
         $pool = $this->social_reel_lesson_pool($copy, $post, $settings);
         $available = count($pool['core']) + count($pool['extra']);
+        if ($this->social_reel_is_roundup($settings)) {
+            // A reused B-roll URL is a repeated frame (Fal cannot seek). Roundups
+            // are unique stick-figure scenes only — never a looped person clip.
+            $motion_seconds = 0.0;
+            $host_seconds = 0.0;
+        }
         $accent_ms = 0;
         if ((float) $motion_seconds >= 1.0) {
             $accent_ms = $this->social_reel_ms(min(self::SOCIAL_REEL_ACCENT_MAX_SECONDS, (float) $motion_seconds));
@@ -1916,6 +1925,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             if ($accent_ms > 0) {
                 $accent_n = $audio_ms >= 12000 ? self::SOCIAL_REEL_MAX_ACCENTS : 1;
                 $accent_n = min($accent_n, (int) floor(($audio_ms * self::SOCIAL_REEL_MOTION_SHARE) / $accent_ms));
+                // Fal compose cannot seek; a second use of the same clip is a repeated frame.
+                if (!$host_seek) {
+                    $accent_n = min(1, $accent_n);
+                }
             }
             $card_total = $audio_ms - ($accent_n * $accent_ms);
             $scene_ms = $this->social_reel_is_roundup($settings) ? 3500 : 4500;
@@ -1943,7 +1956,18 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $lines = $this->social_reel_is_roundup($settings)
                 ? $this->social_reel_spoken_scene_lines((string) ($copy['reel_script'] ?? ''), $card_n)
                 : $this->social_reel_card_lines($pool, $card_n);
-            if (count($lines) < $card_n) {
+            if ($this->social_reel_is_roundup($settings)) {
+                if (!$lines) {
+                    $lines = $this->social_reel_spoken_scene_lines((string) ($copy['hook'] ?? 'Tech just moved.'), max(8, $min_cards));
+                }
+                if (!$lines) {
+                    $lines = array('Tech just moved.');
+                }
+                if (count($lines) < $card_n) {
+                    $card_n = max(1, min(count($lines), intdiv(max(1500, $card_total), 1500)));
+                    $lines = array_slice($lines, 0, $card_n);
+                }
+            } elseif (count($lines) < $card_n) {
                 $lines = $this->social_reel_card_lines($pool, $card_n);
             }
             $each = intdiv($card_total, $card_n);
@@ -2001,6 +2025,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $motion_n = 0;
         $motion_ms = 0;
         $host_ms = 0;
+        $roundup = false;
+        $captions_seen = array();
         $accent_cap = $this->social_reel_ms(self::SOCIAL_REEL_ACCENT_MAX_SECONDS);
         foreach ((array) $slots as $slot) {
             $ms = (int) ($slot['ms'] ?? 0);
@@ -2009,9 +2035,19 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 return $this->social_reel_guard_error('a shot in the timeline has no length');
             }
             $total += $ms;
+            if (!empty($slot['roundup'])) {
+                $roundup = true;
+            }
             if ($kind === 'card') {
                 $cards++;
                 $card_ms += $ms;
+                $fold = strtolower(trim((string) ($slot['caption'] ?? '')));
+                if ($fold !== '' && !empty($slot['roundup'])) {
+                    if (isset($captions_seen[$fold])) {
+                        return $this->social_reel_guard_error('a scene repeats on screen');
+                    }
+                    $captions_seen[$fold] = true;
+                }
             } elseif ($kind === 'motion') {
                 $motion_n++;
                 $motion_ms += $ms;
@@ -2029,6 +2065,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         if (abs($total - $audio_ms) > 250) {
             return $this->social_reel_guard_error('the cut covers ' . number_format($total / 1000, 1) . 's of a ' . number_format($audio_ms / 1000, 1) . 's voiceover');
+        }
+        if ($roundup && $motion_n > 0) {
+            return $this->social_reel_guard_error('a roundup cannot reuse a B-roll clip');
         }
         if ($motion_n > self::SOCIAL_REEL_MAX_ACCENTS) {
             return $this->social_reel_guard_error('B-roll would appear ' . $motion_n . ' times (max ' . self::SOCIAL_REEL_MAX_ACCENTS . ')');
@@ -2074,8 +2113,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (is_wp_error($guard)) {
             return $guard;
         }
+        $image_track = $this->social_reel_is_roundup($settings);
+        if ($image_track) {
+            $bake = false;
+        }
         $sting_seconds = 0.0;
-        if (!empty($plan['sting']) && !$this->social_reel_is_roundup($settings)) {
+        if (!empty($plan['sting']) && !$image_track) {
             $sting_seconds = !empty($plan['story']) ? (float) $this->social_reel_sting_seconds($settings) : 2.0;
         }
         $use_sting = $sting_seconds > 0 && (string) get_post_meta($post->ID, '_tr_ai_wire_reel_no_sting', true) !== '1';
@@ -2092,6 +2135,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'assets' => $assets,
             'use_sting' => $use_sting,
             'sting_seconds' => $use_sting ? $sting_seconds : 0.0,
+            'visual_type' => $image_track ? 'image' : 'video',
         );
     }
 
@@ -2179,8 +2223,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return array('cards' => $cards, 'end' => $end);
     }
 
-    /** Fal compose video keyframes, one per teach slot, then the end card. */
+    /** Fal compose keyframes, one unique file per teach slot, then the end card. */
     private function social_reel_fal_teach_keyframes($teach) {
+        $image_track = (($teach['visual_type'] ?? 'video') === 'image');
         $motion_url = '';
         $host_url = '';
         $visual = array();
@@ -2189,16 +2234,29 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $kind = (string) $slot['kind'];
             if ($kind === 'card') {
                 $card = $teach['assets']['cards'][(int) $slot['card']] ?? array();
-                if (empty($card['video'])) {
-                    return $this->social_reel_guard_error('lesson card ' . ((int) $slot['card'] + 1) . ' has no video clip');
+                if ($image_track) {
+                    if (empty($card['jpeg'])) {
+                        return $this->social_reel_guard_error('lesson card ' . ((int) $slot['card'] + 1) . ' has no still');
+                    }
+                    $url = $this->social_reel_file_data_url((string) $card['jpeg'], 'image/jpeg', 'tr_ai_wire_reel_cards', 'A Reel lesson card is missing.');
+                } else {
+                    if (empty($card['video'])) {
+                        return $this->social_reel_guard_error('lesson card ' . ((int) $slot['card'] + 1) . ' has no video clip');
+                    }
+                    $url = $this->social_reel_file_data_url((string) $card['video'], 'video/mp4', 'tr_ai_wire_reel_cards', 'A Reel lesson-card clip is missing.');
                 }
-                $url = $this->social_reel_file_data_url((string) $card['video'], 'video/mp4', 'tr_ai_wire_reel_cards', 'A Reel lesson-card clip is missing.');
             } elseif ($kind === 'motion') {
+                if ($image_track) {
+                    return $this->social_reel_guard_error('a roundup cannot reuse a B-roll clip');
+                }
                 if ($motion_url === '') {
                     $motion_url = $this->social_reel_file_data_url((string) ($teach['motion']['path'] ?? ''), 'video/mp4', 'tr_ai_wire_reel_video', 'Generated Reel motion is missing.');
                 }
                 $url = $motion_url;
             } else {
+                if ($image_track) {
+                    return $this->social_reel_guard_error('a roundup cannot reuse a host clip');
+                }
                 if ($host_url === '') {
                     $host_url = $this->social_reel_file_data_url((string) ($teach['host']['path'] ?? ''), 'video/mp4', 'tr_ai_wire_reel_host', 'The talking-host clip is missing.');
                 }
@@ -2212,18 +2270,30 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         if (!empty($teach['use_sting'])) {
             $end = $teach['assets']['end'] ?? array();
-            if (empty($end['video'])) {
-                return $this->social_reel_guard_error('the end card has no video clip');
+            $end_path = $image_track ? (string) ($end['jpeg'] ?? '') : (string) ($end['video'] ?? '');
+            if ($end_path === '') {
+                return $this->social_reel_guard_error('the end card has no ' . ($image_track ? 'still' : 'video clip'));
             }
-            $end_url = $this->social_reel_file_data_url((string) $end['video'], 'video/mp4', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
+            $end_url = $this->social_reel_file_data_url($end_path, $image_track ? 'image/jpeg' : 'video/mp4', 'tr_ai_wire_reel_frames', 'The Reel end card is missing.');
             if (is_wp_error($end_url)) {
                 return $end_url;
             }
             $visual[] = array('timestamp' => $clock, 'duration' => $this->social_reel_ms($teach['sting_seconds']), 'url' => (string) $end_url);
         }
+        $seen = array();
         foreach ($visual as $frame) {
             $url = (string) ($frame['url'] ?? '');
-            if ($url === '' || strpos($url, 'data:image/') === 0 || preg_match('/\.jpe?g(\?|$)/i', $url)) {
+            if ($url === '') {
+                return $this->social_reel_guard_error('a scene file is missing');
+            }
+            if (isset($seen[$url])) {
+                return $this->social_reel_guard_error('a scene repeats on screen');
+            }
+            $seen[$url] = true;
+            if ($image_track) {
+                continue;
+            }
+            if (strpos($url, 'data:image/') === 0 || preg_match('/\.jpe?g(\?|$)/i', $url)) {
                 return new WP_Error(
                     'tr_ai_wire_reel_frames',
                     'Reel assemble blocked a still image on the Fal video track (that caused multi-hour frozen files). Start over to rebuild with animated lesson cards.'
@@ -2288,7 +2358,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 return $visual;
             }
             return array('tracks' => array(
-                array('id' => 'visual', 'type' => 'video', 'keyframes' => $visual),
+                array('id' => 'visual', 'type' => (($teach['visual_type'] ?? 'video') === 'image') ? 'image' : 'video', 'keyframes' => $visual),
                 array('id' => 'voice', 'type' => 'audio', 'keyframes' => array(
                     array('timestamp' => 0, 'duration' => $this->social_reel_ms($audio_seconds), 'url' => $voice_url),
                 )),
@@ -2363,7 +2433,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $this->social_reel_progress_note(
             $post->ID,
             $this->social_reel_is_roundup($settings)
-                ? 'Assembling the stick-figure roundup on this server: scenes every 3–4s, short B-roll accents only.'
+                ? 'Assembling the stick-figure roundup on this server: unique scenes every 3–4s, no repeated B-roll.'
                 : 'Assembling the teach cut on this server: lesson cards first, short B-roll accents only.'
         );
         $clips = array();
@@ -2451,7 +2521,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $roundup = $this->social_reel_is_roundup($settings);
         $steps[] = array(
             'key' => 'cards',
-            'label' => $roundup ? 'Stick-figure newsroom scenes (every 3–4s)' : 'Lesson cards (they carry the Reel)',
+            'label' => $roundup ? 'Unique stick-figure scenes (every 3–4s, never repeated)' : 'Lesson cards (they carry the Reel)',
             'state' => $cards_done ? 'done' : (($cards_active || $cards_total > 0) ? 'active' : 'todo'),
             'detail' => (!$cards_done && $cards_total > 0) ? ((string) $cards_ready . ' of ' . (string) $cards_total . ' ready') : '',
         );
@@ -2591,10 +2661,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 'Story Reels need an avatar face. Upload a portrait, turn on Generate a presenter face, or turn the talking host off. One saved face is used on every Reel.'
             );
         }
-        if (($plan['host'] || $plan['motion']) && $this->fal_api_key() === '') {
+        if (!$plan['local'] && $this->fal_api_key() === '') {
             return new WP_Error(
                 'tr_ai_wire_reel_fal_key',
-                'Story Reels need a Fal.ai API key for the talking host and B-roll motion.'
+                'Instagram Reels need a Fal.ai API key to assemble the spoken MP4.'
             );
         }
         if ($plan['motion'] && (!is_string($broll_path) || $broll_path === '' || !file_exists($broll_path))) {
@@ -2629,7 +2699,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return $this->social_reel_assemble_locally($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
         }
         $note = $this->social_reel_is_roundup($settings)
-            ? 'Assembling a stick-figure news roundup at Fal: scenes every 3–4s, short B-roll accents only.'
+            ? 'Assembling a stick-figure news roundup at Fal: unique scenes every 3–4s, no repeated B-roll.'
             : 'Assembling a teach Reel at Fal: lesson cards first, short B-roll accents only.';
         if (!empty($plan['host'])) {
             $note = 'Assembling a story Reel at Fal: cold-open lesson card, short host hook, then lesson cards.';

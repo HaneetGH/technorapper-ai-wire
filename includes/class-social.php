@@ -5279,7 +5279,9 @@ trait TechnoRapper_AI_Wire_Social {
         if ($live && !empty($progress['detail'])) {
             echo '<p class="description tr-ai-wire-reel-build-detail">' . esc_html((string) $progress['detail']) . '</p>';
         }
-        if (!empty($plan['host'])) {
+        if ($this->social_reel_is_roundup()) {
+            echo '<p class="description">Stick-figure roundup: every on-screen scene is unique and covers the voiceover. A 3-second B-roll clip is never repeated. If a scene cannot be drawn, the build stops.</p>';
+        } elseif (!empty($plan['host'])) {
             echo '<p class="description">Teach cut: a cold-open lesson card, one short host hook, then lesson cards while the voice continues. B-roll appears at most once as a short accent. Not a full talking-head readout.</p>';
         } else {
             echo '<p class="description">Teach cut: numbered lesson cards carry the voice from start to finish. The B-roll clip appears at most twice, about 2 seconds each, and is never looped. If cards cannot be made, the build stops instead of posting a looping clip.</p>';
