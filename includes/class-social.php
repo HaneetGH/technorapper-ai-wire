@@ -5268,10 +5268,7 @@ trait TechnoRapper_AI_Wire_Social {
             echo '<p class="tr-ai-wire-reel-build-title"><strong>Building your Reel.</strong> <span class="tr-ai-wire-reel-build-pulse" aria-hidden="true"></span> You can leave this page open or come back later. It keeps going and nothing is posted until you click Post.</p>';
         } else {
             echo '<p class="tr-ai-wire-reel-build-title"><strong>The Reel build stopped.</strong> Nothing was posted. Finished steps are saved and are not paid for again.</p>';
-            $error = $this->social_error_copy((string) ($row['error_text'] ?? ''));
-            if ($error !== '') {
-                echo '<p class="tr-ai-wire-social-error">' . esc_html($error) . '</p>';
-            }
+            $this->render_social_failure($row, $post, (string) ($row['error_text'] ?? ''));
         }
         echo '<ol class="tr-ai-wire-reel-steps">';
         foreach ($steps as $step) {
@@ -5710,7 +5707,7 @@ trait TechnoRapper_AI_Wire_Social {
         if (stripos($error, 'nonexisting field') !== false && stripos($error, 'content_publishing_limit') !== false) {
             return 'Instagram could not read the daily publishing quota for this token. The branded graphic was still generated. Confirm it is not already live, then retry — the next attempt will skip that quota check and try to publish.';
         }
-        if (strpos($error, 'Held:') === 0) {
+        if (strpos($error, 'Held: Watch this Reel') === 0) {
             return $error;
         }
         if (stripos($error, 'need ffmpeg') !== false || stripos($error, 'has no ffmpeg') !== false) {
@@ -5724,6 +5721,66 @@ trait TechnoRapper_AI_Wire_Social {
             return $this->instagram_missing_object_help($ig_id);
         }
         return $error;
+    }
+
+    private function social_error_is_hold($error) {
+        return stripos(trim((string) $error), 'Held: Watch this Reel') === 0;
+    }
+
+    private function social_error_is_failure($error) {
+        $error = trim((string) $error);
+        if ($error === '') {
+            return false;
+        }
+        return !$this->social_error_is_hold($error);
+    }
+
+    private function social_failure_stage($row, $post, $error) {
+        $error = trim((string) $error);
+        $row = is_array($row) ? $row : array();
+        if ($post instanceof WP_Post && $this->social_reel_panel_applies($row, $post)) {
+            return 'reel';
+        }
+        if (preg_match('/\b(Reel build|could not assemble|ffmpeg|talking host|lesson card|B-roll|Fal could not|Fal answered)\b/i', $error)) {
+            return 'reel';
+        }
+        $image_id = $this->social_queue_image_id($row, $post instanceof WP_Post ? $post : null);
+        if ($image_id > 0) {
+            return 'post';
+        }
+        if (preg_match('/did not return a media ID|did not return a post ID|quota|access token|credits depleted|rejected the|permalink|container/i', $error)) {
+            return 'post';
+        }
+        return 'generate';
+    }
+
+    private function social_failure_headline($row, $post, $error) {
+        $platform = self::social_platform_label((string) ($row['platform'] ?? ''));
+        if ($platform === '') {
+            $platform = 'this platform';
+        }
+        $stage = $this->social_failure_stage($row, $post, $error);
+        if ($stage === 'reel') {
+            return 'Reel was not finished. Nothing was posted to ' . $platform . '.';
+        }
+        if ($stage === 'generate') {
+            return 'Not generated. Nothing was posted to ' . $platform . '.';
+        }
+        return 'Not posted to ' . $platform . '. The graphic was generated and is saved.';
+    }
+
+    private function render_social_failure($row, $post, $error) {
+        $error = $this->social_error_copy((string) $error);
+        if (!$this->social_error_is_failure($error)) {
+            return;
+        }
+        $headline = $this->social_failure_headline($row, $post, $error);
+        echo '<div class="tr-ai-wire-social-error" role="alert">';
+        if ($headline !== '') {
+            echo '<strong>' . esc_html($headline) . '</strong>';
+        }
+        echo esc_html($error);
+        echo '</div>';
     }
 
     private function social_queue_caption($row, $copy) {
@@ -5748,7 +5805,8 @@ trait TechnoRapper_AI_Wire_Social {
         $caption = $this->social_queue_caption($row, $copy);
         $error = $this->social_error_copy((string) ($row['error_text'] ?? ''));
         $status = sanitize_key((string) ($row['status'] ?? ''));
-        echo '<div class="tr-ai-wire-social-item">';
+        $building = $this->social_reel_panel_applies($row, $post);
+        echo '<div class="tr-ai-wire-social-item" data-item-id="' . esc_attr((string) (int) ($row['id'] ?? 0)) . '">';
         echo '<div class="tr-ai-wire-social-preview">';
         if ($image_id > 0) {
             $full = wp_get_attachment_url($image_id);
@@ -5774,11 +5832,14 @@ trait TechnoRapper_AI_Wire_Social {
             }
             echo '<span class="tr-ai-wire-social-preview-label">' . ($this->social_image_is_current($image_id) ? esc_html($label) : 'Saved graphic — retry posts this file unless you generate a new one') . '</span></a>';
         } else {
-            echo '<div class="tr-ai-wire-social-preview-empty">Graphic not generated yet. The worker creates it before posting.</div>';
+            $waiting = $building || in_array($status, array('queued', 'processing'), true);
+            $empty = (!$waiting && $this->social_error_is_failure($error))
+                ? 'Graphic was not generated. Nothing was posted. See the red error for why.'
+                : 'Graphic not generated yet. The worker creates it before posting.';
+            echo '<div class="tr-ai-wire-social-preview-empty">' . esc_html($empty) . '</div>';
         }
         $this->render_social_reel_preview_video($row, $post);
         echo '</div><div class="tr-ai-wire-social-copy">';
-        $building = $this->social_reel_panel_applies($row, $post);
         $this->render_social_reel_post_form($row);
         $this->render_social_reel_build_panel($row, $post);
         $this->render_social_reel_downloads($row, $post);
@@ -5814,6 +5875,8 @@ trait TechnoRapper_AI_Wire_Social {
         if ($building) {
             $status_copy = '';
             $error = '';
+        } elseif ($this->social_error_is_failure($error)) {
+            $status_copy = '';
         }
         if ($status_copy !== '') {
             echo '<p class="description">' . esc_html($status_copy) . '</p>';
@@ -5824,7 +5887,7 @@ trait TechnoRapper_AI_Wire_Social {
             echo '<p>Published media ID: ' . esc_html($row['remote_id']) . '</p>';
         }
         if ($error !== '') {
-            echo '<p class="tr-ai-wire-social-error">' . esc_html($error) . '</p>';
+            $this->render_social_failure($row, $post, (string) ($row['error_text'] ?? ''));
         }
         if (($status === 'needs_review' || $status === 'published') && !$building) {
             $this->render_social_retry_form($row, $image_id, $status);

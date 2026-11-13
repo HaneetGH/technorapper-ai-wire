@@ -462,9 +462,20 @@
     color: #1d2327;
 }
 
-.tr-ai-wire-social-error {
-    color: #b32d2e;
+.tr-ai-wire-social-error,
+.tr-ai-wire-item-error {
+    color: #d63638;
+    background: #fcf0f1;
+    border-left: 4px solid #d63638;
+    padding: 8px 12px;
     margin: 8px 0;
+}
+
+.tr-ai-wire-social-error strong,
+.tr-ai-wire-item-error strong {
+    display: block;
+    font-weight: 700;
+    margin: 0 0 4px;
 }
 
 .tr-ai-wire-social-copy label {

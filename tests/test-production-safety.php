@@ -6268,8 +6268,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             } elseif (isset($card_urls[$url])) {
                 $kinds[] = 'card';
                 $card_ms += $dur;
-                // Each card clip is baked at exactly its slot length — never stretched.
-                $this->assertEqualsWithDelta($dur / 1000, $card_urls[$url], 0.01);
+                // Each card clip is baked at its slot length. 30fps hold rounding
+                // can land 1 frame off (3.25s → 98 frames → 3.267s).
+                $this->assertEqualsWithDelta($dur / 1000, $card_urls[$url], 0.04);
             } elseif ($url === (string) $end_url) {
                 $kinds[] = 'end';
             } else {
@@ -6887,6 +6888,14 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $captured = array();
         add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
             $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/images-to-video') !== false && strpos($url, '/requests/') === false) {
+                $body = json_decode((string) ($args['body'] ?? ''), true);
+                $fps = max(1, (int) ($body['fps'] ?? 30));
+                $frames = (int) (($body['images'][0]['frames'] ?? 0));
+                $ms = (int) round(1000 * $frames / $fps);
+                $captured['cards'] = (int) ($captured['cards'] ?? 0) + 1;
+                return $this->mock_http_ok(array('request_id' => 'card-' . (string) $captured['cards'] . '-' . $ms, 'status' => 'IN_QUEUE'));
+            }
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
                 $body = json_decode((string) ($args['body'] ?? ''), true);
                 $track = $body['tracks'][0] ?? array();
@@ -6901,11 +6910,15 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (strpos($url, '/status') !== false) {
                 return $this->mock_http_ok(array('status' => 'COMPLETED'));
             }
-            if (preg_match('#/requests/(card-\d+|final-cut)$#', $url, $m)) {
+            if (preg_match('#/requests/(card-\d+(?:-\d+)?|final-cut)$#', $url, $m)) {
                 return $this->mock_http_ok(array('video_url' => 'https://example.org/fal-' . $m[1] . '.mp4'));
             }
-            if (preg_match('#example\.org/fal-(card-\d+)\.mp4#', $url, $m)) {
-                return $this->mock_http_ok($this->fake_mp4_bytes(3.0, $m[1]));
+            if (preg_match('#example\.org/fal-(card-\d+(?:-\d+)?)\.mp4#', $url, $m)) {
+                $seconds = 3.0;
+                if (preg_match('/-(\d+)$/', $m[1], $ms)) {
+                    $seconds = max(0.5, ((int) $ms[1]) / 1000);
+                }
+                return $this->mock_http_ok($this->fake_mp4_bytes($seconds, $m[1]));
             }
             if (strpos($url, 'example.org/fal-final-cut.mp4') !== false) {
                 return $this->mock_http_ok(str_repeat('M', 2048));
@@ -8466,6 +8479,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('When Big Tech Becomes Politics', $html);
         $this->assertStringContainsString('branded social card', $html);
         $this->assertStringContainsString('Instagram could not read the daily publishing quota', $html);
+        $this->assertStringContainsString('Not posted to Instagram', $html);
+        $this->assertStringContainsString('The graphic was generated and is saved', $html);
+        $this->assertStringNotContainsString('Not generated. Nothing was posted', $html);
         $this->assertStringContainsString('Post existing graphic to Instagram', $html);
         $this->assertStringContainsString('Generate a new graphic and retry', $html);
         $this->assertStringContainsString('name="regenerate_image"', $html);
@@ -8477,6 +8493,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('name="pack_kind" value="carousel"', $html);
         $this->assertStringContainsString('name="pack_kind" value="collage"', $html);
         $this->assertStringContainsString('name="pack_kind" value="reel"', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('role="alert"', $html);
         $this->assertStringNotContainsString('Regenerate graphic and post again', $html);
     }
 
@@ -8561,6 +8579,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('Post existing graphic to Instagram', $html);
         $this->assertStringContainsString('Download video', $html);
         $this->assertStringContainsString('action=tr_ai_wire_download_reel', $html);
+        $this->assertStringNotContainsString('tr-ai-wire-social-error', $html);
     }
 
     public function test_reel_laptop_kit_is_downloadable_when_ffmpeg_is_missing() {
@@ -8678,6 +8697,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->social_distribution_page();
         $html = ob_get_clean();
         $this->assertStringContainsString('The Reel build stopped', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Reel was not finished', $html);
+        $this->assertStringContainsString('Nothing was posted to Instagram', $html);
+        $this->assertStringContainsString('Fal could not assemble the finished MP4', $html);
         $this->assertStringContainsString('Resume building this Reel', $html);
         $this->assertStringContainsString('tr_ai_wire_resume_reel', $html);
         $this->assertStringContainsString('Start over with a new Reel', $html);
@@ -10406,5 +10429,158 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNull($this->invoke_private('claim_background_job', array($job['id'])));
         delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
         delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
+    }
+
+    public function test_held_reel_copy_is_not_a_red_failure() {
+        $this->assertFalse($this->invoke_private('social_error_is_failure', array('Held: Watch this Reel, then click Post to Instagram. It has not been posted yet.')));
+        $this->assertTrue($this->invoke_private('social_error_is_failure', array('Fal could not assemble the finished MP4: no reason given.')));
+        $this->assertTrue($this->invoke_private('social_error_is_failure', array('Held: the social copy is not safe to publish (profanity). Edit the caption or regenerate copy.')));
+        $this->assertTrue($this->invoke_private('social_error_is_failure', array('OpenAI returned an invalid image payload.')));
+        $this->assertFalse($this->invoke_private('social_error_is_failure', array('')));
+    }
+
+    public function test_retry_clears_old_error_before_the_job_runs() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'error',
+            'error_text' => 'Old OpenAI timeout.',
+        ), array('id' => $id));
+        $this->invoke_private('enqueue_background_job', array('retry', array('item_id' => $id)));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('error', $row['status']);
+        $this->assertSame('', (string) $row['error_text']);
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
+    }
+
+    public function test_queue_page_prints_a_red_error_for_failed_items() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'error',
+            'error_text' => 'OpenAI returned HTTP 500.',
+        ), array('id' => $id));
+        ob_start();
+        $this->plugin->queue_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('tr-ai-wire-item-error', $html);
+        $this->assertStringContainsString('Not published.', $html);
+        $this->assertStringContainsString('OpenAI returned HTTP 500.', $html);
+        $this->assertStringContainsString('role="alert"', $html);
+    }
+
+    public function test_social_retry_clears_old_error_and_shows_the_next_failure() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Retry error row',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Old mux failed.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $this->invoke_private('enqueue_background_job', array('social_retry', array('item_id' => $id)));
+        $cleared = $wpdb->get_row($wpdb->prepare("SELECT error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('', (string) $cleared['error_text']);
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_social', array(
+            'status' => 'needs_review',
+            'error_text' => 'Fal answered HTTP 502.',
+        ), array('id' => $id));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Fal answered HTTP 502.', $html);
+        $this->assertStringNotContainsString('Old mux failed.', $html);
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
+    }
+
+    public function test_job_progress_bar_turns_red_on_error() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $_GET['page'] = 'tr-ai-wire-queue';
+        ob_start();
+        $this->plugin->render_job_ui();
+        $html = ob_get_clean();
+        unset($_GET['page']);
+        $this->assertStringContainsString('#tr-ai-wire-progress.is-error', $html);
+        $this->assertStringContainsString('clearItemErrors', $html);
+        $this->assertStringContainsString("box.classList.toggle('is-error', failed)", $html);
+    }
+
+    public function test_social_queue_says_when_a_still_was_not_generated() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Missing graphic',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'OpenAI returned an invalid image payload.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Not generated. Nothing was posted to Instagram.', $html);
+        $this->assertStringContainsString('OpenAI returned an invalid image payload.', $html);
+        $this->assertStringContainsString('Graphic was not generated. Nothing was posted.', $html);
+        $this->assertStringNotContainsString('The graphic was generated and is saved', $html);
+        $this->assertStringNotContainsString('Graphic not generated yet. The worker creates it before posting.', $html);
+    }
+
+    public function test_social_queue_says_when_an_x_still_was_not_posted() {
+        $attachment_id = $this->create_social_jpeg_attachment();
+        if ($attachment_id < 1) {
+            $this->markTestSkipped('GD and uploads are required to preview social graphics.');
+        }
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('x'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'X still failed',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'needs_review',
+            'image_attachment_id' => $attachment_id,
+            'error_text' => 'X rejected the token.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Not posted to X.', $html);
+        $this->assertStringContainsString('The graphic was generated and is saved.', $html);
+        $this->assertStringContainsString('X rejected the token.', $html);
+        $this->assertStringNotContainsString('Not generated. Nothing was posted', $html);
+        $this->assertStringNotContainsString('Reel was not finished', $html);
     }
 }
