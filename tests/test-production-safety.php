@@ -6467,6 +6467,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertFalse(is_wp_error($trimmed_frames), is_wp_error($trimmed_frames) ? $trimmed_frames->get_error_message() : '');
         $this->assertSame(200, (int) $trimmed_frames[0]['frames']);
         $this->assertSame(100, (int) $trimmed_frames[1]['frames']);
+        $scaled = $this->invoke_private('social_reel_scale_hold_frames', array(array(
+            array('url' => 'a', 'frames' => 171),
+            array('url' => 'b', 'frames' => 171),
+        ), 57.0 / 64.8));
+        $this->assertSame(150, (int) $scaled[0]['frames']);
+        $this->assertSame(150, (int) $scaled[1]['frames']);
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'social_fal_loop_keyframes'));
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'compose_social_reel_motion'));
         $repeat = $guard(array(
@@ -6721,7 +6727,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $words[] = 'technorapper' . (string) $i;
         }
         $script = implode(' ', $words);
-        $captured = array();
+        $captured = array('hold_n' => 0);
         add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
             $url = (string) $url;
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'flux/schnell') !== false && strpos($url, '/requests/') === false) {
@@ -6739,8 +6745,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 return $this->mock_http_ok($this->scene_jpeg_bytes('scene-' . $m[1]));
             }
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/images-to-video') !== false && strpos($url, '/requests/') === false) {
-                $captured['hold'] = json_decode((string) ($args['body'] ?? ''), true);
-                return $this->mock_http_ok(array('request_id' => 'held-scenes', 'status' => 'IN_QUEUE'));
+                $captured['hold_n']++;
+                $captured['holds'][] = json_decode((string) ($args['body'] ?? ''), true);
+                return $this->mock_http_ok(array('request_id' => 'held-' . (string) $captured['hold_n'], 'status' => 'IN_QUEUE'));
             }
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
                 $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
@@ -6749,11 +6756,17 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (strpos($url, '/status') !== false) {
                 return $this->mock_http_ok(array('status' => 'COMPLETED'));
             }
-            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'held-scenes') !== false) {
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'held-1') !== false) {
                 return $this->mock_http_ok(array('video' => array('url' => 'https://example.org/held-overlong.mp4')));
             }
             if (strpos($url, 'example.org/held-overlong.mp4') !== false) {
                 return $this->mock_http_ok($this->fake_mp4_bytes(20.0, 'held-overlong'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'held-2') !== false) {
+                return $this->mock_http_ok(array('video' => array('url' => 'https://example.org/held-fit.mp4')));
+            }
+            if (strpos($url, 'example.org/held-fit.mp4') !== false) {
+                return $this->mock_http_ok($this->fake_mp4_bytes(15.0, 'held-fit'));
             }
             if (strpos($url, 'queue.fal.run') !== false) {
                 return $this->mock_http_ok(array('video_url' => 'https://example.org/roundup.mp4'));
@@ -6763,7 +6776,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             }
             return new WP_Error('blocked', 'Unexpected URL ' . $url);
         }, 10, 3);
-        $result = $this->invoke_private('social_reel_assemble_with_fal', array(
+        $args = array(
             get_post($post_id),
             $settings,
             array(
@@ -6780,13 +6793,27 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             ),
             $this->tiny_jpeg_bytes(),
             'Follow for daily tech news',
-        ));
-        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
-        $hold_frames = 0;
-        foreach ((array) ($captured['hold']['images'] ?? array()) as $image) {
-            $hold_frames += (int) ($image['frames'] ?? 0);
+        );
+        $wait = $this->invoke_private('social_reel_assemble_with_fal', $args);
+        $this->assertWPError($wait);
+        $this->assertSame('tr_ai_wire_reel_video_wait', $wait->get_error_code());
+        $this->assertStringContainsString('rebuilding the picture track', $wait->get_error_message());
+        $this->assertArrayNotHasKey('submit', $captured, 'An overlong hold must not be muxed.');
+        $this->assertSame(1, (int) $captured['hold_n']);
+        $first_frames = 0;
+        foreach ((array) ($captured['holds'][0]['images'] ?? array()) as $image) {
+            $first_frames += (int) ($image['frames'] ?? 0);
         }
-        $this->assertSame(450, $hold_frames);
+        $this->assertSame(450, $first_frames);
+        $result = $this->invoke_private('social_reel_assemble_with_fal', $args);
+        $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
+        $this->assertSame(2, (int) $captured['hold_n']);
+        $second_frames = 0;
+        foreach ((array) ($captured['holds'][1]['images'] ?? array()) as $image) {
+            $second_frames += (int) ($image['frames'] ?? 0);
+        }
+        $this->assertLessThan(450, $second_frames, 'The rebuild must ask Fal for fewer frames so the padded clip matches the voice.');
+        $this->assertGreaterThan(300, $second_frames);
         $visual = $captured['submit']['tracks'][0]['keyframes'] ?? array();
         $this->assertSame(15000, (int) ($visual[0]['duration'] ?? 0), 'Compose must ask for the voice length, not the 20s hold file.');
         $this->assertSame(15000, (int) ($captured['submit']['tracks'][1]['keyframes'][0]['duration'] ?? 0));
@@ -6891,10 +6918,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $wait = $this->invoke_private('social_reel_assemble_with_fal', $args);
         $this->assertWPError($wait);
         $this->assertSame('tr_ai_wire_reel_video_wait', $wait->get_error_code());
-        $this->assertStringContainsString('Trimming leftover frames', $wait->get_error_message());
+        $this->assertStringContainsString('rebuilding the picture track', $wait->get_error_message());
         $this->assertStringNotContainsString('leftover would be a blank', $wait->get_error_message());
         $this->assertSame(1, (int) $captured['compose']);
-        $this->assertGreaterThan(0, (int) get_post_meta($post_id, '_tr_ai_wire_reel_trim_src', true));
         $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
         $result = $this->invoke_private('social_reel_assemble_with_fal', $args);
         $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
