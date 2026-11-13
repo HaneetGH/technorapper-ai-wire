@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.96
+Stable tag: 0.2.97
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.97 =
+* Fal compose ignores a shorter duration on a long held-scenes clip, so 0.2.96 still failed at 64.8s vs 57s. Best Reels now rebuild the picture track at a scaled frame count (and fewer cards if needed) until it matches the voiceover.
 
 = 0.2.96 =
 * Best roundup Reels match the voiceover length. Fal hold frames are trimmed to the spoken duration, compose asks for that length, and an overlong mux is cut instead of failing with leftover blank or frozen frames.
@@ -243,6 +246,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.97 =
+Best Reels rebuild a too-long Fal picture track to the spoken length. Update, then Start over — do not Resume the 64s leftover file.
 
 = 0.2.96 =
 Best Reels that come back longer than the voiceover are trimmed to the spoken length instead of failing with leftover blank frames.
