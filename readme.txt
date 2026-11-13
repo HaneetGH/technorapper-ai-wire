@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.87
+Stable tag: 0.2.88
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,10 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.88 =
+* Best production path for Reels: voice first, lesson cards carry the cut, MiniMax H3 Max animates one approved still into short silent accents, then you watch and Post to Instagram and YouTube.
+* Budget path still uses Veo Lite. Custom keeps the talking-host upsell and every Fal motion model.
 
 = 0.2.87 =
 * Automatic processing can run at exact clock times (for example 09:00, 13:00, 18:00 in the site timezone), not only every N hours.
@@ -211,6 +215,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.88 =
+On Social settings, pick Best production path for the highest-quality Reel generate-and-post flow. Leave Reel posts per day at 0 and click Post after you watch the cut.
 
 = 0.2.87 =
 Optional: set exact run times on Feed tenants and Social settings. Interval schedules (every 3 hours, and so on) stay the default.

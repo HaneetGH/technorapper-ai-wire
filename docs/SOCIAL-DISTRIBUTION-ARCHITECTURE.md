@@ -61,7 +61,7 @@ The separation is intentional:
 3. **Queue insert:** Skip social if the article’s review score is below `social_min_review_score` (default **90**). 90 means a complete original article; 85–89 stay on the website. The writer aims at 90, clustered complete scores are raised to 90, and one polish pass can apply reviewer fixes. Qualifying articles get one `queued` row per connected platform. YouTube is skipped unless the article’s social mode is `reel`. Instagram stills wait at least 3 hours after the last Instagram publish, and their captions never include a URL.
 4. **Copy generation:** One Writer JSON pass. Copy uses a named hook, pays it off, and asks for a save or send. Generic bait (“wait for it”, “you won’t believe”) is banned in the prompt and stripped before publish. Invalid or policy-failing copy is held; it is never sent to an adapter.
 5. **Still graphic:** GPT Image 2 low 1080×1350, GD overlay of this site’s name, cached as `_tr_ai_wire_social_image_id`. Reused across platforms. X always gets this still (even when Instagram/YouTube get a Reel).
-6. **Spoken Reel (when mix allots a Reel):** Default is Fal image-to-video (suggested Veo 3.1 Lite), Mini TTS (`gpt-4o-mini-tts` / male `cedar`), cut from one cards-first timeline: numbered lesson cards carry the voice, the motion clip is at most two short accents (never looped), then a brand sting (local ffmpeg when present; otherwise Fal `ffmpeg-api/compose`, with each card baked to its exact length first). A guard refuses any motion-led or uncovered cut before muxing. Social settings can pick a **female or other Mini TTS voice**, switch to a **story** recipe (researched teach script, optional talking-host hook, lesson cards, sting) and optionally upsell an **avatar face** (upload or generate one fictional presenter, then reuse that same face on every Reel; CodeFormer enhance; Kling Avatar Std/Pro). **Generate Reel now** on Social queue builds one video and holds it on the dashboard until a human clicks Publish. Auto Reels still post when Reel posts per day is above 0. The Instagram Reel container sets `is_ai_generated=true` (YouTube already sets `containsSyntheticMedia`). Missing Fal key **holds** the job — no slideshow fallback.
+6. **Spoken Reel (when mix allots a Reel or Generate Reel now runs):** Audio-first cards-first cut. Mini TTS (`gpt-4o-mini-tts` / male `cedar` by default) is recorded first. Numbered lesson cards carry the voice. One text-free 9:16 still is animated at Fal into at most two short accents (never looped), then a brand sting (local ffmpeg when present; otherwise Fal `ffmpeg-api/compose`, with each card baked to its exact length first). A guard refuses any motion-led or uncovered cut before muxing. **Best production path** uses MiniMax H3 Max (`minimax/h3-max/image-to-video`) for those silent accents. **Budget path** keeps Veo 3.1 Lite. Custom still offers Veo Fast/full, Kling 3.0, and an optional talking-host upsell (Kling Avatar). **Generate Reel now** holds the MP4 on Social queue until a human clicks Post. Auto Reels still post when Reel posts per day is above 0. Instagram sets `media_type=REELS`, `share_to_feed=true`, `is_ai_generated=true`. YouTube uploads the same file as a Short (`containsSyntheticMedia`). X gets the still only. Missing Fal key **holds** the job — no slideshow fallback.
 7. **Publish:** X, Instagram and YouTube adapters run separately. Ambiguous timeouts go to `needs_review`; they are not blindly retried.
 8. **YouTube listing:** `videos.insert` sets title, description (`#Shorts` + tags + permalink), tags, category, language, license, **public** privacy, not-made-for-kids, and synthetic-media disclosure in that call. `publishAt` is never set. If the channel default is private, the worker updates the video to public.
 
@@ -106,12 +106,31 @@ flowchart TD
     I -->|No| K[Do not enqueue]
 ```
 
-- **Reel:** one spoken story, 15–18s voiceover on ~8s Fal motion plus hold-last-frame. Default daily limit **0** (off). Operator turns it on by raising Reels per day.
+- **Reel:** one spoken story. Voice first, lesson cards carry 15–18s, Fal motion is two short accents from one still. Default daily limit **0** (off). Best path: Generate Reel now → review → Post to Instagram + YouTube.
 - **Carousel:** swipeable Instagram post (cover + stories + curiosity slide). X attaches up to 4 images in one tweet.
 - **Collage:** one packed graphic of several posters.
 - **Single:** one article, one still.
 
 News graphic **types** (editorial poster, photo brief, breaking kicker, rumor card, device mockup, weekly recap cover, numbered list, and the rest listed on Social settings) are selectable format families. They are not example headlines copied from other accounts.
+
+### Best Reel generate-and-post path
+
+```mermaid
+flowchart TD
+    A[Published article score ≥ floor] --> B[Generate Reel now]
+    B --> C[Teach script]
+    C --> D[Mini TTS voiceover]
+    D --> E[Lesson cards from spoken beats]
+    D --> F[Text-free 9:16 still]
+    F --> G[Fal H3 Max silent I2V accents]
+    E --> H[Guard: cards carry the voice]
+    G --> H
+    H --> I[Mux teach cut + sting]
+    I --> J[Hold on Social queue]
+    J --> K[Operator clicks Post]
+    K --> L[Instagram Reel + YouTube Short]
+    K --> M[X still only]
+```
 
 ## Platform adapters
 
@@ -141,7 +160,7 @@ Adapters own authentication, payload formatting, media upload and error classifi
 ## Social Creative Engine
 
 1. **GPT Image 2 low poster** (default): 1080×1350, hashed layout variant, site-name overlay. Required for X stills and as the Reel still that Fal animates.
-2. **Spoken Reel:** Fal catalog on Social settings (Veo 3.1 Lite suggested at ~$0.24 / 8s; Veo Fast, Veo 3.1, Kling 3.0 Standard/Pro). Optional story recipe and avatar-face upsell (Kling Avatar + CodeFormer). **$10/month** video budget (raise it before turning the host on). Price estimate page compares them.
+2. **Spoken Reel:** Best production path uses MiniMax H3 Max (~$0.18 / 5s silent). Budget path uses Veo 3.1 Lite (~$0.24 / 8s). Custom still lists Veo Fast, Veo 3.1, and Kling 3.0. Optional talking-host upsell (Kling Avatar + CodeFormer). **$10/month** video budget. Price estimate page compares them.
 3. **No slideshow fallback.** Missing Fal key or video budget holds the Reel/YouTube job. Local ffmpeg is optional.
 
 **Hard invariant:** Image and video generation are only invoked from the social worker for an enabled destination. They are never invoked by the article Writer, Reviewer, publisher or featured-image flow. A social failure never blocks or changes the WordPress article.

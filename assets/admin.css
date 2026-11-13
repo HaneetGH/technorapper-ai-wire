@@ -64,6 +64,16 @@
     margin: 0;
 }
 
+.tr-ai-wire-pipeline {
+    margin: 8px 0 16px;
+    padding-left: 22px;
+    max-width: 720px;
+}
+
+.tr-ai-wire-pipeline li {
+    margin: 0 0 6px;
+}
+
 .tr-ai-wire-clock-times {
     display: flex;
     flex-wrap: wrap;
