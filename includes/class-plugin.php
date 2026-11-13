@@ -20,7 +20,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.2.99';
+    const VERSION = '0.3.0';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -44,7 +44,7 @@ final class TechnoRapper_AI_Wire {
     const SOCIAL_REEL_ROUNDUP_LAYOUT = 'reel-stick-v1';
     // Finished Reels stamped with any other cut are never reused, previewed, or posted.
     const SOCIAL_REEL_CUT = 'teach-cards-v6';
-    const SOCIAL_REEL_ROUNDUP_CUT = 'stick-roundup-v10';
+    const SOCIAL_REEL_ROUNDUP_CUT = 'stick-roundup-v11';
     const SOCIAL_REEL_ACCENT_MAX_SECONDS = 2.5;
     const SOCIAL_REEL_MAX_ACCENTS = 2;
     const SOCIAL_REEL_MOTION_SHARE = 0.35;
