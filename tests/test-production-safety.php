@@ -4104,8 +4104,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(1, (int) $best['social_reel_daily_limit']);
         $this->assertTrue($this->invoke_private('social_reel_is_roundup', array($best)));
         $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_CUT, $this->invoke_private('social_reel_cut_name', array($best)));
-        $this->assertSame(150, $this->invoke_private('social_reel_script_word_budget', array($best)));
-        $this->assertStringContainsString('135–150 spoken words', $this->invoke_private('social_reel_script_brief', array($best)));
+        $this->assertSame(240, $this->invoke_private('social_reel_script_word_budget', array($best)));
+        $this->assertStringContainsString('180–240', $this->invoke_private('social_reel_script_brief', array($best)));
+        $this->assertStringContainsString('150 is a floor, not a cap', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertStringContainsString('stick-figure', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertStringContainsString('Meanwhile', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertGreaterThan(60.0, $this->invoke_private('social_reel_max_audio_seconds', array($best)));
@@ -4115,7 +4116,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('stick-figure', $prompt_best);
         $this->assertStringContainsString('Animate this exact still', $prompt_best);
         $this->assertStringContainsString('no text', $prompt_best);
-        $this->assertSame(16, $this->invoke_private('social_reel_caption_limit', array($best)));
+        $this->assertSame(24, $this->invoke_private('social_reel_caption_limit', array($best)));
         $caps = $this->invoke_private('sanitize_reel_captions', array(array(
             'Hook in three seconds',
             'Story one happened',
@@ -4133,9 +4134,17 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'Extra scene line',
             'Still more news',
             'Last ticker beat',
+            'Night leak lands',
+            'Chip yield slips',
+            'Cloud bill jumps',
+            'App store blocks',
+            'Watch battery dies',
+            'Studio delay hits',
+            'Map glitch spreads',
+            'Inbox fills again',
             'Overflow dropped',
         ), 'Tech just moved faster this week.', $best));
-        $this->assertCount(16, $caps);
+        $this->assertCount(24, $caps);
         $this->assertSame('Hook', $this->invoke_private('social_reel_card_label', array(0, 12, $best)));
         $this->assertSame('Follow', $this->invoke_private('social_reel_card_label', array(11, 12, $best)));
         $lead = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Lead chip story'));
@@ -4154,10 +4163,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_LAYOUT, $this->invoke_private('social_reel_layout_key', array($best)));
         $this->assertStringContainsString('Stick-figure newsroom roundup', $this->invoke_private('social_reel_recipe_summary', array($best)));
         $this->assertStringContainsString('Meanwhile', $this->invoke_private('social_reel_tts_instructions', array($best)));
-        $this->assertEqualsWithDelta(72.0, $this->invoke_private('social_reel_clamp_audio_seconds', array(122.0, $best)), 0.01);
+        $this->assertEqualsWithDelta(96.0, $this->invoke_private('social_reel_clamp_audio_seconds', array(122.0, $best)), 0.01);
         $user_best = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news'), false, $best));
         $this->assertStringContainsString('2D clean vector stick-figure newsroom', $user_best);
-        $this->assertStringContainsString('135–150', $user_best);
+        $this->assertStringContainsString('Go past 150', $user_best);
         $this->assertStringContainsString('Pack 3–5 supplied desk stories', $user_best);
         $cheap_best = array_merge($best, array('social_reel_dev_cheap' => 1));
         $this->assertFalse($this->invoke_private('social_reel_is_roundup', array($cheap_best)));
@@ -4179,13 +4188,15 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->assertLessThanOrEqual(4500, (int) $slot['ms']);
         }
         $this->assertGreaterThanOrEqual(12, count($roundup_cards));
-        $this->assertLessThanOrEqual(16, count($roundup_cards));
+        $this->assertLessThanOrEqual(24, count($roundup_cards));
         $this->assertSame('Hook', $roundup_cards[0]['label']);
         $this->assertSame('Follow', $roundup_cards[count($roundup_cards) - 1]['label']);
         $this->assertTrue($this->invoke_private('social_reel_teach_guard', array($slots, 60.0, 0.0)));
-        $long_vo = implode(' ', array_fill(0, 150, 'technorapper'));
+        $long_vo = implode(' ', array_fill(0, 220, 'technorapper'));
         $kept_vo = $this->invoke_private('sanitize_reel_script', array($long_vo, array(), get_post($lead), $best));
-        $this->assertSame(150, count(preg_split('/\s+/', $kept_vo, -1, PREG_SPLIT_NO_EMPTY)));
+        $this->assertSame(220, count(preg_split('/\s+/', $kept_vo, -1, PREG_SPLIT_NO_EMPTY)));
+        $trimmed_vo = $this->invoke_private('sanitize_reel_script', array(implode(' ', array_fill(0, 300, 'technorapper')), array(), get_post($lead), $best));
+        $this->assertSame(240, count(preg_split('/\s+/', $trimmed_vo, -1, PREG_SPLIT_NO_EMPTY)));
         $scenes = $this->invoke_private('social_reel_spoken_scene_lines', array($long_vo, 16));
         $this->assertCount(16, $scenes);
         $this->assertStringStartsWith('technorapper', $scenes[0]);

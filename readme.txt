@@ -57,8 +57,8 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.2.90 =
-* Best roundup Reels keep a 135–150 word voiceover. The brand end card no longer fills leftover time — scenes follow the spoken words, and old 24s files are rebuilt.
-* Cached 15–18s teach scripts are rewritten before a Best Reel is muxed.
+* Best roundup Reels keep at least 135 spoken words. 150 is not a cap — the voiceover can run 180–240 words when 4–5 stories need the room. Scenes follow the spoken words; the brand end card is not leftover filler.
+* Cached 15–18s teach scripts and old 24s roundups are rewritten before mux.
 
 = 0.2.89 =
 * Best production path is now a 60-second stick-figure newsroom roundup: 135–150 words, 3–5 desk stories, scene every 3–4 seconds, then auto-post to Instagram and YouTube.
@@ -226,7 +226,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.2.90 =
-Best Reels now keep the 60-second script on screen. The TechnoRapper end card is no longer half the video.
+Best Reels keep a full roundup on screen. The script can go past 150 words when the stories need it. The TechnoRapper end card is no longer half the video.
 
 = 0.2.89 =
 Best production path is a 60-second stick-figure news roundup (3–5 stories) that auto-posts. Budget is still the short Veo Lite teach cut.
