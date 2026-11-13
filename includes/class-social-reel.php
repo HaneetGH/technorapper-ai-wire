@@ -171,7 +171,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return array(
             'best' => array(
                 'label' => 'Best production path',
-                'short' => '60s stick-figure newsroom roundup; the worker posts it',
+                'short' => 'stick-figure newsroom roundup; the worker posts it',
                 'settings' => array(
                     'social_reel_recipe' => 'story',
                     'social_reel_include_host' => 0,
@@ -508,6 +508,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function social_reel_max_audio_seconds($settings = null) {
+        if ($this->social_reel_is_roundup($settings)) {
+            return 96.0;
+        }
         $target = (float) $this->social_reel_target_seconds($settings);
         return max(24.0, min(72.0, $target + 12.0));
     }
@@ -522,7 +525,23 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return max(3.0, min($max, $seconds));
     }
 
+    private function social_reel_script_word_floor($settings = null) {
+        return $this->social_reel_is_roundup($settings) ? 130 : 12;
+    }
+
+    private function social_reel_script_clip_chars($settings = null) {
+        return $this->social_reel_is_roundup($settings) ? 4000 : 1200;
+    }
+
+    private function social_reel_script_word_count($script) {
+        $words = preg_split('/\s+/', trim(wp_strip_all_tags((string) $script)), -1, PREG_SPLIT_NO_EMPTY);
+        return is_array($words) ? count($words) : 0;
+    }
+
     private function social_reel_script_word_budget($settings = null) {
+        if ($this->social_reel_is_roundup($settings)) {
+            return 240;
+        }
         $target = $this->social_reel_target_seconds($settings);
         if ($target >= 55) {
             return 150;
@@ -591,14 +610,14 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     private function social_reel_script_brief($settings = null) {
         $settings = $this->social_reel_effective_settings($settings);
         if ($this->social_reel_is_roundup($settings)) {
-            return '135–150 spoken words, about 55–60 seconds at ~2.5 words/sec. '
+            return 'At least 135 spoken words. 150 is a floor, not a cap — use 180–240 words when 4–5 stories need the room. Do not pad, and do not cut a story to stay under 150. '
                 . 'You are an elite viral short-form producer for YouTube Shorts, Instagram Reels, and TikTok. '
                 . 'Convert the supplied tech stories into a high-retention voiceover for a 2D clean vector stick-figure newsroom. '
                 . 'Never open with Hello guys or Welcome back. Hook in the first 3 seconds with a high-stakes curiosity line. '
                 . 'Then 3 to 5 stories, exactly two punchy sentences each (what happened, then why it matters or the shocking number). '
                 . 'Use Meanwhile, Next up, or Even crazier between stories. '
                 . 'End with a polarizing comment question, then a 3-word follow CTA such as Follow for daily tech drops. '
-                . 'reel_captions is the VISUAL CUE column: 12–16 short scene lines (max 6 words) that change every 3–4 seconds, each starting from 2D clean vector stick-figure news. reel_script is the VOICEOVER column. '
+                . 'reel_captions is the VISUAL CUE column: 12–24 short scene lines (max 6 words) that change every 3–4 seconds, each starting from 2D clean vector stick-figure news. reel_script is the VOICEOVER column. '
                 . 'Ban: today we discuss, in this video, according to reports, experts say, let’s dive in, moving on, in conclusion.';
         }
         $target = $this->social_reel_target_seconds($settings);
@@ -630,7 +649,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             (string) ($copy['hook'] ?? ''),
             $this->social_reel_dev_cheap_on($settings) ? 'cheap' : 'prod',
             !empty($settings['enable_web_search']) ? 'web' : 'local',
-            $this->social_reel_is_roundup($settings) ? 'roundup-v1' : 'lesson-v1',
+            $this->social_reel_is_roundup($settings) ? 'roundup-v3' : 'lesson-v1',
             implode(',', $this->social_reel_roundup_ids($post, $settings)),
         )));
     }
@@ -697,8 +716,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
 
     private function social_reel_enrich_lesson($post, $settings, $copy, $script) {
         $copy = is_array($copy) ? $copy : array();
+        $script = $this->sanitize_reel_script($script, $copy, $post, $settings);
         $fingerprint = $this->social_reel_lesson_key($post, $settings, $copy, $script);
-        $script = $this->social_reel_trim_script($script, $settings);
         $cached = json_decode((string) get_post_meta($post->ID, '_tr_ai_wire_reel_lesson', true), true);
         if (is_array($cached) && (string) ($cached['key'] ?? '') === $fingerprint && !empty($cached['reel_script'])) {
             $copy['reel_script'] = $this->sanitize_reel_script($cached['reel_script'], $copy, $post, $settings);
@@ -709,11 +728,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
 
         $roundup = $this->social_reel_is_roundup($settings);
-        $this->social_reel_progress_note($post->ID, $roundup ? 'Writing a 60-second stick-figure news roundup…' : 'Researching a teach script for this Reel…');
+        $this->social_reel_progress_note($post->ID, $roundup ? 'Writing a stick-figure news roundup…' : 'Researching a teach script for this Reel…');
         $stories = $this->social_reel_roundup_stories($post, $settings);
         $web = !empty($settings['enable_web_search']);
         if ($roundup) {
-            $system = 'You are an elite viral short-form video producer for ' . self::site_brand_name() . ', specializing in fast-paced 60-second tech news roundups for YouTube Shorts, Instagram Reels, and TikTok. '
+            $system = 'You are an elite viral short-form video producer for ' . self::site_brand_name() . ', specializing in fast-paced tech news roundups for YouTube Shorts, Instagram Reels, and TikTok. Length follows the stories — never cut a desk item to stay under 150 words. '
                 . '2D clean vector stick-figure newsroom. Ground every claim in the supplied stories. Never invent prices, quotes, dates, or extra companies. Return JSON only.';
             $user = 'Build the two-column roundup: VISUAL CUE (reel_captions) and VOICEOVER (reel_script).'
                 . "\n" . $this->social_reel_script_brief($settings)
@@ -736,12 +755,19 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 . "\nArticle JSON:\n" . wp_json_encode($snapshot)
                 . "\nReturn JSON keys: reel_script, reel_captions (array).";
         }
-        $parsed = $this->ai_json($settings['writer_model'] ?? 'gpt-6-luna', $system, $user, $settings, $web);
+        $lesson_settings = $settings;
+        if ($roundup) {
+            $lesson_settings['max_output_tokens'] = max(2800, (int) ($settings['max_output_tokens'] ?? 2800));
+        }
+        $parsed = $this->ai_json($settings['writer_model'] ?? 'gpt-6-luna', $system, $user, $lesson_settings, $web);
         if (is_wp_error($parsed)) {
             // Keep the existing script if research fails — still assemble.
             return array('copy' => $copy, 'script' => $script !== '' ? $script : $this->fallback_reel_script($copy, $post, $settings));
         }
         $next_script = $this->sanitize_reel_script($parsed['reel_script'] ?? $script, $copy, $post, $settings);
+        if ($this->social_reel_script_word_count($next_script) < $this->social_reel_script_word_floor($settings)) {
+            $next_script = $this->sanitize_reel_script($this->fallback_reel_script($copy, $post, $settings), $copy, $post, $settings);
+        }
         $next_caps = $this->sanitize_reel_captions($parsed['reel_captions'] ?? ($copy['reel_captions'] ?? array()), $next_script, $settings);
         $copy['reel_script'] = $next_script;
         $copy['reel_captions'] = $next_caps;
@@ -970,19 +996,22 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $parts = array('Tech just moved faster in the last 24 hours than all of last month — here are the updates you need to know.');
             foreach ($this->social_reel_roundup_stories($post, $settings) as $i => $story) {
                 $title = trim(wp_strip_all_tags((string) ($story['title'] ?? '')));
-                $take = trim(wp_strip_all_tags((string) (($story['key_takeaways'][0] ?? $story['lede'] ?? $story['excerpt'] ?? ''))));
+                $take = trim(wp_strip_all_tags((string) (($story['key_takeaways'][0] ?? $story['lede'] ?? ''))));
+                $excerpt = trim(wp_strip_all_tags((string) ($story['excerpt'] ?? '')));
                 if ($title === '') {
                     continue;
                 }
                 $parts[] = ($joins[$i] ?? 'Next up, ') . rtrim($title, '.') . '.';
                 if ($take !== '' && strcasecmp($take, $title) !== 0) {
-                    $parts[] = rtrim($this->clip_social_text($take, 140), '.') . '.';
+                    $parts[] = rtrim($this->clip_social_text($take, 180), '.') . '.';
+                }
+                if ($excerpt !== '' && strcasecmp($excerpt, $take) !== 0 && strcasecmp($excerpt, $title) !== 0) {
+                    $parts[] = rtrim($this->clip_social_text($excerpt, 220), '.') . '.';
                 }
             }
             $parts[] = 'Which update changes how you work? Follow for daily tech drops.';
             $roundup = $this->social_reel_trim_script(implode(' ', $parts), $settings);
-            $words = preg_split('/\s+/', $roundup, -1, PREG_SPLIT_NO_EMPTY);
-            if (is_array($words) && count($words) >= 12) {
+            if ($this->social_reel_script_word_count($roundup) >= 12) {
                 return $roundup;
             }
         }
@@ -1013,10 +1042,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $this->clip_social_block($script, 700);
     }
 
-    private function writer_reel_script_present($raw) {
-        $script = $this->clip_social_block(is_array($raw) ? ($raw['reel_script'] ?? '') : '', 1200);
-        $words = preg_split('/\s+/', $script, -1, PREG_SPLIT_NO_EMPTY);
-        return count($words) >= 12;
+    private function writer_reel_script_present($raw, $settings = null) {
+        $script = $this->clip_social_block(is_array($raw) ? ($raw['reel_script'] ?? '') : '', $this->social_reel_script_clip_chars($settings));
+        return $this->social_reel_script_word_count($script) >= 12;
     }
 
     private function social_reel_caption_limit($settings = null) {
@@ -1057,9 +1085,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function sanitize_reel_script($raw, $copy, $post, $settings = null) {
-        $script = $this->clip_social_block($raw, 1200);
-        $words = preg_split('/\s+/', $script, -1, PREG_SPLIT_NO_EMPTY);
-        if (count($words) < 12) {
+        $script = $this->clip_social_block($raw, $this->social_reel_script_clip_chars($settings));
+        if ($this->social_reel_script_word_count($script) < $this->social_reel_script_word_floor($settings)) {
             $script = $this->fallback_reel_script($copy, $post, $settings);
         }
         return $this->social_reel_trim_script($script, $settings);
@@ -1127,8 +1154,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
 
     private function build_social_reel_timeline($copy, $duration, $settings = null) {
         $copy = is_array($copy) ? $copy : array();
-        $max = (float) $this->social_reel_target_seconds($settings) + 12;
-        $max = max(24.0, min(72.0, $max));
+        $max = $this->social_reel_max_audio_seconds($settings);
         $duration = max(12.0, min($max, (float) $duration));
         $hook = trim((string) ($copy['hook'] ?? $copy['on_image_headline'] ?? ''));
         $captions = array_values((array) ($copy['reel_captions'] ?? array()));
@@ -1452,15 +1478,15 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($existing > 0 && (string) get_post_meta($existing, '_tr_ai_wire_voice_key', true) === $key) {
             $path = get_attached_file($existing);
             if ($path && file_exists($path) && filesize($path) > 512) {
-                $raw = (float) $this->social_mp3_duration($path);
+                $seconds = $this->social_reel_clamp_audio_seconds(
+                    $this->social_audio_duration($path, $script, $settings),
+                    $settings
+                );
+                $expected = $this->social_reel_script_word_count($script) / 2.5;
                 $max = $this->social_reel_max_audio_seconds($settings);
-                // Never reuse an overlong voice file — Fal can extend the mux to match it.
-                if ($raw <= 0 || $raw <= ($max + 5.0)) {
-                    $seconds = (float) get_post_meta($existing, '_tr_ai_wire_voice_seconds', true);
-                    if ($seconds <= 0) {
-                        $seconds = $this->social_audio_duration($path, $script, $settings);
-                    }
-                    $seconds = $this->social_reel_clamp_audio_seconds($seconds, $settings);
+                // Never reuse an overlong file, or a short leftover from an old 18s teach cut.
+                if ($seconds > 0 && $seconds <= ($max + 5.0) && ($expected < 20 || $seconds >= ($expected * 0.55))) {
+                    update_post_meta($existing, '_tr_ai_wire_voice_seconds', (string) $seconds);
                     return array('id' => $existing, 'path' => $path, 'key' => $key, 'seconds' => $seconds);
                 }
                 if (get_post_meta($existing, '_tr_ai_wire_social_asset', true) === '1') {
@@ -1788,6 +1814,25 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $lines;
     }
 
+    /**
+     * On-screen lines taken from the spoken voiceover, in order, so the card
+     * the viewer sees is the beat they are hearing.
+     */
+    private function social_reel_spoken_scene_lines($script, $count) {
+        $count = max(1, (int) $count);
+        $words = preg_split('/\s+/', trim(wp_strip_all_tags((string) $script)), -1, PREG_SPLIT_NO_EMPTY);
+        if (!is_array($words) || !$words) {
+            return array();
+        }
+        $per = max(4, min(6, (int) ceil(count($words) / $count)));
+        $lines = array();
+        for ($i = 0; $i < count($words) && count($lines) < $count; $i += $per) {
+            $lines[] = implode(' ', array_slice($words, $i, $per));
+        }
+        $pad = $this->social_reel_card_lines(array('core' => $lines, 'extra' => array()), $count);
+        return array_slice($pad, 0, $count);
+    }
+
     private function social_reel_card_label($index, $total, $settings = null) {
         $index = (int) $index;
         $total = max(1, (int) $total);
@@ -1895,7 +1940,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 }
             }
             $card_total = $audio_ms - (count($accent_after) * $accent_ms);
-            $lines = $this->social_reel_card_lines($pool, $card_n);
+            $lines = $this->social_reel_is_roundup($settings)
+                ? $this->social_reel_spoken_scene_lines((string) ($copy['reel_script'] ?? ''), $card_n)
+                : $this->social_reel_card_lines($pool, $card_n);
+            if (count($lines) < $card_n) {
+                $lines = $this->social_reel_card_lines($pool, $card_n);
+            }
             $each = intdiv($card_total, $card_n);
             $tail_ms = max(0, $this->social_reel_ms($motion_seconds) - $accent_ms);
             $accents = 0;
@@ -2006,7 +2056,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $host = (is_array($parts['host'] ?? null) && !empty($parts['host']['path'])) ? $parts['host'] : null;
         $motion = (is_array($parts['motion'] ?? null) && !empty($parts['motion']['path'])) ? $parts['motion'] : null;
-        $audio = $this->social_reel_clamp_audio_seconds((float) ($voice['seconds'] ?? 0), $settings);
+        $declared = (float) ($voice['seconds'] ?? 0);
+        $measured = $this->social_audio_duration((string) ($voice['path'] ?? ''), (string) ($copy['reel_script'] ?? ''), $settings);
+        // Prefer the real file when it is longer than a stale stored length (that
+        // froze the end card). Keep a declared length when the probe is a stub.
+        $audio = $this->social_reel_clamp_audio_seconds(max($measured, $declared), $settings);
         $motion_seconds = $motion ? $this->social_reel_motion_source_seconds((string) $motion['path'], $settings) : 0.0;
         $host_seconds = 0.0;
         if ($host) {
@@ -2020,7 +2074,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (is_wp_error($guard)) {
             return $guard;
         }
-        $sting_seconds = !empty($plan['sting']) ? (!empty($plan['story']) ? (float) $this->social_reel_sting_seconds($settings) : 2.0) : 0.0;
+        $sting_seconds = 0.0;
+        if (!empty($plan['sting']) && !$this->social_reel_is_roundup($settings)) {
+            $sting_seconds = !empty($plan['story']) ? (float) $this->social_reel_sting_seconds($settings) : 2.0;
+        }
         $use_sting = $sting_seconds > 0 && (string) get_post_meta($post->ID, '_tr_ai_wire_reel_no_sting', true) !== '1';
         $assets = $this->social_reel_teach_assets($post, $copy, is_string($photo_bytes) ? $photo_bytes : '', $slots, $use_sting, $sting_seconds, $end_caption, $bake);
         if (is_wp_error($assets)) {
@@ -2214,7 +2271,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 . ($slot['kind'] === 'card' ? ':' . (int) ($teach['assets']['cards'][(int) $slot['card']]['id'] ?? 0) : '');
         }
         $input_key = md5(implode('|', array(
-            self::SOCIAL_REEL_CUT,
+            $this->social_reel_cut_name($settings),
             (string) ($voice['key'] ?? ''),
             (int) ($teach['host']['id'] ?? 0),
             (int) ($teach['motion']['id'] ?? 0),
@@ -2306,7 +2363,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $this->social_reel_progress_note(
             $post->ID,
             $this->social_reel_is_roundup($settings)
-                ? 'Assembling the 60s stick-figure roundup on this server: scenes every 3–4s, short B-roll accents only.'
+                ? 'Assembling the stick-figure roundup on this server: scenes every 3–4s, short B-roll accents only.'
                 : 'Assembling the teach cut on this server: lesson cards first, short B-roll accents only.'
         );
         $clips = array();
@@ -2401,7 +2458,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $info = $describe('_tr_ai_wire_fal_compose_request');
         $steps[] = array(
             'key' => 'assemble',
-            'label' => $roundup ? 'Assemble the 60s stick-figure roundup' : 'Assemble the teach cut (lesson cards + voice + sting)',
+            'label' => $roundup ? 'Assemble the stick-figure roundup' : 'Assemble the teach cut (lesson cards + voice + sting)',
             'state' => $finished ? 'done' : ($info['active'] ? 'active' : 'todo'),
             'detail' => $finished ? '' : $info['detail'],
         );
@@ -2572,7 +2629,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return $this->social_reel_assemble_locally($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
         }
         $note = $this->social_reel_is_roundup($settings)
-            ? 'Assembling a 60s stick-figure news roundup at Fal: scenes every 3–4s, short B-roll accents only.'
+            ? 'Assembling a stick-figure news roundup at Fal: scenes every 3–4s, short B-roll accents only.'
             : 'Assembling a teach Reel at Fal: lesson cards first, short B-roll accents only.';
         if (!empty($plan['host'])) {
             $note = 'Assembling a story Reel at Fal: cold-open lesson card, short host hook, then lesson cards.';
@@ -4044,7 +4101,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return new WP_Error('tr_ai_wire_social_image_key', 'Add the OpenAI API key before generating a Reel voiceover.');
         }
         $response = wp_remote_post('https://api.openai.com/v1/audio/speech', array(
-            'timeout' => 60,
+            'timeout' => $this->social_reel_is_roundup($settings) ? 180 : 60,
             'headers' => array(
                 'Authorization' => 'Bearer ' . $key,
                 'Content-Type' => 'application/json',
@@ -4084,13 +4141,13 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             ));
             if (!is_wp_error($result)) {
                 $seconds = (float) trim((string) $result);
-                if ($seconds >= 3 && $seconds <= 90) {
+                if ($seconds >= 3 && $seconds <= 120) {
                     return max(3.0, min($max, $seconds));
                 }
             }
         }
         $seconds = $this->social_mp3_duration($path);
-        if ($seconds >= 3 && $seconds <= 90) {
+        if ($seconds >= 3 && $seconds <= 120) {
             return max(3.0, min($max, $seconds));
         }
         $words = preg_split('/\s+/', wp_strip_all_tags((string) $script), -1, PREG_SPLIT_NO_EMPTY);

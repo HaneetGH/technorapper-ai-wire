@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.89
+Stable tag: 0.2.90
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,10 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.90 =
+* Best roundup Reels keep at least 135 spoken words. 150 is not a cap — the voiceover can run 180–240 words when 4–5 stories need the room. Scenes follow the spoken words; the brand end card is not leftover filler.
+* Cached 15–18s teach scripts and old 24s roundups are rewritten before mux.
 
 = 0.2.89 =
 * Best production path is now a 60-second stick-figure newsroom roundup: 135–150 words, 3–5 desk stories, scene every 3–4 seconds, then auto-post to Instagram and YouTube.
@@ -220,6 +224,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.90 =
+Best Reels keep a full roundup on screen. The script can go past 150 words when the stories need it. The TechnoRapper end card is no longer half the video.
 
 = 0.2.89 =
 Best production path is a 60-second stick-figure news roundup (3–5 stories) that auto-posts. Budget is still the short Veo Lite teach cut.

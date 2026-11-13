@@ -1839,14 +1839,14 @@ trait TechnoRapper_AI_Wire_Social {
             $maybe = json_decode($cached, true);
             if (is_array($maybe) && !empty($maybe['x']) && !empty($maybe['instagram'])) {
                 $decoded = $maybe;
-                if (!$this->social_wants_reel($settings, (int) $post->ID) || $this->writer_reel_script_present($decoded)) {
-                    return $this->sanitize_social_copy($decoded, $post);
+                if (!$this->social_wants_reel($settings, (int) $post->ID) || $this->writer_reel_script_present($decoded, $settings)) {
+                    return $this->sanitize_social_copy($decoded, $post, $settings);
                 }
             }
         }
         $generated = $this->generate_social_copy($post, $settings);
         if (!is_wp_error($generated) && is_array($generated)) {
-            $copy = $this->sanitize_social_copy($generated, $post);
+            $copy = $this->sanitize_social_copy($generated, $post, $settings);
             $guard = $this->policy_guard_social_copy($copy);
             if (is_wp_error($guard)) {
                 return $guard;
@@ -1859,9 +1859,9 @@ trait TechnoRapper_AI_Wire_Social {
             return $generated;
         }
         if (is_array($decoded)) {
-            return $this->sanitize_social_copy($decoded, $post);
+            return $this->sanitize_social_copy($decoded, $post, $settings);
         }
-        $copy = $this->sanitize_social_copy(array(), $post);
+        $copy = $this->sanitize_social_copy(array(), $post, $settings);
         $guard = $this->policy_guard_social_copy($copy);
         if (is_wp_error($guard)) {
             return $guard;
@@ -1929,7 +1929,7 @@ trait TechnoRapper_AI_Wire_Social {
         $system = $this->social_copy_system_prompt($brand, $comic);
         $user = $this->social_copy_user_prompt($brand, $profile, $snapshot, $comic, $s);
         $copy_settings = $s;
-        $copy_settings['max_output_tokens'] = min(1600, max(400, (int) ($s['max_output_tokens'] ?? 1600)));
+        $copy_settings['max_output_tokens'] = min($this->social_reel_is_roundup($s) ? 2800 : 1600, max(400, (int) ($s['max_output_tokens'] ?? 1600)));
         return $this->ai_json($s['writer_model'] ?? 'gpt-6-luna', $system, $user, $copy_settings, false);
     }
 
@@ -1962,12 +1962,12 @@ trait TechnoRapper_AI_Wire_Social {
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
             . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings)
             . ($this->social_reel_is_roundup($settings)
-                ? ' Pack 3–5 supplied desk stories into one 60-second roundup. Do not invent extra companies. '
+                ? ' Pack 3–5 supplied desk stories into one spoken roundup. Go past 150 words when the stories need it. Do not invent extra companies. '
                 : ' THIS article only. Teach the viewer something they can repeat. Not a robot reading a press release. Beats: (1) pattern-interrupt hook naming the change; (2) what this is in plain words; (3) why it matters / the mechanism from key_takeaways; (4) one concrete example for their phone, game, job, or money; (5) the takeaway. Do not tease. No packing other stories into a roundup. ')
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
             . 'Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL. '
             . ($this->social_reel_is_roundup($settings)
-                ? 'reel_captions: 12–16 short on-screen scene lines (max 6 words) that change every 3–4 seconds. '
+                ? 'reel_captions: 12–24 short on-screen scene lines (max 6 words) that change every 3–4 seconds. '
                 : 'reel_captions: 4–5 short on-screen lesson lines (max 6 words) matching those beats — big sparse text for animated cards and B-roll. ')
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. '
             . (!empty($comic) ? 'A dry wink is fine if the named change is still obvious. ' : '')
@@ -1983,7 +1983,7 @@ trait TechnoRapper_AI_Wire_Social {
         return $user;
     }
 
-    private function sanitize_social_copy($raw, $post) {
+    private function sanitize_social_copy($raw, $post, $settings = null) {
         $raw = is_array($raw) ? $raw : array();
         $url = get_permalink($post);
         $title = trim((string) $post->post_title);
@@ -2043,8 +2043,8 @@ trait TechnoRapper_AI_Wire_Social {
             'instagram_alt' => $alt,
             'hashtags' => $hashtags,
         );
-        $copy['reel_script'] = $this->sanitize_reel_script($raw['reel_script'] ?? '', $copy, $post);
-        $copy['reel_captions'] = $this->sanitize_reel_captions($raw['reel_captions'] ?? array(), $copy['reel_script']);
+        $copy['reel_script'] = $this->sanitize_reel_script($raw['reel_script'] ?? '', $copy, $post, $settings);
+        $copy['reel_captions'] = $this->sanitize_reel_captions($raw['reel_captions'] ?? array(), $copy['reel_script'], $settings);
         $copy['youtube_title'] = $this->sanitize_youtube_title($raw['youtube_title'] ?? '', $copy, $post);
         $copy['youtube_description'] = $this->sanitize_youtube_description($raw['youtube_description'] ?? '', $copy, $post);
         $copy['youtube_tags'] = $this->sanitize_youtube_tags($raw['youtube_tags'] ?? array(), $copy);

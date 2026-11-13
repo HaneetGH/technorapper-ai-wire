@@ -61,7 +61,7 @@ The separation is intentional:
 3. **Queue insert:** Skip social if the article’s review score is below `social_min_review_score` (default **90**). 90 means a complete original article; 85–89 stay on the website. The writer aims at 90, clustered complete scores are raised to 90, and one polish pass can apply reviewer fixes. Qualifying articles get one `queued` row per connected platform. YouTube is skipped unless the article’s social mode is `reel`. Instagram stills wait at least 3 hours after the last Instagram publish, and their captions never include a URL.
 4. **Copy generation:** One Writer JSON pass. Copy uses a named hook, pays it off, and asks for a save or send. Generic bait (“wait for it”, “you won’t believe”) is banned in the prompt and stripped before publish. Invalid or policy-failing copy is held; it is never sent to an adapter.
 5. **Still graphic:** GPT Image 2 low 1080×1350, GD overlay of this site’s name, cached as `_tr_ai_wire_social_image_id`. Reused across platforms. X always gets this still (even when Instagram/YouTube get a Reel).
-6. **Spoken Reel (when mix allots a Reel or Generate Reel now runs):** Audio-first cards-first cut. Mini TTS (`gpt-4o-mini-tts` / male `cedar` by default) is recorded first. **Best production path** is a 60-second 2D stick-figure newsroom roundup (135–150 words, 3–5 desk stories, scene every 3–4 seconds). MiniMax H3 Max (`minimax/h3-max/image-to-video`) supplies short silent accents and the worker auto-posts at least one Reel per day. **Budget path** keeps the 18s numbered-lesson teach cut with Veo 3.1 Lite and also auto-posts. Custom still offers Veo Fast/full, Kling 3.0, and an optional talking-host upsell (Kling Avatar). Local ffmpeg muxes when present; otherwise Fal `ffmpeg-api/compose`. **Generate Reel now** holds the MP4 on Social queue until a human clicks Post. Instagram sets `media_type=REELS`, `share_to_feed=true`, `is_ai_generated=true`. YouTube uploads the same file as a Short (`containsSyntheticMedia`). X gets the still only. Missing Fal key **holds** the job — no slideshow fallback.
+6. **Spoken Reel (when mix allots a Reel or Generate Reel now runs):** Audio-first cards-first cut. Mini TTS (`gpt-4o-mini-tts` / male `cedar` by default) is recorded first. **Best production path** is a 2D stick-figure newsroom roundup (at least 135 spoken words, 180–240 when 4–5 desk stories need the room, scene every 3–4 seconds). MiniMax H3 Max (`minimax/h3-max/image-to-video`) supplies short silent accents and the worker auto-posts at least one Reel per day. **Budget path** keeps the 18s numbered-lesson teach cut with Veo 3.1 Lite and also auto-posts. Custom still offers Veo Fast/full, Kling 3.0, and an optional talking-host upsell (Kling Avatar). Local ffmpeg muxes when present; otherwise Fal `ffmpeg-api/compose`. **Generate Reel now** holds the MP4 on Social queue until a human clicks Post. Instagram sets `media_type=REELS`, `share_to_feed=true`, `is_ai_generated=true`. YouTube uploads the same file as a Short (`containsSyntheticMedia`). X gets the still only. Missing Fal key **holds** the job — no slideshow fallback.
 7. **Publish:** X, Instagram and YouTube adapters run separately. Ambiguous timeouts go to `needs_review`; they are not blindly retried.
 8. **YouTube listing:** `videos.insert` sets title, description (`#Shorts` + tags + permalink), tags, category, language, license, **public** privacy, not-made-for-kids, and synthetic-media disclosure in that call. `publishAt` is never set. If the channel default is private, the worker updates the video to public.
 
@@ -106,7 +106,7 @@ flowchart TD
     I -->|No| K[Do not enqueue]
 ```
 
-- **Reel:** Best is a 60s stick-figure newsroom roundup of 3–5 desk stories (scene every 3–4s). Budget is an 18s one-article teach cut. Default daily limit **0** until Best/Budget is saved, which raises it to at least 1 and auto-posts.
+- **Reel:** Best is a stick-figure newsroom roundup of 3–5 desk stories (scene every 3–4s; longer than 150 words when needed). Budget is an 18s one-article teach cut. Default daily limit **0** until Best/Budget is saved, which raises it to at least 1 and auto-posts.
 - **Carousel:** swipeable Instagram post (cover + stories + curiosity slide). X attaches up to 4 images in one tweet.
 - **Collage:** one packed graphic of several posters.
 - **Single:** one article, one still.
@@ -120,7 +120,7 @@ flowchart TD
     A[Published article score ≥ floor] --> B{Best or Budget saved?}
     B -->|Yes: Reel posts per day ≥ 1| C[Social worker claims the article]
     B -->|Custom / Generate Reel now| D[Hold for review]
-    C --> E[135-150 word roundup VO]
+    C --> E[135-240 word roundup VO]
     D --> E
     E --> F[Mini TTS voiceover]
     F --> G[Stick-figure newsroom scenes every 3-4s]
@@ -164,7 +164,7 @@ Adapters own authentication, payload formatting, media upload and error classifi
 ## Social Creative Engine
 
 1. **GPT Image 2 low poster** (default): 1080×1350, hashed layout variant, site-name overlay. Required for X stills and as the Reel still that Fal animates.
-2. **Spoken Reel:** Best is a 60s stick-figure newsroom roundup with MiniMax H3 Max accents (~$0.18 / 5s silent). Budget is the 18s Veo 3.1 Lite teach cut (~$0.24 / 8s). Custom still lists Veo Fast, Veo 3.1, and Kling 3.0. Optional talking-host upsell (Kling Avatar + CodeFormer). **$10/month** video budget. Price estimate page compares them.
+2. **Spoken Reel:** Best is a stick-figure newsroom roundup (135–240 spoken words) with MiniMax H3 Max accents (~$0.18 / 5s silent). Budget is the 18s Veo 3.1 Lite teach cut (~$0.24 / 8s). Custom still lists Veo Fast, Veo 3.1, and Kling 3.0. Optional talking-host upsell (Kling Avatar + CodeFormer). **$10/month** video budget. Price estimate page compares them.
 3. **No slideshow fallback.** Missing Fal key or video budget holds the Reel/YouTube job. Local ffmpeg is optional.
 
 **Hard invariant:** Image and video generation are only invoked from the social worker for an enabled destination. They are never invoked by the article Writer, Reviewer, publisher or featured-image flow. A social failure never blocks or changes the WordPress article.
