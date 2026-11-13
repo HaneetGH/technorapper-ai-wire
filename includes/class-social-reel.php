@@ -2047,13 +2047,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $host = (is_array($parts['host'] ?? null) && !empty($parts['host']['path'])) ? $parts['host'] : null;
         $motion = (is_array($parts['motion'] ?? null) && !empty($parts['motion']['path'])) ? $parts['motion'] : null;
-        $audio = $this->social_reel_clamp_audio_seconds(
-            $this->social_audio_duration((string) ($voice['path'] ?? ''), (string) ($copy['reel_script'] ?? ''), $settings),
-            $settings
-        );
-        if ($audio < 3) {
-            $audio = $this->social_reel_clamp_audio_seconds((float) ($voice['seconds'] ?? 0), $settings);
-        }
+        $declared = (float) ($voice['seconds'] ?? 0);
+        $measured = $this->social_audio_duration((string) ($voice['path'] ?? ''), (string) ($copy['reel_script'] ?? ''), $settings);
+        // Prefer the real file when it is longer than a stale stored length (that
+        // froze the end card). Keep a declared length when the probe is a stub.
+        $audio = $this->social_reel_clamp_audio_seconds(max($measured, $declared), $settings);
         $motion_seconds = $motion ? $this->social_reel_motion_source_seconds((string) $motion['path'], $settings) : 0.0;
         $host_seconds = 0.0;
         if ($host) {
