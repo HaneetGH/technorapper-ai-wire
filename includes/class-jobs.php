@@ -401,7 +401,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                 $this->note_background_progress(8, 'Fetching feeds');
                 $summary = $this->process_feeds(array('foreground' => true, 'reason' => 'manual'));
                 $rounds = 0;
-                while ($rounds < 3 && is_array($summary) && empty($summary['skipped'])) {
+                while ($rounds < 12 && is_array($summary) && empty($summary['skipped'])) {
                     $s = $this->settings();
                     if ($this->remaining_posts_today($s) <= 0) {
                         break;
@@ -415,7 +415,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                         break;
                     }
                     $rounds++;
-                    $this->note_background_progress(25 + min(60, $rounds * 15), 'Filling today\'s post cap');
+                    $this->note_background_progress(25 + min(60, $rounds * 5), 'Filling today\'s post cap');
                     $more = $this->process_feeds(array('foreground' => true, 'reason' => 'continue'));
                     if (!is_array($more)) {
                         break;
@@ -425,6 +425,9 @@ trait TechnoRapper_AI_Wire_Jobs {
                     }
                     if (!empty($more['skipped'])) {
                         $summary['skipped'] = $more['skipped'];
+                    }
+                    if ((int) ($more['processed'] ?? 0) < 1) {
+                        break;
                     }
                 }
                 $message = $this->background_fetch_message($summary);

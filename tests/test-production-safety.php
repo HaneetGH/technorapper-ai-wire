@@ -3018,8 +3018,84 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertGreaterThan($pending_id, $held_id);
         $this->assertSame($generated_id, $this->invoke_private('next_pipeline_item_id'));
         $this->assertSame($pending_id, $this->invoke_private('next_pipeline_item_id', array(array($generated_id => true))));
+        $this->assertSame(0, $this->invoke_private('next_pipeline_item_id', array(array($generated_id => true, $pending_id => true))));
         $this->assertTrue($this->invoke_private('pipeline_item_is_unfinished', array($this->invoke_private('get_item', array($pending_id)))));
         $this->assertFalse($this->invoke_private('pipeline_item_is_unfinished', array($this->invoke_private('get_item', array($held_id)))));
+    }
+
+    public function test_failed_stories_do_not_stop_the_run_before_a_publishable_one() {
+        update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['max_posts_per_day'] = 5;
+        $settings['max_items_per_run'] = 2;
+        $settings['auto_publish'] = 1;
+        $settings['monthly_budget_usd'] = 50;
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $good_id = $this->create_queue_item();
+        $deal_ids = array();
+        for ($i = 0; $i < 3; $i++) {
+            $deal_ids[] = $this->create_queue_item();
+        }
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'pending'), array('id' => $good_id));
+        foreach ($deal_ids as $deal_id) {
+            $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+                'status' => 'pending',
+                'source_title' => 'Best 10 laptop deals under $500 this week',
+            ), array('id' => $deal_id));
+        }
+        $calls = 0;
+        $callback = function ($preempt, $args, $url) use (&$calls) {
+            if (strpos((string) $url, 'api.openai.com/v1/responses') === false) {
+                return $preempt;
+            }
+            $calls++;
+            $output = $calls === 1 ? array(
+                'title' => 'Apple announces the M5 chip',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body about the M5 launch.</p>',
+            ) : array(
+                'verdict' => 'pass',
+                'score' => 92,
+                'policy_flags' => array(),
+                'fact_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low', 'is_useful' => true, 'is_new' => true),
+                'story_value' => array(
+                    'publish' => true,
+                    'substance' => 'major',
+                    'reader_demand' => 'high',
+                    'adds_value' => true,
+                    'reason' => 'Named chip launch readers will search.',
+                ),
+            );
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array(
+                    'output' => array(array(
+                        'type' => 'message',
+                        'content' => array(array('type' => 'output_text', 'text' => wp_json_encode($output))),
+                    )),
+                    'usage' => array('input_tokens' => 20, 'output_tokens' => 30),
+                )),
+                'response' => array('code' => 200, 'message' => 'OK'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $summary = $this->plugin->process_feeds(array('foreground' => true, 'reason' => 'continue'));
+        remove_filter('pre_http_request', $callback, 10);
+        $this->assertSame('', (string) ($summary['skipped'] ?? ''));
+        $this->assertSame(3, (int) $summary['quarantined']);
+        $this->assertSame(1, (int) $summary['published']);
+        foreach ($deal_ids as $deal_id) {
+            $deal = $wpdb->get_row($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $deal_id), ARRAY_A);
+            $this->assertSame('quarantined', $deal['status']);
+        }
+        $good = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $good_id), ARRAY_A);
+        $this->assertSame('published', $good['status']);
+        $this->assertGreaterThan(0, (int) $good['wp_post_id']);
+        $this->assertGreaterThanOrEqual(2, $calls);
     }
 
     public function test_atom_feed_queues_every_entry_not_just_the_first() {

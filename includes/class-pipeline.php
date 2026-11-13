@@ -52,7 +52,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
         return (int) $wpdb->get_var($wpdb->prepare(
             "SELECT id FROM {$this->table}
              WHERE (
-                (status IN ('pending', 'new', 'waiting_budget', 'generated', 'rewritten', 'quarantined') AND (wp_post_id IS NULL OR wp_post_id = 0))
+                (status IN ('pending', 'new', 'waiting_budget', 'generated', 'rewritten') AND (wp_post_id IS NULL OR wp_post_id = 0))
                 OR status = 'reviewed'
                 OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s))
              ){$not_in}
@@ -61,8 +61,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
                 WHEN status IN ('generated', 'rewritten') THEN 1
                 WHEN status IN ('pending', 'new', 'waiting_budget') THEN 2
                 WHEN status = 'retry_wait' THEN 3
-                WHEN status = 'quarantined' THEN 4
-                ELSE 5
+                ELSE 4
              END ASC, id DESC
              LIMIT 1",
             current_time('mysql', true)

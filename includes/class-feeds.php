@@ -133,6 +133,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             return;
         }
         $processed_this_run = 0;
+        $filled_this_run = 0;
         $run_limit = (int) $s['max_items_per_run'];
         $started_at = microtime(true);
         $time_budget_seconds = $foreground ? 90 : 25;
@@ -152,7 +153,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             if ($this->remaining_posts_today($s) <= 0) {
                 return;
             }
-            if (count($touched) >= max(1, $run_limit)) {
+            if ($filled_this_run >= max(1, $run_limit)) {
                 $this->schedule_editorial_continue($touched);
                 return;
             }
@@ -168,13 +169,16 @@ trait TechnoRapper_AI_Wire_Feeds {
             $touched[(int) $waiting_id] = true;
             $processed_this_run++;
             $summary['processed'] = $processed_this_run;
-            $this->note_background_progress(20 + (int) (70 * $processed_this_run / max(1, $run_limit)), 'Processing item ' . $processed_this_run);
+            $this->note_background_progress(20 + (int) (70 * max($filled_this_run, 1) / max(1, $run_limit)), 'Processing item ' . $processed_this_run);
             $row = $this->get_item((int) $waiting_id);
-            if (($row['status'] ?? '') === 'draft') {
+            $status = (string) ($row['status'] ?? '');
+            if ($status === 'draft') {
                 $summary['drafts']++;
-            } elseif (($row['status'] ?? '') === 'published') {
+                $filled_this_run++;
+            } elseif ($status === 'published') {
                 $summary['published']++;
-            } elseif (($row['status'] ?? '') === 'quarantined') {
+                $filled_this_run++;
+            } elseif ($status === 'quarantined') {
                 $summary['quarantined']++;
             }
         }
