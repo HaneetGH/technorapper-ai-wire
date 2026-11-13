@@ -4116,6 +4116,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(5, (int) $best['social_reel_clip_seconds']);
         $this->assertSame(60, (int) $best['social_reel_target_seconds']);
         $this->assertSame(1, (int) $best['social_reel_include_slides']);
+        $this->assertSame(0, (int) $best['social_reel_include_broll']);
         $this->assertSame(1, (int) $best['social_reel_enabled']);
         $this->assertSame(1, (int) $best['social_reel_daily_limit']);
         $this->assertTrue($this->invoke_private('social_reel_is_roundup', array($best)));
@@ -6132,14 +6133,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $captured['cards'] = $captured['cards'] ?? array();
         return function ($preempt, $args, $url) use (&$captured, $final_seconds, $card_seconds) {
             $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/images-to-video') !== false && strpos($url, '/requests/') === false) {
+                $body = json_decode((string) ($args['body'] ?? ''), true);
+                $fps = max(1, (int) ($body['fps'] ?? 30));
+                $frames = (int) (($body['images'][0]['frames'] ?? 0));
+                $ms = (int) round(1000 * $frames / $fps);
+                $captured['cards'][] = $ms;
+                return $this->mock_http_ok(array('request_id' => 'card-' . (string) count($captured['cards']) . '-' . $ms, 'status' => 'IN_QUEUE'));
+            }
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
                 $body = json_decode((string) ($args['body'] ?? ''), true);
-                $track = $body['tracks'][0] ?? array();
-                if (($track['type'] ?? '') === 'image') {
-                    $ms = (int) ($track['keyframes'][0]['duration'] ?? 0);
-                    $captured['cards'][] = $ms;
-                    return $this->mock_http_ok(array('request_id' => 'card-' . (string) count($captured['cards']) . '-' . $ms, 'status' => 'IN_QUEUE'));
-                }
                 $captured['submit'] = $body;
                 return $this->mock_http_ok(array('request_id' => 'final-cut', 'status' => 'IN_QUEUE'));
             }
@@ -6306,6 +6309,23 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->dev_cheap_teach_teardown();
     }
 
+    public function test_one_frame_lesson_card_clip_stops_the_build_before_any_final_mux() {
+        if (!function_exists('imagejpeg')) {
+            $this->markTestSkipped('GD is required to render lesson cards.');
+        }
+        $setup = $this->dev_cheap_teach_setup();
+        $captured = array();
+        add_filter('pre_http_request', $this->teach_fal_mock($captured, 16.0, 0.04), 10, 3);
+        $result = $this->invoke_private('social_reel_assemble_with_fal', $setup['args']);
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_cards', $result->get_error_code());
+        $this->assertStringContainsString('milliseconds', $result->get_error_message());
+        $this->assertArrayNotHasKey('submit', $captured, 'A 1-frame card must never be muxed into the finished Reel.');
+        $this->assertSame(0, $this->invoke_private('social_reel_id', array($setup['post_id'])));
+        $this->assertSame(0, (int) get_post_meta($setup['post_id'], '_tr_ai_wire_reel_card_vid_0', true));
+        $this->dev_cheap_teach_teardown();
+    }
+
     public function test_lesson_cards_must_all_be_ready_before_assemble_and_are_not_paid_twice() {
         if (!function_exists('imagejpeg')) {
             $this->markTestSkipped('GD is required to render lesson cards.');
@@ -6429,6 +6449,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             $this->assertSame('tr_ai_wire_reel_cards', $result->get_error_code(), $name);
             $this->assertStringContainsString('will not fall back to a looping B-roll clip', $result->get_error_message(), $name);
         }
+        $this->assertSame(56, (int) $this->invoke_private('social_reel_hold_frames', array(1875, 30)));
+        $this->assertSame(1, (int) $this->invoke_private('social_reel_hold_frames', array(1, 30)));
+        $this->assertSame(1000, (int) $this->invoke_private('social_reel_hold_frames', array(60000, 30)));
+        $padded = $this->invoke_private('social_reel_pad_hold_frames', array(array(
+            array('url' => 'a', 'frames' => 56),
+            array('url' => 'b', 'frames' => 56),
+        ), 120));
+        $this->assertFalse(is_wp_error($padded), is_wp_error($padded) ? $padded->get_error_message() : '');
+        $this->assertSame(56, (int) $padded[0]['frames']);
+        $this->assertSame(64, (int) $padded[1]['frames']);
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'social_fal_loop_keyframes'));
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'compose_social_reel_motion'));
         $repeat = $guard(array(
@@ -6521,7 +6551,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('repeats', $reused->get_error_message());
     }
 
-    public function test_fal_roundup_image_track_covers_the_voice_with_no_blank() {
+    public function test_fal_roundup_held_scenes_cover_the_voice_with_no_blank() {
         if (!function_exists('imagejpeg')) {
             $this->markTestSkipped('GD is required to render stick-figure cards.');
         }
@@ -6542,6 +6572,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertFalse($plan['sting']);
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Roundup no blank'));
         $voice = $this->create_reel_asset('voice.mp3', 'audio/mpeg', $this->fake_mp3_bytes(120));
+        $leftover = $this->create_reel_asset('motion.mp4', 'video/mp4', $this->fake_mp4_bytes(5.0, 'leftover-h3'));
         $words = array();
         for ($i = 0; $i < 80; $i++) {
             $words[] = 'technorapper' . (string) $i;
@@ -6566,6 +6597,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (preg_match('#example\.org/scene-(\d+)\.jpg#', $url, $m)) {
                 return $this->mock_http_ok($this->scene_jpeg_bytes('scene-' . $m[1]));
             }
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/images-to-video') !== false && strpos($url, '/requests/') === false) {
+                $captured['hold'] = json_decode((string) ($args['body'] ?? ''), true);
+                $captured['hold_endpoint'] = $url;
+                return $this->mock_http_ok(array('request_id' => 'held-scenes', 'status' => 'IN_QUEUE'));
+            }
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
                 $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
                 $captured['endpoint'] = $url;
@@ -6573,6 +6609,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             }
             if (strpos($url, '/status') !== false) {
                 return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'held-scenes') !== false) {
+                return $this->mock_http_ok(array('video' => array('url' => 'https://example.org/held-scenes.mp4')));
+            }
+            if (strpos($url, 'example.org/held-scenes.mp4') !== false) {
+                return $this->mock_http_ok($this->fake_mp4_bytes(15.0, 'held-scenes'));
             }
             if (strpos($url, 'queue.fal.run') !== false) {
                 return $this->mock_http_ok(array('video_url' => 'https://example.org/roundup.mp4'));
@@ -6595,28 +6637,37 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             array(
                 'voice' => array('id' => $voice['id'], 'path' => $voice['path'], 'key' => 'voice-key', 'seconds' => 15.0),
                 'host' => null,
-                'motion' => null,
+                'motion' => array('id' => $leftover['id'], 'path' => $leftover['path']),
             ),
             $this->tiny_jpeg_bytes(),
             'Follow for daily tech news',
         ));
         $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
-        $tracks = $captured['submit']['tracks'] ?? array();
-        $this->assertSame('image', $tracks[0]['type'] ?? '');
-        $visual = $tracks[0]['keyframes'] ?? array();
-        $this->assertGreaterThanOrEqual(8, count($visual));
-        $clock = 0;
-        $urls = array();
-        foreach ($visual as $frame) {
-            $this->assertSame($clock, (int) $frame['timestamp'], 'A blank gap would sit between unique cards.');
-            $this->assertGreaterThan(0, (int) $frame['duration']);
-            $this->assertNotContains((string) $frame['url'], $urls);
-            $urls[] = (string) $frame['url'];
-            $clock += (int) $frame['duration'];
+        $this->assertStringContainsString('ffmpeg-api/images-to-video', (string) ($captured['hold_endpoint'] ?? ''));
+        $hold_images = $captured['hold']['images'] ?? array();
+        $this->assertGreaterThanOrEqual(8, count($hold_images));
+        $this->assertSame(30, (int) ($captured['hold']['fps'] ?? 0));
+        $hold_urls = array();
+        $hold_frames = 0;
+        foreach ($hold_images as $image) {
+            $this->assertGreaterThanOrEqual(30, (int) $image['frames'], 'Each scene must be held for at least one second, not one frame.');
+            $this->assertLessThanOrEqual(1000, (int) $image['frames']);
+            $this->assertNotContains((string) $image['url'], $hold_urls);
+            $hold_urls[] = (string) $image['url'];
+            $hold_frames += (int) $image['frames'];
         }
+        $this->assertSame(450, $hold_frames, 'Held frames at 30fps must cover the 15s voice.');
+        $tracks = $captured['submit']['tracks'] ?? array();
+        $this->assertSame('video', $tracks[0]['type'] ?? '');
+        $visual = $tracks[0]['keyframes'] ?? array();
+        $this->assertCount(1, $visual);
+        $this->assertSame(0, (int) ($visual[0]['timestamp'] ?? -1));
+        $this->assertSame(15000, (int) ($visual[0]['duration'] ?? 0));
+        $this->assertStringStartsNotWith('data:image/', (string) ($visual[0]['url'] ?? ''));
         $voice_ms = (int) ($tracks[1]['keyframes'][0]['duration'] ?? 0);
-        $this->assertSame(15000, $clock);
-        $this->assertSame($clock, $voice_ms);
+        $this->assertSame(15000, $voice_ms);
+        $motion_url = $this->invoke_private('social_reel_file_data_url', array((string) $leftover['path'], 'video/mp4', 'tr_ai_wire_reel_video', 'missing'));
+        $this->assertNotSame((string) $motion_url, (string) ($visual[0]['url'] ?? ''), 'A leftover 5s B-roll clip must not be muxed.');
         $this->assertGreaterThanOrEqual(8, count($captured['scenes'] ?? array()));
         $this->assertSame(count($captured['scenes']), count(array_unique($captured['scenes'])));
         $this->assertStringContainsString('2D clean vector illustration', (string) ($captured['scenes'][0] ?? ''));
@@ -7047,6 +7098,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('fal-ai/kling-video', $this->invoke_private('social_fal_queue_app', array('fal-ai/kling-video/ai-avatar/v2/standard')));
         $this->assertSame('fal-ai/veo3.1', $this->invoke_private('social_fal_queue_app', array('fal-ai/veo3.1/lite/image-to-video')));
         $this->assertSame('fal-ai/ffmpeg-api', $this->invoke_private('social_fal_queue_app', array('fal-ai/ffmpeg-api/compose')));
+        $this->assertSame('fal-ai/ffmpeg-api', $this->invoke_private('social_fal_queue_app', array('fal-ai/ffmpeg-api/images-to-video')));
         $this->assertSame('fal-ai/codeformer', $this->invoke_private('social_fal_queue_app', array('fal-ai/codeformer')));
         $urls = $this->invoke_private('social_fal_queue_urls', array(
             'fal-ai/kling-video/ai-avatar/v2/standard',
@@ -7813,7 +7865,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('MiniMax H3 Max', $html);
         $this->assertStringContainsString('this host has no ffmpeg', $html);
         $this->assertStringContainsString('If this host has no ffmpeg, Fal also assembles the spoken MP4', $html);
-        $this->assertStringContainsString('no blank leftover', $html);
+        $this->assertStringContainsString('no leftover 5s B-roll', $html);
         $this->assertStringContainsString('viral 2D newsroom', $html);
         $this->assertStringContainsString('unique illustrated scenes that match each story', $html);
         $this->assertStringContainsString('60 seconds (Best roundup)', $html);
