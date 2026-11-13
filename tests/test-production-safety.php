@@ -4098,9 +4098,91 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('story', $best['social_reel_recipe']);
         $this->assertSame(0, (int) $best['social_reel_include_host']);
         $this->assertSame(5, (int) $best['social_reel_clip_seconds']);
+        $this->assertSame(60, (int) $best['social_reel_target_seconds']);
         $this->assertSame(1, (int) $best['social_reel_include_slides']);
         $this->assertSame(1, (int) $best['social_reel_enabled']);
         $this->assertSame(1, (int) $best['social_reel_daily_limit']);
+        $this->assertTrue($this->invoke_private('social_reel_is_roundup', array($best)));
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_CUT, $this->invoke_private('social_reel_cut_name', array($best)));
+        $this->assertSame(150, $this->invoke_private('social_reel_script_word_budget', array($best)));
+        $this->assertStringContainsString('135–150 spoken words', $this->invoke_private('social_reel_script_brief', array($best)));
+        $this->assertStringContainsString('stick-figure', $this->invoke_private('social_reel_script_brief', array($best)));
+        $this->assertStringContainsString('Meanwhile', $this->invoke_private('social_reel_script_brief', array($best)));
+        $this->assertGreaterThan(60.0, $this->invoke_private('social_reel_max_audio_seconds', array($best)));
+        $prompt_best = $this->invoke_private('social_reel_motion_prompt', array(array(
+            'visual_brief' => 'Stick figure at a news desk',
+        ), 12, $best));
+        $this->assertStringContainsString('stick-figure', $prompt_best);
+        $this->assertStringContainsString('Animate this exact still', $prompt_best);
+        $this->assertStringContainsString('no text', $prompt_best);
+        $this->assertSame(16, $this->invoke_private('social_reel_caption_limit', array($best)));
+        $caps = $this->invoke_private('sanitize_reel_captions', array(array(
+            'Hook in three seconds',
+            'Story one happened',
+            'Why it matters now',
+            'Meanwhile this shipped',
+            'The number that hurts',
+            'Next up a leak',
+            'It hits your phone',
+            'Even crazier overnight',
+            'That changes the rack',
+            'One more chip delay',
+            'Factories slip again',
+            'Which update hits you',
+            'Follow for daily',
+            'Extra scene line',
+            'Still more news',
+            'Last ticker beat',
+            'Overflow dropped',
+        ), 'Tech just moved faster this week.', $best));
+        $this->assertCount(16, $caps);
+        $this->assertSame('Hook', $this->invoke_private('social_reel_card_label', array(0, 12, $best)));
+        $this->assertSame('Follow', $this->invoke_private('social_reel_card_label', array(11, 12, $best)));
+        $lead = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Lead chip story'));
+        $sib = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Sibling phone story'));
+        $sib2 = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Sibling cloud story'));
+        update_post_meta($lead, '_tr_ai_wire_queue_id', 901);
+        update_post_meta($sib, '_tr_ai_wire_queue_id', 902);
+        update_post_meta($sib2, '_tr_ai_wire_queue_id', 903);
+        $packed = $this->invoke_private('social_reel_roundup_stories', array(get_post($lead), $best));
+        $this->assertGreaterThanOrEqual(3, count($packed));
+        $this->assertSame($lead, (int) $packed[0]['id']);
+        $fallback = $this->invoke_private('fallback_reel_script', array(array(), get_post($lead), $best));
+        $this->assertStringContainsString('Meanwhile', $fallback);
+        $this->assertStringContainsString('Follow for daily', $fallback);
+        $this->assertGreaterThanOrEqual(12, count(preg_split('/\s+/', $fallback, -1, PREG_SPLIT_NO_EMPTY)));
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_LAYOUT, $this->invoke_private('social_reel_layout_key', array($best)));
+        $this->assertStringContainsString('Stick-figure newsroom roundup', $this->invoke_private('social_reel_recipe_summary', array($best)));
+        $this->assertStringContainsString('Meanwhile', $this->invoke_private('social_reel_tts_instructions', array($best)));
+        $this->assertEqualsWithDelta(72.0, $this->invoke_private('social_reel_clamp_audio_seconds', array(122.0, $best)), 0.01);
+        $user_best = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news'), false, $best));
+        $this->assertStringContainsString('2D clean vector stick-figure newsroom', $user_best);
+        $this->assertStringContainsString('135–150', $user_best);
+        $this->assertStringContainsString('Pack 3–5 supplied desk stories', $user_best);
+        $cheap_best = array_merge($best, array('social_reel_dev_cheap' => 1));
+        $this->assertFalse($this->invoke_private('social_reel_is_roundup', array($cheap_best)));
+        $this->assertStringContainsString('mini lesson', $this->invoke_private('social_reel_script_brief', array($cheap_best)));
+        $roundup_copy = array(
+            'hook' => 'Tech just moved overnight',
+            'reel_captions' => $caps,
+            'reel_script' => 'Tech just moved faster in the last day than last month. Here are five updates you need.',
+        );
+        $slots = $this->invoke_private('social_reel_teach_slots', array($best, $roundup_copy, null, 60.0, 5.0, 0.0, false));
+        $roundup_cards = array();
+        foreach ($slots as $slot) {
+            if (($slot['kind'] ?? '') !== 'card') {
+                continue;
+            }
+            $roundup_cards[] = $slot;
+            $this->assertNotEmpty($slot['roundup']);
+            $this->assertGreaterThanOrEqual(3000, (int) $slot['ms']);
+            $this->assertLessThanOrEqual(4500, (int) $slot['ms']);
+        }
+        $this->assertGreaterThanOrEqual(12, count($roundup_cards));
+        $this->assertLessThanOrEqual(16, count($roundup_cards));
+        $this->assertSame('Hook', $roundup_cards[0]['label']);
+        $this->assertSame('Follow', $roundup_cards[count($roundup_cards) - 1]['label']);
+        $this->assertTrue($this->invoke_private('social_reel_teach_guard', array($slots, 60.0, 0.0)));
         $budget = $this->plugin->sanitize_settings(array(
             'social_platform_toggles' => 1,
             'social_instagram_enabled' => 1,
@@ -4114,6 +4196,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('budget', $budget['social_reel_pipeline']);
         $this->assertSame('veo-lite', $budget['social_reel_video_model']);
         $this->assertSame(1, (int) $budget['social_reel_daily_limit']);
+        $this->assertFalse($this->invoke_private('social_reel_is_roundup', array($budget)));
+        $this->assertStringContainsString('No-face teach Reel', $this->invoke_private('social_reel_recipe_summary', array($budget)));
         $this->assertSame(3, (int) $budget['social_carousel_daily_limit']);
         $raised = $this->plugin->sanitize_settings(array(
             'social_platform_toggles' => 1,
@@ -6329,6 +6413,43 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         imagedestroy($card);
     }
 
+    public function test_stick_figure_news_card_stays_inside_the_instagram_safe_zone() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagettftext')) {
+            $this->markTestSkipped('GD with FreeType is required to render stick-figure news cards.');
+        }
+        $jpeg = $this->invoke_private('render_social_reel_frame', array(
+            'lesson',
+            array('hook' => 'Five updates you need'),
+            '',
+            'Meanwhile this shipped overnight',
+            array('step' => 4, 'total' => 12, 'label' => 'Meanwhile', 'roundup' => true),
+        ));
+        if (is_wp_error($jpeg) && $jpeg->get_error_code() === 'tr_ai_wire_reel_cards') {
+            $this->markTestSkipped($jpeg->get_error_message());
+        }
+        $this->assertFalse(is_wp_error($jpeg), is_wp_error($jpeg) ? $jpeg->get_error_message() : '');
+        $card = imagecreatefromstring((string) $jpeg);
+        $this->assertSame(1080, imagesx($card));
+        $this->assertSame(1920, imagesy($card));
+        $bright = function ($y0, $y1) use ($card) {
+            $n = 0;
+            for ($y = $y0; $y < $y1; $y += 2) {
+                for ($x = 0; $x < 1080; $x += 2) {
+                    $rgb = imagecolorat($card, $x, $y);
+                    $luma = 0.299 * (($rgb >> 16) & 255) + 0.587 * (($rgb >> 8) & 255) + 0.114 * ($rgb & 255);
+                    if ($luma > 200) {
+                        $n++;
+                    }
+                }
+            }
+            return $n;
+        };
+        $this->assertSame(0, $bright(0, 240), 'Nothing bright under the Instagram top bar.');
+        $this->assertSame(0, $bright(1480, 1920), 'Nothing bright under the Instagram caption and buttons.');
+        $this->assertGreaterThan(2000, $bright(250, 1400), 'The stick-figure scene and caption must stay in the middle of the frame.');
+        imagedestroy($card);
+    }
+
     public function test_ffmpeg_error_message_skips_version_banner() {
         $msg = $this->invoke_private('social_ffmpeg_error_message', array(
             "ffmpeg version 6.1.1 Copyright (c) 2000-2023\nbuilt with gcc\nconfiguration: --prefix=/usr\nError opening input file missing.mp4.\nError opening input files: No such file or directory\n",
@@ -7393,7 +7514,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('MiniMax H3 Max', $html);
         $this->assertStringContainsString('This WordPress host does not need ffmpeg', $html);
         $this->assertStringContainsString('If this host has no ffmpeg, Fal also assembles the spoken MP4', $html);
-        $this->assertStringContainsString('the worker posts to Instagram and YouTube', $html);
+        $this->assertStringContainsString('stick-figure newsroom roundup', $html);
+        $this->assertStringContainsString('60 seconds (Best roundup)', $html);
+        $this->assertStringContainsString('3–5 desk stories', $html);
         $this->assertStringContainsString('Best/Budget set', $html);
         $this->assertStringContainsString('Hours between Instagram stills', $html);
         $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_still_spacing_hours]"', $html);

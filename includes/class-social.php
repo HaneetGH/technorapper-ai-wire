@@ -1954,15 +1954,21 @@ trait TechnoRapper_AI_Wire_Social {
             . 'on_image_subhead: one supporting line that makes them tap, max 10 words. '
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
-            . 'visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). '
-            . (!empty($comic) ? 'Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. ' : '')
-            . 'Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '
+            . ($this->social_reel_is_roundup($settings)
+                ? 'visual_brief: 2D clean vector stick-figure newsroom, one mascot at a desk or ticker, flat colour, no photoreal people, no letters or numbers in the artwork. '
+                : ('visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). '
+                    . (!empty($comic) ? 'Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. ' : '')
+                    . 'Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '))
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
-            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings) . ' THIS article only. Teach the viewer something they can repeat. Not a robot reading a press release. '
-            . 'Beats: (1) pattern-interrupt hook naming the change; (2) what this is in plain words; (3) why it matters / the mechanism from key_takeaways; (4) one concrete example for their phone, game, job, or money; (5) the takeaway. '
+            . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings)
+            . ($this->social_reel_is_roundup($settings)
+                ? ' Pack 3–5 supplied desk stories into one 60-second roundup. Do not invent extra companies. '
+                : ' THIS article only. Teach the viewer something they can repeat. Not a robot reading a press release. Beats: (1) pattern-interrupt hook naming the change; (2) what this is in plain words; (3) why it matters / the mechanism from key_takeaways; (4) one concrete example for their phone, game, job, or money; (5) the takeaway. Do not tease. No packing other stories into a roundup. ')
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
-            . 'Do not tease. Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL, no packing other stories into a roundup. '
-            . 'reel_captions: 4–5 short on-screen lesson lines (max 6 words) matching those beats — big sparse text for animated cards and B-roll. '
+            . 'Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL. '
+            . ($this->social_reel_is_roundup($settings)
+                ? 'reel_captions: 12–16 short on-screen scene lines (max 6 words) that change every 3–4 seconds. '
+                : 'reel_captions: 4–5 short on-screen lesson lines (max 6 words) matching those beats — big sparse text for animated cards and B-roll. ')
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. '
             . (!empty($comic) ? 'A dry wink is fine if the named change is still obvious. ' : '')
             . 'This is the public YouTube listing title — the Short goes live immediately, not as a draft. '
