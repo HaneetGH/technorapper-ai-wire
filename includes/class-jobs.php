@@ -390,10 +390,40 @@ trait TechnoRapper_AI_Wire_Jobs {
         }
         try {
             if ($job['kind'] === 'fetch') {
+                if (function_exists('set_time_limit')) {
+                    set_time_limit(400);
+                }
                 $this->note_background_progress(8, 'Fetching feeds');
                 $summary = $this->process_feeds(array('foreground' => true, 'reason' => 'manual'));
-                $message = $this->background_fetch_message(is_array($summary) ? $summary : array());
-                $failed = is_array($summary) && !empty($summary['skipped']);
+                $rounds = 0;
+                while ($rounds < 3 && is_array($summary) && empty($summary['skipped'])) {
+                    $s = $this->settings();
+                    if ($this->remaining_posts_today($s) <= 0) {
+                        break;
+                    }
+                    $waiting = $this->next_pipeline_item_id();
+                    if ($waiting < 1) {
+                        break;
+                    }
+                    $row = $this->get_item($waiting);
+                    if (!$this->pipeline_item_is_unfinished($row)) {
+                        break;
+                    }
+                    $rounds++;
+                    $this->note_background_progress(25 + min(60, $rounds * 15), 'Filling today\'s post cap');
+                    $more = $this->process_feeds(array('foreground' => true, 'reason' => 'continue'));
+                    if (!is_array($more)) {
+                        break;
+                    }
+                    foreach (array('processed', 'drafts', 'published', 'quarantined') as $key) {
+                        $summary[$key] = (int) ($summary[$key] ?? 0) + (int) ($more[$key] ?? 0);
+                    }
+                    if (!empty($more['skipped'])) {
+                        $summary['skipped'] = $more['skipped'];
+                    }
+                }
+                $message = $this->background_fetch_message($summary);
+                $failed = !empty($summary['skipped']);
                 $this->finish_background_job($message . ' Refresh the queue to see new rows.', $failed ? 'error' : 'done');
             } elseif ($job['kind'] === 'retry') {
                 $this->note_background_progress(15, 'Retrying item');

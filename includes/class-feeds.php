@@ -136,9 +136,14 @@ trait TechnoRapper_AI_Wire_Feeds {
         $run_limit = (int) $s['max_items_per_run'];
         $started_at = microtime(true);
         $time_budget_seconds = $foreground ? 90 : 25;
-        $this->note_background_progress(12, 'Fetching feeds');
-        $this->ingest_new_feed_items($s, $summary);
-        $this->note_background_progress(20, 'Feeds checked');
+        $reason = sanitize_key($args['reason'] ?? '');
+        if ($reason === 'continue') {
+            $this->note_background_progress(20, 'Continuing unfinished items');
+        } else {
+            $this->note_background_progress(12, 'Fetching feeds');
+            $this->ingest_new_feed_items($s, $summary);
+            $this->note_background_progress(20, 'Feeds checked');
+        }
         $touched = array();
         while ((microtime(true) - $started_at) < $time_budget_seconds) {
             if (!$this->refresh_processing_lock($lock_token)) {
@@ -148,7 +153,7 @@ trait TechnoRapper_AI_Wire_Feeds {
                 return;
             }
             if (count($touched) >= max(1, $run_limit)) {
-                wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
+                $this->schedule_editorial_continue($touched);
                 return;
             }
             $waiting_id = $this->next_pipeline_item_id($touched);
@@ -173,6 +178,22 @@ trait TechnoRapper_AI_Wire_Feeds {
                 $summary['quarantined']++;
             }
         }
+        if ($this->remaining_posts_today($s) > 0) {
+            $this->schedule_editorial_continue($touched);
+        }
+    }
+
+    /** Keep filling today's post cap after a time or item-limit stop. */
+    private function schedule_editorial_continue($exclude = array()) {
+        $waiting_id = $this->next_pipeline_item_id($exclude);
+        if ($waiting_id < 1) {
+            return;
+        }
+        $row = $this->get_item($waiting_id);
+        if (!$this->pipeline_item_is_unfinished($row)) {
+            return;
+        }
+        wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
     }
 
     private function ingest_new_feed_items($s, &$summary) {

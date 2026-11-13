@@ -2949,6 +2949,24 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('quarantined', $old['status']);
     }
 
+    public function test_pending_items_are_picked_before_newer_quarantined_holds() {
+        $pending_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'pending'), array('id' => $pending_id));
+        $generated_id = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'generated'), array('id' => $generated_id));
+        $held_id = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held for editorial review: score 74 < 80',
+        ), array('id' => $held_id));
+        $this->assertGreaterThan($pending_id, $held_id);
+        $this->assertSame($generated_id, $this->invoke_private('next_pipeline_item_id'));
+        $this->assertSame($pending_id, $this->invoke_private('next_pipeline_item_id', array(array($generated_id => true))));
+        $this->assertTrue($this->invoke_private('pipeline_item_is_unfinished', array($this->invoke_private('get_item', array($pending_id)))));
+        $this->assertFalse($this->invoke_private('pipeline_item_is_unfinished', array($this->invoke_private('get_item', array($held_id)))));
+    }
+
     public function test_atom_feed_queues_every_entry_not_just_the_first() {
         $atom = '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Example Atom</title>'
             . '<entry><title>First Atom story</title><link rel="alternate" href="https://example.com/atom-1"/><id>tag:example.com,2026:1</id><summary>First body with enough source text for the plugin to accept.</summary></entry>'

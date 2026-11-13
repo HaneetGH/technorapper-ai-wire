@@ -56,10 +56,23 @@ trait TechnoRapper_AI_Wire_Pipeline {
                 OR status = 'reviewed'
                 OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s))
              ){$not_in}
-             ORDER BY id DESC
+             ORDER BY CASE
+                WHEN status IN ('reviewed') THEN 0
+                WHEN status IN ('generated', 'rewritten') THEN 1
+                WHEN status IN ('pending', 'new', 'waiting_budget') THEN 2
+                WHEN status = 'retry_wait' THEN 3
+                WHEN status = 'quarantined' THEN 4
+                ELSE 5
+             END ASC, id DESC
              LIMIT 1",
             current_time('mysql', true)
         ));
+    }
+
+    /** Unfinished work that can still fill today's post cap. Quarantine is not this. */
+    private function pipeline_item_is_unfinished($item) {
+        $status = $this->pipeline_status(is_array($item) ? ($item['status'] ?? '') : '');
+        return in_array($status, array('pending', 'generated', 'reviewed', 'waiting_budget', 'retry_wait'), true);
     }
 
     /**
@@ -96,7 +109,6 @@ trait TechnoRapper_AI_Wire_Pipeline {
                 return;
             }
             if ($started_at !== null && $time_budget !== null && (microtime(true) - $started_at) >= $time_budget) {
-                wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
                 return;
             }
             $item = $this->get_item($id);
