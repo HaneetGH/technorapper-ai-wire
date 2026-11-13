@@ -7,12 +7,148 @@ trait TechnoRapper_AI_Wire_Admin {
     public function admin_menu() {
         add_menu_page('TechnoRapper AI Wire', 'AI Wire', 'manage_options', 'tr-ai-wire', array($this, 'settings_page'), 'dashicons-rss', 58);
         add_submenu_page('tr-ai-wire', 'Feed tenants', 'Feed tenants', 'manage_options', 'tr-ai-wire-tenants', array($this, 'settings_page'));
+        add_submenu_page('tr-ai-wire', 'Now in queue', 'Now in queue', 'manage_options', 'tr-ai-wire-now', array($this, 'now_queue_page'));
         add_submenu_page('tr-ai-wire', 'Queue & usage', 'Queue & usage', 'manage_options', 'tr-ai-wire-queue', array($this, 'queue_page'));
         add_submenu_page('tr-ai-wire', 'Scores', 'Scores', 'manage_options', 'tr-ai-wire-scores', array($this, 'scores_page'));
         add_submenu_page('tr-ai-wire', 'A/B experiments', 'A/B experiments', 'manage_options', 'tr-ai-wire-experiments', array($this, 'experiments_page'));
         add_submenu_page('tr-ai-wire', 'Social settings', 'Social settings', 'manage_options', 'tr-ai-wire-social-settings', array($this, 'social_settings_page'));
         add_submenu_page('tr-ai-wire', 'Social queue', 'Social queue', 'manage_options', 'tr-ai-wire-social', array($this, 'social_distribution_page'));
         add_submenu_page('tr-ai-wire', 'Price estimate', 'Price estimate', 'manage_options', 'tr-ai-wire-costs', array($this, 'costs_page'));
+    }
+
+    public function now_queue_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        global $wpdb;
+        $job = get_option(self::JOB_OPTION, array());
+        $job = is_array($job) ? $job : array();
+        $job_status = (string) ($job['status'] ?? '');
+        $job_busy = in_array($job_status, array('queued', 'running'), true);
+        $website = $wpdb->get_results(
+            "SELECT id, status, feed_name, source_title, source_url, error_text, updated_at
+             FROM {$this->table}
+             WHERE status IN ('pending', 'new', 'waiting_budget', 'generated', 'rewritten', 'reviewed', 'retry_wait', 'quarantined', 'error')
+             ORDER BY updated_at DESC
+             LIMIT 50",
+            ARRAY_A
+        );
+        $social_table = $wpdb->prefix . 'tr_ai_wire_social';
+        $social = array();
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $social_table)) === $social_table) {
+            $social = $wpdb->get_results(
+                "SELECT s.id, s.post_id, s.platform, s.status, s.error_text, s.updated_at,
+                        COALESCE(m.meta_value, '') AS mode,
+                        COALESCE(h.meta_value, '') AS hold_reel
+                 FROM {$social_table} s
+                 LEFT JOIN {$wpdb->postmeta} m ON m.post_id = s.post_id AND m.meta_key = '_tr_ai_wire_social_mode'
+                 LEFT JOIN {$wpdb->postmeta} h ON h.post_id = s.post_id AND h.meta_key = '_tr_ai_wire_social_hold_reel'
+                 WHERE s.status IN ('queued', 'processing', 'needs_review')
+                 ORDER BY FIELD(s.status, 'processing', 'queued', 'needs_review'), s.updated_at DESC
+                 LIMIT 50",
+                ARRAY_A
+            );
+        }
+        $age = '';
+        if (!empty($job['created_at'])) {
+            $secs = max(0, time() - (int) $job['created_at']);
+            $age = $secs < 60 ? ($secs . 's') : (floor($secs / 60) . 'm ' . ($secs % 60) . 's');
+        }
+        ?>
+        <div class="wrap">
+            <h1>Now in queue</h1>
+            <?php if (!empty($_GET['job_stopped'])) : ?>
+                <div class="notice notice-warning is-dismissible"><p>Background job stopped. Stuck Reel/social rows were removed from the queue. WordPress posts stay.</p></div>
+            <?php endif; ?>
+            <p>Live snapshot of the background worker plus unfinished website and social rows. Published posts are not listed here.</p>
+            <div class="tr-ai-wire-actions" style="margin:12px 0;">
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
+                    <input type="hidden" name="action" value="tr_ai_wire_stop_run">
+                    <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
+                    <?php submit_button('Stop and delete from queue', $job_busy ? 'delete' : 'secondary', 'submit', false); ?>
+                </form>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-now')); ?>">Refresh</a>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-queue')); ?>">Website queue</a>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Social queue</a>
+            </div>
+
+            <h2>Background job</h2>
+            <?php if ($job_status === '') : ?>
+                <p>No background job is stored right now.</p>
+            <?php else : ?>
+                <table class="widefat striped" style="max-width:960px;">
+                    <tbody>
+                        <tr><th scope="row">Status</th><td><strong><?php echo esc_html($job_status); ?></strong><?php echo $job_busy ? ' · in progress' : ''; ?></td></tr>
+                        <tr><th scope="row">Kind</th><td><?php echo esc_html((string) ($job['kind'] ?? '—')); ?><?php
+                        if (($job['kind'] ?? '') === 'social_pack' && !empty($job['pack_kind'])) {
+                            echo ' / ' . esc_html((string) $job['pack_kind']);
+                        }
+                        ?></td></tr>
+                        <tr><th scope="row">Progress</th><td><?php echo esc_html((string) (int) ($job['percent'] ?? 0)); ?>%</td></tr>
+                        <tr><th scope="row">Message</th><td><?php echo esc_html((string) ($job['message'] ?? '')); ?></td></tr>
+                        <tr><th scope="row">Age</th><td><?php echo $age !== '' ? esc_html($age) : '—'; ?></td></tr>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+
+            <h2 style="margin-top:28px;">Website stories waiting (<?php echo esc_html((string) count($website)); ?>)</h2>
+            <?php if (!$website) : ?>
+                <p>No unfinished website queue rows.</p>
+            <?php else : ?>
+                <table class="widefat striped">
+                    <thead><tr><th>Updated</th><th>Status</th><th>Feed</th><th>Story</th><th>Note</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($website as $row) : ?>
+                        <tr>
+                            <td><?php echo esc_html((string) ($row['updated_at'] ?? '')); ?></td>
+                            <td><?php echo esc_html((string) ($row['status'] ?? '')); ?></td>
+                            <td><?php echo esc_html((string) ($row['feed_name'] ?? '')); ?></td>
+                            <td><a href="<?php echo esc_url((string) ($row['source_url'] ?? '')); ?>" target="_blank" rel="noopener"><?php echo esc_html((string) ($row['source_title'] ?? '')); ?></a></td>
+                            <td><?php echo esc_html(wp_html_excerpt((string) ($row['error_text'] ?? ''), 120, '…')); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+
+            <h2 style="margin-top:28px;">Social / Reel waiting (<?php echo esc_html((string) count($social)); ?>)</h2>
+            <?php if (!$social) : ?>
+                <p>No unfinished social queue rows.</p>
+            <?php else : ?>
+                <table class="widefat striped">
+                    <thead><tr><th>Updated</th><th>Status</th><th>Platform</th><th>Mode</th><th>Post</th><th>Note</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($social as $row) :
+                        $post_id = (int) ($row['post_id'] ?? 0);
+                        $title = $post_id ? get_the_title($post_id) : '';
+                        $mode = (string) ($row['mode'] ?? '');
+                        if ($mode === '' && (string) ($row['hold_reel'] ?? '') === '1') {
+                            $mode = 'reel';
+                        }
+                        ?>
+                        <tr>
+                            <td><?php echo esc_html((string) ($row['updated_at'] ?? '')); ?></td>
+                            <td><?php echo esc_html((string) ($row['status'] ?? '')); ?></td>
+                            <td><?php echo esc_html((string) ($row['platform'] ?? '')); ?></td>
+                            <td><?php echo esc_html($mode !== '' ? $mode : '—'); ?></td>
+                            <td><?php
+                            if ($post_id) {
+                                echo '<a href="' . esc_url(get_edit_post_link($post_id)) . '">#' . esc_html((string) $post_id) . '</a>';
+                                if ($title !== '') {
+                                    echo ' · ' . esc_html($title);
+                                }
+                            } else {
+                                echo '—';
+                            }
+                            ?></td>
+                            <td><?php echo esc_html(wp_html_excerpt((string) ($row['error_text'] ?? ''), 120, '…')); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+        <?php
     }
 
     public function enqueue_admin_assets($hook = '') {
@@ -185,8 +321,8 @@ trait TechnoRapper_AI_Wire_Admin {
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
                 <input type="hidden" name="action" value="tr_ai_wire_stop_run">
                 <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
-                <p class="description">Stops the current website or Reel background job so you can rerun it. Saved Reel steps stay on the row. Scheduled website runs still start again on the next interval unless the schedule is Manual only.</p>
-                <?php submit_button('Stop current run', 'delete'); ?>
+                <p class="description">Stops the current website or Reel background job and removes stuck Reel/social rows from the queue. WordPress posts stay. See <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-now')); ?>">Now in queue</a>. Scheduled website runs still start again on the next interval unless the schedule is Manual only.</p>
+                <?php submit_button('Stop and delete from queue', 'delete'); ?>
             </form>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
                 <input type="hidden" name="action" value="tr_ai_wire_repair_home">
@@ -1180,7 +1316,8 @@ trait TechnoRapper_AI_Wire_Admin {
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_stop_run">
                 <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
-                <?php submit_button('Stop current run', $this->is_run_in_progress() ? 'delete' : 'secondary', 'submit', false); ?>
+                <?php submit_button('Stop and delete from queue', $this->is_run_in_progress() ? 'delete' : 'secondary', 'submit', false); ?>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-now')); ?>">Now in queue</a>
             </form>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" onsubmit="return confirm('Remove unfinished queue items? Drafts, published posts, and WordPress posts stay.');">
                 <input type="hidden" name="action" value="tr_ai_wire_clean_queue">
