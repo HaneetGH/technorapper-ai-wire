@@ -20,7 +20,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.3.3';
+    const VERSION = '0.3.4';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
@@ -72,6 +72,7 @@ final class TechnoRapper_AI_Wire {
     const PROCESSING_LOCK_OPTION = 'tr_ai_wire_processing_lock';
     const JOB_OPTION = 'tr_ai_wire_background_job';
     const JOB_LOCK_OPTION = 'tr_ai_wire_background_job_lock';
+    const JOB_CANCEL_OPTION = 'tr_ai_wire_background_job_cancel';
     const JOB_HOOK = 'tr_ai_wire_background_job';
     const PROCESSING_LOCK_TTL = 2700;
     const SCHEMA_VERSION = '10';

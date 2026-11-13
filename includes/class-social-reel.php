@@ -4399,6 +4399,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     )
                 );
             }
+            if ($this->background_job_was_cancelled()) {
+                return new WP_Error('tr_ai_wire_job_stopped', 'Stopped by administrator. Click Resume or Generate Reel now.');
+            }
             sleep(3);
         } while (true);
     }

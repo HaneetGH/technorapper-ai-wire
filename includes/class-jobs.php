@@ -54,9 +54,18 @@ trait TechnoRapper_AI_Wire_Jobs {
         }
         if ($job_action === 'tr_ai_wire_stop_run') {
             check_ajax_referer('tr_ai_wire_stop_run');
-            $this->stop_running_jobs();
-            $this->finish_background_job('Stopped. The item already in flight may still finish.', 'done');
-            wp_send_json_success($this->public_job(get_option(self::JOB_OPTION, array())));
+            wp_send_json_success($this->public_job($this->cancel_background_job('Stopped by administrator. Saved Reel steps are kept — use Resume or Generate Reel now.')));
+        }
+        if ($job_action === 'tr_ai_wire_stop_and_rerun_reel') {
+            check_ajax_referer('tr_ai_wire_stop_and_rerun_reel');
+            $this->cancel_background_job('Stopped the stuck Reel job so it can run again.');
+            $item_id = absint($_POST['item_id'] ?? 0);
+            if ($item_id > 0 && $this->resume_social_reel_build($item_id)) {
+                wp_send_json_success($this->public_job($this->enqueue_background_job('social', array(), true)));
+            }
+            wp_send_json_success($this->public_job($this->enqueue_background_job('social_pack', array(
+                'pack_kind' => 'reel',
+            ), true)));
         }
         if ($job_action === 'tr_ai_wire_delete_item') {
             check_ajax_referer('tr_ai_wire_delete_item_' . $item_id);
@@ -111,13 +120,18 @@ trait TechnoRapper_AI_Wire_Jobs {
         if (is_array($job) && ($job['status'] ?? '') === 'queued' && (time() - (int) ($job['updated_at'] ?? 0)) > 2) {
             $this->spawn_background_job();
         }
-        if (is_array($job) && ($job['status'] ?? '') === 'running' && (time() - (int) ($job['updated_at'] ?? 0)) > 420) {
-            $job['status'] = 'error';
-            $job['percent'] = 100;
-            $job['message'] = 'This background task stopped answering. Saved progress is kept. Reload the page and use Resume or Check now on the row.';
-            $job['effect'] = 'reload';
-            update_option(self::JOB_OPTION, $job, false);
-            delete_option(self::JOB_LOCK_OPTION);
+        if (is_array($job) && ($job['status'] ?? '') === 'running') {
+            $quiet = time() - (int) ($job['updated_at'] ?? 0);
+            $wall = time() - (int) ($job['created_at'] ?? ($job['updated_at'] ?? 0));
+            // Fal waits keep refreshing updated_at, so also trip on wall-clock age.
+            if ($quiet > 420 || $wall > 1500) {
+                $this->cancel_background_job(
+                    $wall > 1500
+                        ? 'This background task ran too long and was stopped. Saved Reel steps are kept — use Stop and rerun Reel, Resume, or Generate Reel now.'
+                        : 'This background task stopped answering. Saved progress is kept. Reload the page and use Resume or Check now on the row.'
+                );
+                $job = get_option(self::JOB_OPTION, array());
+            }
         }
         wp_send_json_success($this->public_job(is_array($job) ? $job : array()));
     }
@@ -131,6 +145,8 @@ trait TechnoRapper_AI_Wire_Jobs {
         $config = array(
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('tr_ai_wire_job'),
+            'stopNonce' => wp_create_nonce('tr_ai_wire_stop_run'),
+            'rerunNonce' => wp_create_nonce('tr_ai_wire_stop_and_rerun_reel'),
             'job' => $job,
             'actions' => array(
                 'tr_ai_wire_run_now',
@@ -142,18 +158,27 @@ trait TechnoRapper_AI_Wire_Jobs {
                 'tr_ai_wire_repair_home',
                 'tr_ai_wire_migrate_images',
                 'tr_ai_wire_stop_run',
+                'tr_ai_wire_stop_and_rerun_reel',
                 'tr_ai_wire_delete_item',
                 'tr_ai_wire_clean_queue',
             ),
         );
         ?>
         <div id="tr-ai-wire-progress" hidden>
-            <div class="tr-ai-wire-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tr-ai-wire-progress-bar"></div></div>
+            <div class="tr-ai-wire-progress-row">
+                <div class="tr-ai-wire-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tr-ai-wire-progress-bar"></div></div>
+                <div class="tr-ai-wire-progress-actions">
+                    <button type="button" class="button button-small tr-ai-wire-stop-job" hidden>Stop job</button>
+                    <button type="button" class="button button-small button-primary tr-ai-wire-rerun-reel" hidden>Stop and rerun Reel</button>
+                </div>
+            </div>
             <p class="tr-ai-wire-progress-label"></p>
         </div>
         <style>
             #tr-ai-wire-progress{position:fixed;top:32px;left:160px;right:0;z-index:99999;background:#fff;border-bottom:1px solid #c3c4c7;padding:8px 16px 10px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-            .tr-ai-wire-progress-track{height:8px;background:#dcdcde;border-radius:4px;overflow:hidden}
+            .tr-ai-wire-progress-row{display:flex;gap:12px;align-items:center}
+            .tr-ai-wire-progress-track{flex:1;height:8px;background:#dcdcde;border-radius:4px;overflow:hidden}
+            .tr-ai-wire-progress-actions{display:flex;gap:6px;flex-shrink:0}
             .tr-ai-wire-progress-bar{height:100%;width:0;background:#2271b1;transition:width .3s ease}
             #tr-ai-wire-progress.is-running .tr-ai-wire-progress-bar{background-image:linear-gradient(90deg,#2271b1 0%,#72aee6 45%,#2271b1 100%);background-size:45% 100%;animation:tr-ai-wire-slide 1.1s linear infinite}
             #tr-ai-wire-progress.is-error{border-bottom-color:#d63638;background:#fcf0f1}
@@ -161,7 +186,7 @@ trait TechnoRapper_AI_Wire_Jobs {
             #tr-ai-wire-progress.is-error .tr-ai-wire-progress-label{color:#d63638;font-weight:600}
             .tr-ai-wire-progress-label{margin:6px 0 0;font-size:13px}
             @keyframes tr-ai-wire-slide{from{background-position:100% 0}to{background-position:-45% 0}}
-            @media (max-width:782px){#tr-ai-wire-progress{left:0;top:46px}}
+            @media (max-width:782px){#tr-ai-wire-progress{left:0;top:46px}.tr-ai-wire-progress-row{flex-wrap:wrap}}
             body.folded #tr-ai-wire-progress{left:36px}
         </style>
         <script>
@@ -171,6 +196,8 @@ trait TechnoRapper_AI_Wire_Jobs {
             var bar = box.querySelector('.tr-ai-wire-progress-bar');
             var track = box.querySelector('.tr-ai-wire-progress-track');
             var label = box.querySelector('.tr-ai-wire-progress-label');
+            var stopBtn = box.querySelector('.tr-ai-wire-stop-job');
+            var rerunBtn = box.querySelector('.tr-ai-wire-rerun-reel');
             var pollTimer = null;
             var hideTimer = null;
             var workerSent = '';
@@ -216,6 +243,10 @@ trait TechnoRapper_AI_Wire_Jobs {
                 });
             }
 
+            function isReelJob(job) {
+                return job && (job.kind === 'social_pack' || job.kind === 'social' || job.kind === 'social_retry');
+            }
+
             function show(job) {
                 window.clearTimeout(hideTimer);
                 box.hidden = false;
@@ -227,9 +258,35 @@ trait TechnoRapper_AI_Wire_Jobs {
                 bar.style.width = (running ? Math.max(pct, 8) : pct) + '%';
                 track.setAttribute('aria-valuenow', String(pct));
                 label.textContent = job.message || (running ? 'Working…' : (failed ? 'Failed' : 'Done'));
+                if (stopBtn) stopBtn.hidden = !running;
+                if (rerunBtn) rerunBtn.hidden = !(running && isReelJob(job));
                 if (running) {
                     clearItemErrors(job.item_id);
                 }
+            }
+
+            function startControl(jobAction, nonce, itemId) {
+                var body = new FormData();
+                body.set('action', 'tr_ai_wire_start_job');
+                body.set('job_action', jobAction);
+                body.set('_ajax_nonce', nonce);
+                if (itemId) body.set('item_id', String(itemId));
+                show({status: 'running', percent: 4, message: 'Stopping…', kind: (cfg.job && cfg.job.kind) || ''});
+                startFrom(body);
+            }
+
+            if (stopBtn) {
+                stopBtn.addEventListener('click', function () {
+                    startControl('tr_ai_wire_stop_run', cfg.stopNonce || '');
+                });
+            }
+            if (rerunBtn) {
+                rerunBtn.addEventListener('click', function () {
+                    var itemId = '';
+                    var live = document.querySelector('.tr-ai-wire-reel-build[data-live="1"]');
+                    if (live) itemId = live.getAttribute('data-row') || '';
+                    startControl('tr_ai_wire_stop_and_rerun_reel', cfg.rerunNonce || '', itemId);
+                });
             }
 
             function hideSoon(job) {
@@ -403,6 +460,9 @@ trait TechnoRapper_AI_Wire_Jobs {
                 $rounds = 0;
                 $idle_rounds = 0;
                 while ($rounds < 20 && is_array($summary) && empty($summary['skipped'])) {
+                    if ($this->background_job_was_cancelled()) {
+                        return;
+                    }
                     $s = $this->settings();
                     if ($this->remaining_posts_today($s) <= 0) {
                         break;
@@ -489,13 +549,22 @@ trait TechnoRapper_AI_Wire_Jobs {
                     $this->finish_background_job($queued->get_error_message(), 'error');
                 } else {
                     if ($kind === 'reel') {
+                        if ($this->background_job_was_cancelled()) {
+                            return;
+                        }
                         $this->note_background_progress(55, 'Starting the Reel build');
                         $this->process_social_queue();
+                        if ($this->background_job_was_cancelled()) {
+                            return;
+                        }
                         $this->finish_background_job($this->social_reel_job_message(), 'done', array('effect' => 'reload'));
                     } else {
                         $processed = 0;
                         $max = 8;
                         for ($i = 0; $i < $max; $i++) {
+                            if ($this->background_job_was_cancelled()) {
+                                return;
+                            }
                             $this->note_background_progress(30 + (int) (60 * (($i + 1) / $max)), 'Publishing the ' . $kind);
                             $before = $this->social_queued_count();
                             if ($before < 1) {
@@ -607,13 +676,18 @@ trait TechnoRapper_AI_Wire_Jobs {
         return trim($headline . ' ' . $error);
     }
 
-    private function enqueue_background_job($kind, $args = array()) {
+    private function enqueue_background_job($kind, $args = array(), $force = false) {
         $current = get_option(self::JOB_OPTION, array());
         if (is_array($current) && in_array($current['status'] ?? '', array('queued', 'running'), true)) {
             $age = time() - (int) ($current['updated_at'] ?? 0);
-            if ($age < 180) {
+            $wall = time() - (int) ($current['created_at'] ?? ($current['updated_at'] ?? 0));
+            // Fal waits refresh updated_at; allow replace after a long wall-clock run.
+            if (!$force && $age < 180 && $wall < 900) {
                 return $current;
             }
+            $this->cancel_background_job($force
+                ? 'Replaced by a new task.'
+                : 'Previous background task was stuck and was replaced.');
         }
         delete_option(self::JOB_LOCK_OPTION);
         $job = array(
@@ -627,6 +701,7 @@ trait TechnoRapper_AI_Wire_Jobs {
             'message' => 'Queued. The page stays put while a background worker runs this.',
             'created_at' => time(),
             'updated_at' => time(),
+            'cancelled' => 0,
         );
         if (in_array($job['kind'], array('retry', 'force_publish', 'social_retry'), true) && $job['item_id'] > 0) {
             $this->clear_retry_error($job['kind'], $job['item_id']);
@@ -635,6 +710,68 @@ trait TechnoRapper_AI_Wire_Jobs {
         wp_schedule_single_event(time(), self::JOB_HOOK, array($job['id']));
         $this->spawn_background_job();
         return $job;
+    }
+
+    /**
+     * Hard-stop the current background worker so Stop / Rerun works even while
+     * a Reel is stuck waiting on Fal and still refreshing progress.
+     */
+    private function cancel_background_job($message = 'Stopped by administrator.') {
+        $job = get_option(self::JOB_OPTION, array());
+        $old_id = is_array($job) ? (string) ($job['id'] ?? '') : '';
+        if ($old_id !== '') {
+            update_option(self::JOB_CANCEL_OPTION, $old_id, false);
+        }
+        delete_option(self::JOB_LOCK_OPTION);
+        $this->stop_running_jobs($message);
+        $this->release_stuck_social_processing($message);
+        if (!is_array($job)) {
+            $job = array();
+        }
+        $job['status'] = 'done';
+        $job['percent'] = 100;
+        $job['message'] = sanitize_text_field($message);
+        $job['updated_at'] = time();
+        $job['cancelled'] = 1;
+        $job['effect'] = '';
+        update_option(self::JOB_OPTION, $job, false);
+        return $job;
+    }
+
+    private function release_stuck_social_processing($reason) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'tr_ai_wire_social';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+            return 0;
+        }
+        $now = current_time('mysql', true);
+        $msg = sanitize_text_field((string) $reason);
+        if ($msg === '') {
+            $msg = 'Stopped by administrator. Click Resume or Start over.';
+        }
+        return (int) $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET status = 'needs_review', error_text = %s, updated_at = %s WHERE status = 'processing'",
+            $msg,
+            $now
+        ));
+    }
+
+    private function background_job_was_cancelled() {
+        if ($this->background_job_id === '') {
+            return false;
+        }
+        $cancel_id = (string) get_option(self::JOB_CANCEL_OPTION, '');
+        if ($cancel_id !== '' && hash_equals($cancel_id, $this->background_job_id)) {
+            return true;
+        }
+        $job = get_option(self::JOB_OPTION, array());
+        if (!is_array($job)) {
+            return false;
+        }
+        if (!empty($job['cancelled']) && $this->background_job_matches($job)) {
+            return true;
+        }
+        return $this->background_job_matches($job) && ($job['status'] ?? '') !== 'running';
     }
 
     private function claim_background_job($job_id) {
@@ -659,17 +796,25 @@ trait TechnoRapper_AI_Wire_Jobs {
     }
 
     private function note_background_progress($percent, $message) {
+        if ($this->background_job_was_cancelled()) {
+            return false;
+        }
         $job = get_option(self::JOB_OPTION, array());
         if (!$this->background_job_matches($job) || ($job['status'] ?? '') !== 'running') {
-            return;
+            return false;
         }
         $job['percent'] = max(1, min(99, (int) $percent));
         $job['message'] = sanitize_text_field($message);
         $job['updated_at'] = time();
         update_option(self::JOB_OPTION, $job, false);
+        return true;
     }
 
     private function finish_background_job($message, $status, $extra = array()) {
+        if ($this->background_job_was_cancelled()) {
+            delete_option(self::JOB_LOCK_OPTION);
+            return;
+        }
         $job = get_option(self::JOB_OPTION, array());
         if ($this->background_job_id !== '' && !$this->background_job_matches($job)) {
             return;
@@ -681,6 +826,7 @@ trait TechnoRapper_AI_Wire_Jobs {
         $job['percent'] = 100;
         $job['message'] = sanitize_text_field($message);
         $job['updated_at'] = time();
+        $job['cancelled'] = 0;
         foreach ($extra as $key => $value) {
             $job[$key] = is_string($value) ? sanitize_text_field($value) : $value;
         }
