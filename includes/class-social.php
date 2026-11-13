@@ -3558,6 +3558,7 @@ trait TechnoRapper_AI_Wire_Social {
             '_tr_ai_wire_social_host_scene_id',
             '_tr_ai_wire_social_broll_id',
             '_tr_ai_wire_reel_hold_id',
+            '_tr_ai_wire_reel_trim_src',
         ) as $key) {
             $id = (int) get_post_meta($post_id, $key, true);
             if ($id > 0) {
@@ -3622,8 +3623,10 @@ trait TechnoRapper_AI_Wire_Social {
             '_tr_ai_wire_fal_request',
             '_tr_ai_wire_fal_host_request',
             '_tr_ai_wire_fal_compose_request',
+            '_tr_ai_wire_fal_trim_request',
             '_tr_ai_wire_fal_hold',
             '_tr_ai_wire_reel_hold_id',
+            '_tr_ai_wire_reel_trim_src',
             '_tr_ai_wire_reel_no_sting',
             '_tr_ai_wire_reel_progress',
             '_tr_ai_wire_reel_ledger',
@@ -5395,7 +5398,7 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function social_reel_reset_pending_errors($post_id) {
-        foreach (array('_tr_ai_wire_fal_host_request', '_tr_ai_wire_fal_request', '_tr_ai_wire_fal_compose_request', '_tr_ai_wire_fal_hold') as $meta_key) {
+        foreach (array('_tr_ai_wire_fal_host_request', '_tr_ai_wire_fal_request', '_tr_ai_wire_fal_compose_request', '_tr_ai_wire_fal_trim_request', '_tr_ai_wire_fal_hold') as $meta_key) {
             $pending = $this->social_fal_pending_get($post_id, $meta_key);
             if ($pending && !empty($pending['errors'])) {
                 $pending['errors'] = 0;

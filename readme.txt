@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.95
+Stable tag: 0.2.96
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.96 =
+* Best roundup Reels match the voiceover length. Fal hold frames are trimmed to the spoken duration, compose asks for that length, and an overlong mux is cut instead of failing with leftover blank or frozen frames.
 
 = 0.2.95 =
 * Failed stills, Reels, and queue items print a red error that says whether the graphic was not generated or not posted, and why. Retry/Resume clears that message immediately; a second failure shows the new reason.
@@ -240,6 +243,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.96 =
+Best Reels that come back longer than the voiceover are trimmed to the spoken length instead of failing with leftover blank frames.
 
 = 0.2.95 =
 Failed stills and Reels show a red error that says not generated vs not posted. Retry clears it; a second failure prints the new reason.
