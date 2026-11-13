@@ -2278,14 +2278,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             if (is_wp_error($visual)) {
                 return $visual;
             }
-            $visual_ms = 0;
-            foreach ($visual as $frame) {
-                $visual_ms += (int) ($frame['duration'] ?? 0);
-            }
             return array('tracks' => array(
                 array('id' => 'visual', 'type' => 'video', 'keyframes' => $visual),
                 array('id' => 'voice', 'type' => 'audio', 'keyframes' => array(
-                    array('timestamp' => 0, 'duration' => max($visual_ms, $this->social_reel_ms($audio_seconds)), 'url' => $voice_url),
+                    array('timestamp' => 0, 'duration' => $this->social_reel_ms($audio_seconds), 'url' => $voice_url),
                 )),
             ));
         };

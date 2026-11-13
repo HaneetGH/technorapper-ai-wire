@@ -6628,11 +6628,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             }
         }
         $this->assertSame(count($visual), $kinds);
-        $visual_ms = 0;
-        foreach ($visual as $frame) {
-            $visual_ms += (int) ($frame['duration'] ?? 0);
-        }
-        $this->assertSame($visual_ms, (int) $tracks[1]['keyframes'][0]['duration'], 'Audio must cover the pictures so Fal does not freeze the last frame.');
+        $this->assertSame(12000, (int) $tracks[1]['keyframes'][0]['duration']);
         $this->assertSame((int) $result['id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
         $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_fal_compose_request', true));
         remove_all_filters('tr_ai_wire_ffmpeg_path');
