@@ -5967,7 +5967,7 @@ trait TechnoRapper_AI_Wire_Social {
                 <?php submit_button('Generate collage now', 'primary', 'submit', false); ?>
             </form>
             </div>
-            <p class="description"><strong>Generate Reel now</strong> builds one spoken video and holds it on this page. Watch it, then click Post — it does not go live until you do. Auto Reels still post on their own when Reel posts per day is above 0. Carousel and collage skip the daily mix and that wait. Each of those packs at least 2 stories that have not already been posted. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. <?php echo esc_html($this->instagram_still_spacing_copy()); ?></p>
+            <p class="description"><strong>Generate Reel now</strong> builds one spoken video and holds it on this page. Watch it, then click Post — it does not go live until you do. Best/Budget set Reel posts per day to at least 1, so those Reels auto-post when the MP4 is ready. Carousel and collage skip the daily mix and that wait. Each of those packs at least 2 stories that have not already been posted. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. <?php echo esc_html($this->instagram_still_spacing_copy()); ?></p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);

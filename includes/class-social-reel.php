@@ -167,8 +167,78 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $video_id;
     }
 
+    private function social_reel_pipelines() {
+        return array(
+            'best' => array(
+                'label' => 'Best production path',
+                'short' => 'H3 Max accents; the worker posts to Instagram and YouTube',
+                'settings' => array(
+                    'social_reel_recipe' => 'story',
+                    'social_reel_include_host' => 0,
+                    'social_reel_include_slides' => 1,
+                    'social_reel_include_broll' => 1,
+                    'social_reel_include_sting' => 1,
+                    'social_reel_video_model' => 'h3-max',
+                    'social_reel_clip_seconds' => 5,
+                    'social_reel_target_seconds' => 18,
+                ),
+            ),
+            'budget' => array(
+                'label' => 'Budget path',
+                'short' => 'Veo Lite 4s; the worker posts on the $10 video budget',
+                'settings' => array(
+                    'social_reel_recipe' => 'story',
+                    'social_reel_include_host' => 0,
+                    'social_reel_include_slides' => 1,
+                    'social_reel_include_broll' => 1,
+                    'social_reel_include_sting' => 1,
+                    'social_reel_video_model' => 'veo-lite',
+                    'social_reel_clip_seconds' => 4,
+                    'social_reel_target_seconds' => 18,
+                ),
+            ),
+            'custom' => array(
+                'label' => 'Custom',
+                'short' => 'Pick the recipe, host, and Fal model yourself',
+                'settings' => array(),
+            ),
+        );
+    }
+
+    private function social_reel_apply_pipeline($settings) {
+        $settings = is_array($settings) ? $settings : array();
+        $pipelines = $this->social_reel_pipelines();
+        $pipeline = sanitize_key((string) ($settings['social_reel_pipeline'] ?? 'custom'));
+        if (!isset($pipelines[$pipeline])) {
+            $pipeline = 'custom';
+        }
+        $settings['social_reel_pipeline'] = $pipeline;
+        $lock = isset($pipelines[$pipeline]['settings']) ? (array) $pipelines[$pipeline]['settings'] : array();
+        if ($lock) {
+            $settings = array_merge($settings, $lock);
+        }
+        return $settings;
+    }
+
     private function social_reel_video_models() {
         return array(
+            'h3-max' => array(
+                'label' => 'MiniMax H3 Max',
+                'short' => 'Best silent B-roll from an approved still',
+                'recommended' => false,
+                'quality' => true,
+                'endpoint' => 'minimax/h3-max/image-to-video',
+                'usd_per_second' => 0.035,
+                'durations' => array(4, 5, 6, 8),
+                'image_field' => 'image_url',
+                'duration_suffix' => '',
+                'duration_as_number' => true,
+                'audio_field' => '',
+                'resolution' => '768P',
+                'prompt_expansion_mode' => 'balanced',
+                'docs' => 'https://fal.ai/models/minimax/h3-max/image-to-video',
+                'blurb' => 'Fal’s current default image-to-video for one starting still. Silent 768P, 5s ≈ $0.18. Used by the Best production path.',
+            ),
             'veo-lite' => array(
                 'label' => 'Veo 3.1 Lite',
                 'short' => 'Suggested for a $10/month budget',
@@ -658,6 +728,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($this->social_reel_dev_cheap_on($settings)) {
             array_unshift($parts, 'DEV CHEAP TEST');
         }
+        $pipeline = sanitize_key((string) ($settings['social_reel_pipeline'] ?? 'custom'));
+        $pipelines = $this->social_reel_pipelines();
+        if ($pipeline !== 'custom' && isset($pipelines[$pipeline]['label'])) {
+            array_unshift($parts, (string) $pipelines[$pipeline]['label']);
+        }
         $parts[] = (string) ($models[$model]['label'] ?? $model);
         $parts[] = (string) $this->social_reel_target_seconds($settings) . 's · ' . $this->social_reel_tts_voice_label($voice);
         return implode(' · ', $parts);
@@ -702,12 +777,23 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $spec = isset($models[$model]) ? $models[$model] : $models[self::SOCIAL_REEL_VIDEO_DEFAULT];
         $field = (string) ($spec['image_field'] ?? 'image_url');
         $suffix = (string) ($spec['duration_suffix'] ?? 's');
+        $seconds = (int) $seconds;
         $payload = array(
             'prompt' => $this->clip_social_text($prompt, 1200),
             $field => $image_url,
-            'duration' => (string) $seconds . $suffix,
-            'generate_audio' => false,
         );
+        if (!empty($spec['duration_as_number'])) {
+            $payload['duration'] = $seconds;
+        } else {
+            $payload['duration'] = (string) $seconds . $suffix;
+        }
+        if (array_key_exists('audio_field', $spec)) {
+            if ((string) $spec['audio_field'] !== '') {
+                $payload[(string) $spec['audio_field']] = false;
+            }
+        } else {
+            $payload['generate_audio'] = false;
+        }
         if (!empty($spec['aspect_ratio'])) {
             $payload['aspect_ratio'] = (string) $spec['aspect_ratio'];
         }
@@ -717,7 +803,35 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (!empty($spec['auto_fix'])) {
             $payload['auto_fix'] = true;
         }
+        if (!empty($spec['prompt_expansion_mode'])) {
+            $payload['prompt_expansion_mode'] = (string) $spec['prompt_expansion_mode'];
+        }
         return $payload;
+    }
+
+    private function social_reel_motion_prompt($copy, $post = null) {
+        $copy = is_array($copy) ? $copy : array();
+        $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
+        $moves = array(
+            'slow push-in, locked horizon, natural parallax',
+            'gentle handheld drift, no whip pans',
+            'slight orbit around the hero object, horizon level',
+        );
+        $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
+        $move = $moves[(int) (sprintf('%u', crc32('reel-cam:' . $id)) % count($moves))];
+        $prompt = 'Photoreal vertical 9:16 news B-roll. Animate this exact still; do not redesign the scene. Camera: '
+            . $move
+            . '. Lighting and identity stay the same. ';
+        if ($brief !== '') {
+            $prompt .= 'Action: ' . $brief . '. ';
+        } else {
+            $prompt .= 'Subtle real-world motion only — fabric, glass, screens, weather. ';
+        }
+        if ($post instanceof WP_Post && $this->post_is_comic($post)) {
+            $prompt .= 'Keep any sly visual beat photoreal. ';
+        }
+        $prompt .= 'no text, no logos, no watermarks, no subtitles, no captions, no extra people. Ending state matches the opening frame, closer.';
+        return $this->clip_social_text($prompt, 1200);
     }
 
     private function fallback_reel_script($copy, $post) {
@@ -2804,13 +2918,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 if (is_wp_error($image_url)) {
                     return $image_url;
                 }
-                $brief = $this->social_image_scene_brief((string) ($copy['visual_brief'] ?? ''));
-                $prompt = $brief !== '' ? $brief : 'Photoreal cinematic news B-roll of the story, slow camera move.';
-                if ($this->post_is_comic($post)) {
-                    $prompt .= ' Keep any sly visual beat photoreal.';
-                }
-                $prompt .= ' Continuous camera motion (push-in, orbit, or handheld), photoreal product or screen in frame, no freeze, no text, no logos, no watermarks, no subtitles, no captions.';
-                return $this->social_fal_motion_payload($model, $image_url, $prompt, $this->social_reel_clip_seconds($settings));
+                return $this->social_fal_motion_payload(
+                    $model,
+                    $image_url,
+                    $this->social_reel_motion_prompt($copy, $post),
+                    $this->social_reel_clip_seconds($settings)
+                );
             },
             'store' => function ($bytes) use ($post, $copy) {
                 return $this->store_social_motion($post, $bytes, $copy);

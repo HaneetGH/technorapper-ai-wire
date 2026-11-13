@@ -41,6 +41,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_daily_limit' => 10,
             'social_image_budget_usd' => 5,
             'social_video_budget_usd' => 10,
+            'social_reel_pipeline' => 'custom',
             'social_reel_video_model' => 'veo-lite',
             'social_reel_clip_seconds' => 4,
             'social_reel_recipe' => 'story',
@@ -110,6 +111,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'social_daily_limit',
             'social_image_budget_usd',
             'social_video_budget_usd',
+            'social_reel_pipeline',
             'social_reel_video_model',
             'social_reel_clip_seconds',
             'social_reel_recipe',
@@ -339,6 +341,9 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_reel_video_model'] = in_array($video_model, $video_models, true) ? $video_model : 'veo-lite';
         $clip = absint($input['social_reel_clip_seconds'] ?? $defaults['social_reel_clip_seconds']);
         $out['social_reel_clip_seconds'] = in_array($clip, array(4, 5, 6, 8, 10, 15), true) ? $clip : 8;
+        $pipelines = array_keys($this->social_reel_pipelines());
+        $pipeline = sanitize_key((string) ($input['social_reel_pipeline'] ?? $defaults['social_reel_pipeline']));
+        $out['social_reel_pipeline'] = in_array($pipeline, $pipelines, true) ? $pipeline : 'custom';
         $recipe = sanitize_key((string) ($input['social_reel_recipe'] ?? $defaults['social_reel_recipe']));
         $out['social_reel_recipe'] = in_array($recipe, array('broll', 'story'), true) ? $recipe : 'broll';
         $out['social_reel_include_host'] = empty($input['social_reel_include_host']) ? 0 : 1;
@@ -382,6 +387,22 @@ trait TechnoRapper_AI_Wire_Settings {
         $target = absint($input['social_reel_target_seconds'] ?? $defaults['social_reel_target_seconds']);
         $out['social_reel_target_seconds'] = in_array($target, array(15, 18, 30, 45), true) ? $target : 18;
         $out['social_reel_sting_seconds'] = min(4, max(1, absint($input['social_reel_sting_seconds'] ?? $defaults['social_reel_sting_seconds'])));
+        $locked = $this->social_reel_apply_pipeline($out);
+        foreach (array(
+            'social_reel_pipeline',
+            'social_reel_recipe',
+            'social_reel_include_host',
+            'social_reel_include_slides',
+            'social_reel_include_broll',
+            'social_reel_include_sting',
+            'social_reel_video_model',
+            'social_reel_clip_seconds',
+            'social_reel_target_seconds',
+        ) as $lock_key) {
+            if (array_key_exists($lock_key, $locked)) {
+                $out[$lock_key] = $locked[$lock_key];
+            }
+        }
         $voices = array_keys($this->social_reel_tts_voices());
         $voice = sanitize_key((string) ($input['social_reel_tts_voice'] ?? $defaults['social_reel_tts_voice']));
         $out['social_reel_tts_voice'] = in_array($voice, $voices, true) ? $voice : 'cedar';
@@ -413,6 +434,22 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_carousel_daily_limit'] = $mix['carousel'];
         $out['social_collage_daily_limit'] = $mix['collage'];
         $out['social_single_daily_limit'] = $mix['single'];
+        if (
+            in_array($out['social_reel_pipeline'], array('best', 'budget'), true)
+            && !empty($out['social_reel_enabled'])
+            && (int) $out['social_reel_daily_limit'] < 1
+        ) {
+            $mix = $this->clamp_social_mix_counts(array(
+                'reel' => 1,
+                'carousel' => $out['social_carousel_daily_limit'],
+                'collage' => $out['social_collage_daily_limit'],
+                'single' => $out['social_single_daily_limit'],
+            ), $mix_budget);
+            $out['social_reel_daily_limit'] = $mix['reel'];
+            $out['social_carousel_daily_limit'] = $mix['carousel'];
+            $out['social_collage_daily_limit'] = $mix['collage'];
+            $out['social_single_daily_limit'] = $mix['single'];
+        }
         $out['social_min_review_score'] = min(100, max(0, absint($input['social_min_review_score'] ?? $defaults['social_min_review_score'])));
         $out['social_still_spacing_hours'] = min(12, max(0, absint($input['social_still_spacing_hours'] ?? $defaults['social_still_spacing_hours'])));
         $out['social_post_times'] = self::sanitize_clock_times($input['social_post_times'] ?? array());

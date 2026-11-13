@@ -337,7 +337,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p class="description" id="tr-social-mix-remaining">Assign Reels, carousels, collages, and single-story posts so they add up to the total above. Set a type to 0 to turn it off. The job fills Reel quota first, then carousel, then collages, then singles.</p>
                     <div class="tr-ai-wire-grid">
                     <div data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
-                    <p class="tr-ai-wire-tile"><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"></p>
+                    <p class="tr-ai-wire-tile"><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"><span class="description">Best/Budget raise this to at least 1 so Instagram Reels auto-post. 0 on Custom holds for review.</span></p>
                     </div>
                     <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
                     <p class="tr-ai-wire-tile"><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 3); ?>"><span class="description">Swipeable Instagram posts.</span></p>
@@ -367,7 +367,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <div class="card tr-ai-wire-card" data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
                     <h2>Reels / Shorts</h2>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="0">
-                    <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X and Instagram stills keep posting on their own mix. Use <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Generate Reel now</a> on Social queue to build one, review it, then click Post. Leave <strong>Reel posts per day</strong> at 0 unless you want the worker to auto-post Reels. Checking this box does not steal still slots.</span></p>
+                    <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X and Instagram stills keep posting on their own mix. <strong>Best</strong> and <strong>Budget</strong> auto-post at least one Reel per day. Custom with Reel posts per day at 0 still uses <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Generate Reel now</a>, then you click Post. Checking this box alone does not steal still slots.</span></p>
                     <div data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>
                     <div class="tr-ai-wire-panel" style="border-left:4px solid #d63638;margin-bottom:12px;">
                         <h3 style="margin-top:0;">Dev — cheap test</h3>
@@ -388,6 +388,26 @@ trait TechnoRapper_AI_Wire_Admin {
                         <p class="tr-ai-wire-stat"><span class="description">Video budget</span><strong class="tr-ai-wire-cost">$<?php echo esc_html(number_format_i18n((float) ($s['social_video_budget_usd'] ?? 10), 2)); ?></strong> / month</p>
                     </div>
                     <p class="description"><?php echo esc_html($this->social_reel_recipe_summary($s)); ?></p>
+                    <?php $pipeline = sanitize_key((string) ($s['social_reel_pipeline'] ?? 'custom')); ?>
+                    <h3>Production path</h3>
+                    <p class="description">Best is the auto-post quality route: voice first, lesson cards carry the Reel, MiniMax H3 Max animates one approved still into short silent accents, then the worker posts to Instagram and YouTube. This WordPress host does not need ffmpeg — Fal muxes the spoken MP4. Budget keeps Veo Lite and also auto-posts. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
+                    <div class="tr-ai-wire-choice">
+                        <?php foreach ($this->social_reel_pipelines() as $pipe_id => $pipe_spec) : ?>
+                        <label class="tr-ai-wire-choice-card<?php echo ($pipeline === $pipe_id) ? ' is-selected' : ''; ?>">
+                            <input id="tr-reel-pipeline-<?php echo esc_attr($pipe_id); ?>" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_pipeline]" value="<?php echo esc_attr($pipe_id); ?>" <?php checked($pipeline, $pipe_id); ?>>
+                            <strong><?php echo esc_html((string) $pipe_spec['label']); ?></strong>
+                            <span class="description"><?php echo esc_html((string) $pipe_spec['short']); ?></span>
+                        </label>
+                        <?php endforeach; ?>
+                    </div>
+                    <ol class="tr-ai-wire-pipeline">
+                        <li>A published article clears the social review-score floor.</li>
+                        <li>Best/Budget set <strong>Reel posts per day</strong> to at least 1. The worker picks that article, builds the Reel, and posts it. Generate Reel now still holds for review.</li>
+                        <li>Voiceover is recorded first. Numbered lesson cards follow those spoken beats.</li>
+                        <li>One text-free 9:16 still is animated at Fal (H3 Max on Best, Veo Lite on Budget) into at most two ~2s accents — never looped. If this host has no ffmpeg, Fal also assembles the spoken MP4.</li>
+                        <li>A guard refuses a motion-led cut. Auto Reels publish when the MP4 is ready. Generate Reel now still holds on Social queue until you click Post.</li>
+                        <li>Instagram gets a Reel (feed + AI disclosure). YouTube gets the same file as a Short. X still gets the poster only.</li>
+                    </ol>
                     <div class="tr-ai-wire-row">
                     <p><label for="tr-social-reel-weekly">Reel posts per week</label><br><input id="tr-social-reel-weekly" type="number" min="0" max="14" name="<?php echo esc_attr($option); ?>[social_reel_weekly_limit]" value="<?php echo esc_attr((int) ($s['social_reel_weekly_limit'] ?? 0)); ?>"><span class="description">0 means no weekly cap. Use 2 for a 1–2 Reels/week desk.</span></p>
                     <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label><br><input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"><span class="description">Raise this before Fast, Kling, or a talking host. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
@@ -425,6 +445,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     </div>
                     <?php endforeach; ?>
                     </div>
+                    <div data-tr-reveal="tr-reel-pipeline-custom"<?php echo ($pipeline === 'custom') ? '' : ' hidden'; ?>>
                     <h3>How the video is cut</h3>
                     <p class="description">Recommended: no-face teach Reel — research a mini lesson, speak it clearly, and let numbered on-screen lesson cards carry the voice. The B-roll clip is only a short accent (at most twice, about 2 seconds each) and is never looped to fill the voice; if cards cannot be made, the build stops instead. Optional web search uses the same Independent web search setting. Talking face is optional and expensive.</p>
                     <div class="tr-ai-wire-choice">
@@ -530,7 +551,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     </div>
                     <details id="tr-social-reel-model" class="tr-ai-wire-details">
                         <summary>Motion model and Fal key</summary>
-                        <p class="description">Suggested: <strong>Veo 3.1 Lite</strong> on a $10 budget. Open the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> page for every model.</p>
+                        <p class="description">Best production path uses <strong>MiniMax H3 Max</strong>. Budget uses <strong>Veo 3.1 Lite</strong>. Open the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> page for every model.</p>
                         <?php
                         $selected_model = (string) ($s['social_reel_video_model'] ?? 'veo-lite');
                         foreach ($this->social_reel_video_models() as $value => $spec) :
@@ -543,7 +564,7 @@ trait TechnoRapper_AI_Wire_Admin {
                             <label for="tr-reel-model-<?php echo esc_attr($value); ?>">
                                 <input id="tr-reel-model-<?php echo esc_attr($value); ?>" type="radio" name="<?php echo esc_attr($option); ?>[social_reel_video_model]" value="<?php echo esc_attr($value); ?>" <?php checked($selected_model, $value); ?>>
                                 <strong><?php echo esc_html((string) $spec['label']); ?></strong>
-                                <?php if (!empty($spec['recommended'])) : ?><span class="description">(suggested)</span><?php endif; ?>
+                                <?php if (!empty($spec['quality'])) : ?><span class="description">(best motion)</span><?php elseif (!empty($spec['recommended'])) : ?><span class="description">(suggested)</span><?php endif; ?>
                                 — <?php echo esc_html((string) $spec['short']); ?>
                             </label>
                             <details style="display:inline-block;margin-left:6px;vertical-align:middle;">
@@ -563,14 +584,15 @@ trait TechnoRapper_AI_Wire_Admin {
                             </details>
                         </div>
                         <?php endforeach; ?>
-                        <p><label for="tr-social-reel-clip">Generated motion length</label> <select id="tr-social-reel-clip" name="<?php echo esc_attr($option); ?>[social_reel_clip_seconds]"><?php foreach (array(4, 5, 6, 8, 10, 15) as $clip_n) : ?><option value="<?php echo esc_attr((string) $clip_n); ?>" <?php selected((int) ($s['social_reel_clip_seconds'] ?? 8), $clip_n); ?>><?php echo esc_html((string) $clip_n); ?> seconds</option><?php endforeach; ?></select> <span class="description">Veo allows 4/6/8s. Kling allows 5–15s.</span></p>
-                        <p><label for="tr-fal-key">Fal.ai API key</label><br><input id="tr-fal-key" name="social[fal_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo $this->fal_api_key() !== '' ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Required for Reel motion (Veo via Fal)'); ?>"></p>
-                        <?php if ($this->fal_api_key() !== '') : ?><p><label><input type="checkbox" name="remove_fal_api_key" value="1"> Remove saved Fal.ai key</label></p><?php endif; ?>
+                        <p><label for="tr-social-reel-clip">Generated motion length</label> <select id="tr-social-reel-clip" name="<?php echo esc_attr($option); ?>[social_reel_clip_seconds]"><?php foreach (array(4, 5, 6, 8, 10, 15) as $clip_n) : ?><option value="<?php echo esc_attr((string) $clip_n); ?>" <?php selected((int) ($s['social_reel_clip_seconds'] ?? 8), $clip_n); ?>><?php echo esc_html((string) $clip_n); ?> seconds</option><?php endforeach; ?></select> <span class="description">H3 Max 4–8s. Veo 4/6/8s. Kling 5–15s.</span></p>
                     </details>
-                    <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->fal_api_key() === '') : ?>
+                    </div>
+                    <p><label for="tr-fal-key">Fal.ai API key</label><br><input id="tr-fal-key" name="social[fal_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo $this->fal_api_key() !== '' ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Required for Reel motion (H3 Max or Veo via Fal)'); ?>"></p>
+                    <?php if ($this->fal_api_key() !== '') : ?><p><label><input type="checkbox" name="remove_fal_api_key" value="1"> Remove saved Fal.ai key</label></p><?php endif; ?>
+                    <?php if ($this->fal_api_key() === '' && ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 || $this->social_ffmpeg_path() === '')) : ?>
                     <div class="notice notice-warning inline"><p>Reels need a Fal.ai API key to generate motion<?php echo $this->social_ffmpeg_path() === '' ? ' and to assemble the spoken MP4 (this host has no ffmpeg)' : ''; ?>. Until it is saved, Instagram Reel jobs will be held. The plugin will not Ken Burns the posters instead.</p></div>
                     <?php elseif ($this->social_ffmpeg_path() === '' && $this->fal_api_key() !== '') : ?>
-                    <div class="notice notice-info inline"><p>This WordPress host has no <code>ffmpeg</code>. Fal still generates motion. If the spoken MP4 cannot be assembled here, Social queue gives you a <strong>Download</strong> of motion + voice so you can run ffmpeg on your laptop, then upload the finished Reel.</p></div>
+                    <div class="notice notice-info inline"><p>This WordPress host has no <code>ffmpeg</code>. That is expected: Fal generates the motion clip and assembles the spoken MP4. Click <strong>Generate Reel now</strong>, wait for Download video, then Post. A laptop kit appears only if Fal assembly fails.</p></div>
                     <?php endif; ?>
                     <p class="description">A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, and the Fal models you selected. If this host has no ffmpeg, Fal also muxes the edit. One article only. Mini TTS about $0.004. Avatar Pro and face enhance are optional upsells on the video budget.</p>
                     </div>
@@ -610,7 +632,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <p class="description">Change the cut, avatar face, and motion model on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>.</p>
             </div>
             <h2>Suggested Reel model</h2>
-            <p><strong>Veo 3.1 Lite</strong>, 8 seconds, silent 720p. About <strong>$0.24 per clip</strong> and <strong>$7/month</strong> at one Reel/day — that is what the $10 video budget is sized for. Switch models below only after traffic can pay for them.</p>
+            <p><strong>Best production path:</strong> MiniMax H3 Max, 5 seconds, silent 768P. About <strong>$0.18 per clip</strong>. <strong>Budget path:</strong> Veo 3.1 Lite, 8 seconds, silent 720p, about <strong>$0.24 per clip</strong> and <strong>$7/month</strong> at one Reel/day. Switch Custom models below only after traffic can pay for them.</p>
             <h2>Reel motion models (Fal.ai, silent)</h2>
             <table class="widefat striped" style="max-width:960px;">
                 <thead>
@@ -631,7 +653,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <tr id="tr-cost-<?php echo esc_attr($value); ?>">
                         <td>
                             <strong><?php echo esc_html((string) $spec['label']); ?></strong>
-                            <?php if (!empty($spec['recommended'])) : ?>— suggested<?php endif; ?>
+                            <?php if (!empty($spec['quality'])) : ?>— best motion<?php elseif (!empty($spec['recommended'])) : ?>— suggested<?php endif; ?>
                             <br><span class="description"><?php echo esc_html((string) $spec['blurb']); ?> Lengths: <?php echo esc_html(implode('/', array_map('strval', (array) $spec['durations']))); ?>s.</span>
                         </td>
                         <td>$<?php echo esc_html(number_format_i18n((float) $spec['usd_per_second'], 3)); ?></td>
