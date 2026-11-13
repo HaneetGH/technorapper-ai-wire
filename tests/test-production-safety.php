@@ -3400,6 +3400,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     }
 
     public function test_now_queue_page_lists_live_website_and_social_rows() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
         $website_id = $this->create_queue_item();
         global $wpdb;
         $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'pending'), array('id' => $website_id));
