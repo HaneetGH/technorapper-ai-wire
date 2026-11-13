@@ -4146,6 +4146,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('2D clean vector newsroom', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertStringContainsString('reel_scene_briefs', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertStringContainsString('Meanwhile', $this->invoke_private('social_reel_script_brief', array($best)));
+        $this->assertStringContainsString('burned-in subtitles', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertGreaterThan(60.0, $this->invoke_private('social_reel_max_audio_seconds', array($best)));
         $prompt_best = $this->invoke_private('social_reel_motion_prompt', array(array(
             'visual_brief' => 'Stick figure at a news desk',
@@ -4200,6 +4201,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_LAYOUT, $this->invoke_private('social_reel_layout_key', array($best)));
         $this->assertStringContainsString('Viral 2D newsroom roundup', $this->invoke_private('social_reel_recipe_summary', array($best)));
         $this->assertStringContainsString('unique illustrated scenes that match each story', $this->invoke_private('social_reel_recipe_summary', array($best)));
+        $this->assertStringContainsString('printed spoken subtitles', $this->invoke_private('social_reel_recipe_summary', array($best)));
         $this->assertStringContainsString('Meanwhile', $this->invoke_private('social_reel_tts_instructions', array($best)));
         $this->assertEqualsWithDelta(96.0, $this->invoke_private('social_reel_clamp_audio_seconds', array(122.0, $best)), 0.01);
         $user_best = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news'), false, $best));
@@ -4265,13 +4267,17 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 }
                 $matched_cards[] = $slot;
                 $this->assertGreaterThanOrEqual(TechnoRapper_AI_Wire::SOCIAL_REEL_HOLD_MIN_SCENE_MS, (int) $slot['ms']);
-                $this->assertLessThanOrEqual(4500, (int) $slot['ms']);
+                $this->assertLessThanOrEqual(TechnoRapper_AI_Wire::SOCIAL_REEL_HOLD_MIN_SCENE_MS + 1500, (int) $slot['ms']);
+                $this->assertNotEmpty($slot['subtitle']);
+                $this->assertStringStartsWith('technorapper', (string) $slot['subtitle']);
+                $this->assertNotSame($slot['caption'], $slot['subtitle']);
             }
         }
         $this->assertSame('Hook in three seconds', $first_card);
         $this->assertGreaterThanOrEqual(12, count($matched_cards));
         $this->assertLessThanOrEqual(24, count($matched_cards));
         $this->assertSame(count($matched_cards), count(array_unique(wp_list_pluck($matched_cards, 'caption'))));
+        $this->assertSame(count($matched_cards), count(array_unique(wp_list_pluck($matched_cards, 'subtitle'))));
         $this->assertTrue($this->invoke_private('social_reel_teach_guard', array($matched_slots, 60.0, 0.0)));
         $this->assertSame('Hook in three seconds', $this->invoke_private('social_reel_roundup_scene_lines', array($roundup_copy, 12, $best))[0]);
         $look = $this->invoke_private('social_reel_scene_look');
@@ -7044,7 +7050,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             array('hook' => 'Five updates you need'),
             '',
             'Meanwhile this shipped overnight',
-            array('step' => 4, 'total' => 12, 'label' => 'Meanwhile', 'roundup' => true),
+            array('step' => 4, 'total' => 12, 'label' => 'Meanwhile', 'roundup' => true, 'subtitle' => 'Meanwhile this shipped overnight and the number is wild'),
         ));
         if (is_wp_error($jpeg) && $jpeg->get_error_code() === 'tr_ai_wire_reel_cards') {
             $this->markTestSkipped($jpeg->get_error_message());
@@ -7068,7 +7074,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         };
         $this->assertSame(0, $bright(0, 240), 'Nothing bright under the Instagram top bar.');
         $this->assertSame(0, $bright(1480, 1920), 'Nothing bright under the Instagram caption and buttons.');
-        $this->assertGreaterThan(2000, $bright(250, 1400), 'The stick-figure scene and caption must stay in the middle of the frame.');
+        $this->assertGreaterThan(2000, $bright(250, 1260), 'The stick-figure scene and caption must stay in the middle of the frame.');
+        $this->assertGreaterThan(400, $bright(1288, 1468), 'The spoken subtitle must print above the Instagram chrome.');
         imagedestroy($card);
     }
 
@@ -8161,6 +8168,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('no leftover 5s B-roll', $html);
         $this->assertStringContainsString('viral 2D newsroom', $html);
         $this->assertStringContainsString('unique illustrated scenes that match each story', $html);
+        $this->assertStringContainsString('printed spoken subtitles', $html);
         $this->assertStringContainsString('60 seconds (Best roundup)', $html);
         $this->assertStringContainsString('3–5 desk stories', $html);
         $this->assertStringContainsString('Best/Budget set', $html);

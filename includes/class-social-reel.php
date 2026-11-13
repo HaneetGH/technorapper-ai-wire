@@ -186,7 +186,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return array(
             'best' => array(
                 'label' => 'Best production path',
-                'short' => 'viral 2D newsroom; unique illustrated scenes per story; the worker posts it',
+                'short' => 'viral 2D newsroom; unique illustrated scenes per story; printed spoken subtitles; the worker posts it',
                 'settings' => array(
                     'social_reel_recipe' => 'story',
                     'social_reel_include_host' => 0,
@@ -633,6 +633,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 . 'Use Meanwhile, Next up, or Even crazier between stories. '
                 . 'End with a polarizing comment question, then a 3-word follow CTA such as Follow for daily tech drops. '
                 . 'reel_captions is the VISUAL CUE column: 8–18 short scene lines (max 6 words) in voiceover order, each naming the packed desk story on screen. '
+                . 'Those cues are the headline. The plugin also prints the matching voiceover slice as burned-in subtitles on the card. '
                 . 'reel_scene_briefs is one unique illustration brief per caption that makes the story obvious (room, device, map, object, or graphic). A person or mascot is optional — empty no-person scenes are good. Never a person seen from behind in every beat, never a generic desk twice. reel_script is the VOICEOVER column. '
                 . 'Ban: today we discuss, in this video, according to reports, experts say, let’s dive in, moving on, in conclusion.';
         }
@@ -888,6 +889,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $parts[] = $this->social_reel_is_roundup($settings) ? 'Viral 2D newsroom roundup' : 'No-face teach Reel';
             }
             $parts[] = $this->social_reel_is_roundup($settings) ? 'unique illustrated scenes that match each story' : 'lesson cards carry the Reel';
+            if ($this->social_reel_is_roundup($settings)) {
+                $parts[] = 'printed spoken subtitles';
+            }
             if (!$this->social_reel_is_roundup($settings) && (!isset($settings['social_reel_include_broll']) || !empty($settings['social_reel_include_broll']))) {
                 $parts[] = 'at most 2 short B-roll accents';
             }
@@ -1597,13 +1601,28 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $this->draw_social_centered_text($canvas, $step . ' / ' . $total, 28, 980, $muted, $font, $width, $stroke, 2);
         $text = $caption !== '' ? $caption : trim(wp_strip_all_tags((string) ($copy['hook'] ?? '')));
-        $text = function_exists('mb_strtoupper') ? mb_strtoupper($text, 'UTF-8') : strtoupper($text);
-        $size = 52;
-        $lines = $this->wrap_social_lines($text, 920, $size, $font, 16, 6);
-        $y = 1060;
-        foreach ($lines as $row) {
-            $this->draw_social_centered_text($canvas, $row, $size, $y, $white, $font, $width, $stroke, 3);
-            $y += (int) round($size * 1.16);
+        $subtitle = trim(wp_strip_all_tags((string) ($meta['subtitle'] ?? '')));
+        $same = $subtitle !== '' && strcasecmp($subtitle, $text) === 0;
+        if ($text !== '' && !$same) {
+            $headline = function_exists('mb_strtoupper') ? mb_strtoupper($text, 'UTF-8') : strtoupper($text);
+            $size = $subtitle !== '' ? 44 : 52;
+            $lines = $this->wrap_social_lines($headline, 920, $size, $font, 16, $subtitle !== '' ? 3 : 6);
+            $y = $subtitle !== '' ? 1040 : 1060;
+            foreach ($lines as $row) {
+                $this->draw_social_centered_text($canvas, $row, $size, $y, $white, $font, $width, $stroke, 3);
+                $y += (int) round($size * 1.16);
+            }
+        }
+        if ($subtitle !== '') {
+            imagefilledrectangle($canvas, 40, 1276, 1040, 1468, $navy);
+            imagefilledrectangle($canvas, 40, 1276, 1040, 1284, $cyan);
+            $sub_size = 34;
+            $sub_lines = $this->wrap_social_lines($subtitle, 960, $sub_size, $font, 28, 3);
+            $sy = 1332;
+            foreach ($sub_lines as $row) {
+                $this->draw_social_centered_text($canvas, $row, $sub_size, $sy, $white, $font, $width, $stroke, 2);
+                $sy += (int) round($sub_size * 1.28);
+            }
         }
         ob_start();
         imagejpeg($canvas, null, 90);
@@ -1855,8 +1874,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $meta = is_array($meta) ? $meta : array();
         $photo_bytes = is_string($photo_bytes) ? $photo_bytes : '';
         $key = md5(implode('|', array(
-            !empty($meta['roundup']) ? 'scene-v1' : 'lesson-v2',
+            !empty($meta['roundup']) ? 'scene-v3' : 'lesson-v2',
             $caption,
+            (string) ($meta['subtitle'] ?? ''),
             (string) ((int) $index),
             (string) ((int) ($meta['step'] ?? 0)),
             (string) ((int) ($meta['total'] ?? 0)),
@@ -2087,6 +2107,27 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $lines;
     }
 
+    /** Spoken voiceover slice printed as burned-in subtitles on each roundup scene. */
+    private function social_reel_roundup_subtitles($copy, $count) {
+        $count = max(1, (int) $count);
+        $spoken = $this->social_reel_spoken_scene_lines((string) ($copy['reel_script'] ?? ''), $count);
+        if (count($spoken) < $count) {
+            foreach ($this->social_reel_roundup_scene_lines($copy, $count) as $line) {
+                if (count($spoken) >= $count) {
+                    break;
+                }
+                if ($line !== '' && !in_array($line, $spoken, true)) {
+                    $spoken[] = $line;
+                }
+            }
+        }
+        $out = array();
+        foreach (array_slice($spoken, 0, $count) as $line) {
+            $out[] = $this->clip_social_text($line, 96);
+        }
+        return $out;
+    }
+
     private function social_reel_card_label($index, $total, $settings = null) {
         $index = (int) $index;
         $total = max(1, (int) $total);
@@ -2117,7 +2158,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
      * stretches a motion clip to fill the voice.
      *
      * Each slot: kind card|motion|host, ms, at_ms, seconds; cards also carry
-     * card (index), caption, label, step, total; host carries offset_ms, crop.
+     * card (index), caption, subtitle (roundup spoken slice), label, step, total;
+     * host carries offset_ms, crop.
      */
     private function social_reel_teach_slots($settings, $copy, $post, $audio_seconds, $motion_seconds = 0.0, $host_seconds = 0.0, $host_seek = false) {
         $settings = $this->social_reel_effective_settings($settings);
@@ -2232,9 +2274,16 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $each = intdiv($card_total, $card_n);
             $tail_ms = max(0, $this->social_reel_ms($motion_seconds) - $accent_ms);
             $accents = 0;
+            $subtitles = $this->social_reel_is_roundup($settings)
+                ? $this->social_reel_roundup_subtitles($copy, $card_n)
+                : array();
             for ($i = 0; $i < $card_n; $i++) {
                 $ms = ($i === $card_n - 1) ? ($card_total - ($each * ($card_n - 1))) : $each;
-                $rows[] = array('kind' => 'card', 'ms' => $ms, 'card' => $i, 'caption' => $lines[$i]);
+                $row = array('kind' => 'card', 'ms' => $ms, 'card' => $i, 'caption' => $lines[$i]);
+                if (!empty($subtitles[$i])) {
+                    $row['subtitle'] = (string) $subtitles[$i];
+                }
+                $rows[] = $row;
                 if (!empty($accent_after[$i])) {
                     // Local ffmpeg starts the second accent from the clip's tail; Fal compose cannot seek.
                     $rows[] = array('kind' => 'motion', 'ms' => $accent_ms, 'offset_ms' => $accents > 0 ? $tail_ms : 0);
@@ -2470,6 +2519,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 'total' => (int) ($slot['total'] ?? 1),
                 'label' => (string) ($slot['label'] ?? ''),
                 'roundup' => !empty($slot['roundup']),
+                'subtitle' => (string) ($slot['subtitle'] ?? ''),
             ));
             if (is_wp_error($frame)) {
                 return $frame;

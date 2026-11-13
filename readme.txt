@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.99
+Stable tag: 0.3.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.0 =
+* Best roundup Reels print the spoken voiceover slice as burned-in subtitles on each illustrated scene (Instagram-safe zone). Update, then Start over — old cards without subtitles are not reused.
 
 = 0.2.99 =
 * Best Reels no longer require a person or mascot in every scene — no-person story art is fine. Fal stills that come back longer than the voice (63.9s vs 55.8s) drop trailing cards on the first miss so leftover freeze is not posted.
@@ -252,6 +255,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.0 =
+Best Reels print spoken subtitles on each newsroom scene. Update, then Start over — do not Resume an old MP4 that has no subtitles.
 
 = 0.2.99 =
 Best Reels illustrate the story without a person in every scene, and drop extra cards when Fal returns a clip longer than the voiceover. Update, then Start over — do not Resume the leftover file.
