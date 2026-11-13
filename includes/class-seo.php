@@ -667,6 +667,16 @@ trait TechnoRapper_AI_Wire_SEO {
         } elseif (!empty($review['duplicate_cannibalization'])) {
             $duplicate_note = sanitize_text_field((string) $review['duplicate_cannibalization']);
         }
+        if (!empty($s['_admin_force_publish'])) {
+            foreach ($blocking as $issue) {
+                $warnings[] = $issue;
+            }
+            $blocking = array();
+            $warnings[] = 'Administrator overrode score, story-value, and pre-publish HOLD.';
+            $warnings = array_values(array_unique(array_filter(array_map('strval', $warnings))));
+            $status = $warnings ? 'PUBLISH WITH WARNINGS' : 'PUBLISH';
+            $reason = 'Published by an administrator from the queue.';
+        }
 
         return array(
             'status' => $status,

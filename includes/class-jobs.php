@@ -20,6 +20,10 @@ trait TechnoRapper_AI_Wire_Jobs {
             check_ajax_referer('tr_ai_wire_retry_item_' . $item_id);
             wp_send_json_success($this->public_job($this->enqueue_background_job('retry', array('item_id' => $item_id))));
         }
+        if ($job_action === 'tr_ai_wire_force_publish_item') {
+            check_ajax_referer('tr_ai_wire_force_publish_item_' . $item_id);
+            wp_send_json_success($this->public_job($this->enqueue_background_job('force_publish', array('item_id' => $item_id))));
+        }
         if ($job_action === 'tr_ai_wire_run_social_queue') {
             check_ajax_referer('tr_ai_wire_run_social_queue');
             wp_send_json_success($this->public_job($this->enqueue_background_job('social')));
@@ -131,6 +135,7 @@ trait TechnoRapper_AI_Wire_Jobs {
             'actions' => array(
                 'tr_ai_wire_run_now',
                 'tr_ai_wire_retry_item',
+                'tr_ai_wire_force_publish_item',
                 'tr_ai_wire_run_social_queue',
                 'tr_ai_wire_generate_social_pack',
                 'tr_ai_wire_retry_social_item',
@@ -440,6 +445,21 @@ trait TechnoRapper_AI_Wire_Jobs {
                         'item_error' => $error,
                     )
                 );
+            } elseif ($job['kind'] === 'force_publish') {
+                $this->note_background_progress(15, 'Force publishing item');
+                $this->admin_force_publish_queue_item((int) $job['item_id']);
+                $row = $this->get_item((int) $job['item_id']);
+                $status = is_array($row) ? (string) ($row['status'] ?? '') : '';
+                $error = $this->queue_item_failure_message($row);
+                $this->finish_background_job(
+                    $error !== '' ? $error : ($status !== '' ? 'Force publish finished: ' . $status : 'Force publish finished.'),
+                    $error !== '' ? 'error' : 'done',
+                    array(
+                        'item_id' => (int) $job['item_id'],
+                        'item_status' => $status,
+                        'item_error' => $error,
+                    )
+                );
             } elseif ($job['kind'] === 'social') {
                 if (function_exists('set_time_limit')) {
                     set_time_limit(600);
@@ -532,7 +552,7 @@ trait TechnoRapper_AI_Wire_Jobs {
         if ($item_id < 1) {
             return;
         }
-        if ($kind === 'retry') {
+        if ($kind === 'retry' || $kind === 'force_publish') {
             $this->update_item($item_id, array('error_text' => null));
             return;
         }
@@ -596,7 +616,7 @@ trait TechnoRapper_AI_Wire_Jobs {
             'created_at' => time(),
             'updated_at' => time(),
         );
-        if (in_array($job['kind'], array('retry', 'social_retry'), true) && $job['item_id'] > 0) {
+        if (in_array($job['kind'], array('retry', 'force_publish', 'social_retry'), true) && $job['item_id'] > 0) {
             $this->clear_retry_error($job['kind'], $job['item_id']);
         }
         update_option(self::JOB_OPTION, $job, false);

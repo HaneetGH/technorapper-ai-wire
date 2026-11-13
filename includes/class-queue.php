@@ -15,6 +15,17 @@ trait TechnoRapper_AI_Wire_Queue {
         exit;
     }
 
+    public function force_publish_queue_item() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to force-publish queue items.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_GET['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_force_publish_item_' . $id);
+        $this->enqueue_background_job('force_publish', array('item_id' => $id));
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue'));
+        exit;
+    }
+
     /**
      * A saved review under the score or fact-flag gate is replayed forever
      * unless Retry asks the independent reviewer again. A review that already
@@ -49,6 +60,39 @@ trait TechnoRapper_AI_Wire_Queue {
         $this->update_item($id, $fields);
         $this->note_background_progress(40, 'Running the next stage');
         $this->process_item($id, $s, true);
+    }
+
+    /**
+     * Administrator override for a held story. Skips score, story-value, and
+     * pre-publish HOLD. Profanity and OpenAI Moderation still run.
+     */
+    private function admin_force_publish_queue_item($id) {
+        $item = $this->get_item($id);
+        if (!$item || !in_array($item['status'], array('error', 'retry_wait', 'quarantined'), true)) {
+            return;
+        }
+        $this->note_background_progress(25, 'Force publishing item');
+        $rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
+        $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : array();
+        if (!is_array($review)) {
+            $review = array();
+        }
+        $s = $this->settings_for_item($item, $this->settings());
+        $s['_admin_force_publish'] = 1;
+        $s['map_post_status'] = 'publish';
+        $s['auto_publish'] = 1;
+        if (!$this->has_usable_rewrite($rewrite)) {
+            $this->quarantine_item($id, 'Force publish needs a written article. Click Retry first so the writer can produce one.', $item);
+            return;
+        }
+        $this->update_item($id, array(
+            'attempts' => 0,
+            'next_retry_at' => null,
+            'error_text' => null,
+        ));
+        $review['admin_force_publish'] = 1;
+        $this->note_background_progress(60, 'Publishing the held story');
+        $this->create_draft($id, $item, $rewrite, $review, $s);
     }
 
     public function is_run_in_progress() {
