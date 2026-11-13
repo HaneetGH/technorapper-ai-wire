@@ -2949,6 +2949,24 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('quarantined', $old['status']);
     }
 
+    public function test_pending_items_are_picked_before_newer_quarantined_holds() {
+        $pending_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'pending'), array('id' => $pending_id));
+        $generated_id = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'generated'), array('id' => $generated_id));
+        $held_id = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held for editorial review: score 74 < 80',
+        ), array('id' => $held_id));
+        $this->assertGreaterThan($pending_id, $held_id);
+        $this->assertSame($generated_id, $this->invoke_private('next_pipeline_item_id'));
+        $this->assertSame($pending_id, $this->invoke_private('next_pipeline_item_id', array(array($generated_id => true))));
+        $this->assertTrue($this->invoke_private('pipeline_item_is_unfinished', array($this->invoke_private('get_item', array($pending_id)))));
+        $this->assertFalse($this->invoke_private('pipeline_item_is_unfinished', array($this->invoke_private('get_item', array($held_id)))));
+    }
+
     public function test_atom_feed_queues_every_entry_not_just_the_first() {
         $atom = '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Example Atom</title>'
             . '<entry><title>First Atom story</title><link rel="alternate" href="https://example.com/atom-1"/><id>tag:example.com,2026:1</id><summary>First body with enough source text for the plugin to accept.</summary></entry>'
@@ -4259,7 +4277,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $look = $this->invoke_private('social_reel_scene_look');
         $this->assertStringContainsString('2D clean vector illustration', $look);
         $this->assertStringContainsString('midnight navy', $look);
-        $this->assertStringContainsString('yellow-head stick mascot', $look);
+        $this->assertStringContainsString('person or yellow-head stick mascot is optional', $look);
+        $this->assertStringContainsString('do not show a person from behind', $look);
         $prompt_a = $this->invoke_private('social_reel_scene_prompt', array(
             'Chip delay hits phones',
             'Yellow mascot at a dark foundry gate with stalled wafer crates',
@@ -6473,6 +6492,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ), 57.0 / 64.8));
         $this->assertSame(150, (int) $scaled[0]['frames']);
         $this->assertSame(150, (int) $scaled[1]['frames']);
+        $scale_post = $this->factory()->post->create();
+        $this->assertTrue($this->invoke_private('social_reel_note_hold_scale', array($scale_post, 55.8, 63.9, 14)));
+        $this->assertSame(12, (int) get_post_meta($scale_post, '_tr_ai_wire_hold_keep', true));
+        $this->assertTrue($this->invoke_private('social_reel_note_hold_scale', array($scale_post, 55.8, 63.9, 14)));
+        $this->assertTrue($this->invoke_private('social_reel_note_hold_scale', array($scale_post, 55.8, 63.9, 14)));
+        $this->assertTrue($this->invoke_private('social_reel_note_hold_scale', array($scale_post, 55.8, 63.9, 14)), 'An overlong 63.9s hold must keep rebuilding, not fail with leftover freeze.');
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'social_fal_loop_keyframes'));
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'compose_social_reel_motion'));
         $repeat = $guard(array(
