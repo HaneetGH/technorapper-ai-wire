@@ -72,7 +72,30 @@ trait TechnoRapper_AI_Wire_Admin {
             <form method="post" action="options.php">
                 <?php settings_fields('tr_ai_wire'); ?>
                 <table class="form-table" role="presentation">
-                    <tr><th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th><td><select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]"><?php foreach (array('hourly' => 'Every hour', 'every_3_hours' => 'Every 3 hours', 'every_6_hours' => 'Every 6 hours', 'every_12_hours' => 'Every 12 hours', 'daily' => 'Once per day', 'manual' => 'Manual only (disable scheduled runs)') as $frequency => $label) : ?><option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p></td></tr>
+                    <tr>
+                        <th scope="row"><label for="tr-cron-frequency">Automatic processing schedule</label></th>
+                        <td>
+                            <select id="tr-cron-frequency" name="<?php echo esc_attr(self::OPTION); ?>[cron_frequency]">
+                                <?php foreach (array(
+                                    'hourly' => 'Every hour',
+                                    'every_3_hours' => 'Every 3 hours',
+                                    'every_6_hours' => 'Every 6 hours',
+                                    'every_12_hours' => 'Every 12 hours',
+                                    'daily' => 'Once per day',
+                                    'at_times' => 'At exact times of day',
+                                    'manual' => 'Manual only (disable scheduled runs)',
+                                ) as $frequency => $label) : ?>
+                                    <option value="<?php echo esc_attr($frequency); ?>" <?php selected($s['cron_frequency'], $frequency); ?>><?php echo esc_html($label); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <p class="description">Changes take effect after saving. WP-Cron is traffic-triggered; use a real server cron for reliable timing.</p>
+                            <div data-tr-reveal="tr-cron-frequency" data-tr-reveal-value="at_times"<?php echo (($s['cron_frequency'] ?? '') === 'at_times') ? '' : ' hidden'; ?>>
+                                <p><strong>Run at these times</strong> (<?php echo esc_html(self::site_timezone_label()); ?>)</p>
+                                <?php $this->render_clock_times_fields('cron_times', $s['cron_times'] ?? array(), 6); ?>
+                                <p class="description">Add clock times such as 09:00, 13:00, and 18:00. Blank slots are ignored. If every slot is blank, the job will not run until you pick times or switch back to an interval.</p>
+                            </div>
+                        </td>
+                    </tr>
                     <tr><th colspan="2" id="tr-tenants"><h2 style="margin:12px 0 0;">Feed tenants</h2><p class="description">Each RSS/Atom feed is its own tenant. Onboard one source at a time with its own homepage and content mapping. Disabled tenants are not fetched.</p></th></tr>
                     <tr><th scope="row">Onboard a tenant</th><td><?php $this->render_tenant_fields('new_tenant', array_merge($this->tenant_defaults(), array('pin_to_homepage' => $s['pin_to_homepage'], 'map_post_type' => $s['map_post_type'], 'map_taxonomy' => $s['map_taxonomy'], 'map_terms' => $s['map_terms'], 'map_auto_desk' => $s['map_auto_desk'], 'map_post_status' => $s['map_post_status'], 'map_title' => $s['map_title'], 'map_date' => $s['map_date'], 'map_content' => $s['map_content'])), true); ?><p class="description">Save settings to add this feed as a tenant. Leave the URL blank if you are only editing tenants below.</p></td></tr>
                     <?php foreach (array_values((array) ($s['tenants'] ?? array())) as $index => $tenant) : ?>
@@ -330,7 +353,11 @@ trait TechnoRapper_AI_Wire_Admin {
                     <div data-tr-reveal-any="tr-social-carousel-daily,tr-social-collage-daily"<?php echo ((int) ($s['social_carousel_daily_limit'] ?? 3) > 0 || (int) ($s['social_collage_daily_limit'] ?? 0) > 0) ? '' : ' hidden'; ?>>
                     <p><label for="tr-social-slide-count">Website articles in each carousel or collage</label> <select id="tr-social-slide-count" name="<?php echo esc_attr($option); ?>[social_slide_count]"><?php foreach (array(4, 5, 6) as $pack_n) : ?><option value="<?php echo esc_attr((string) $pack_n); ?>" <?php selected((int) ($s['social_slide_count'] ?? 5), $pack_n); ?>><?php echo esc_html((string) $pack_n); ?></option><?php endforeach; ?></select></p>
                     </div>
-                    <p><label for="tr-social-min-score">Minimum review score to post stills</label> <input id="tr-social-min-score" type="number" min="0" max="100" name="<?php echo esc_attr($option); ?>[social_min_review_score]" value="<?php echo esc_attr((int) ($s['social_min_review_score'] ?? 90)); ?>"> <span class="description">Default 90. Instagram captions never include a URL, and stills are spaced at least 3 hours apart.</span></p>
+                    <p><label for="tr-social-still-hours">Hours between Instagram stills</label> <input id="tr-social-still-hours" type="number" min="0" max="12" name="<?php echo esc_attr($option); ?>[social_still_spacing_hours]" value="<?php echo esc_attr((string) (int) ($s['social_still_spacing_hours'] ?? 3)); ?>"> <span class="description">Used when no clock times are set below. 3 is the default. 0 posts as soon as a still is ready.</span></p>
+                    <p><strong>Or post Instagram stills at exact times</strong> (<?php echo esc_html(self::site_timezone_label()); ?>)</p>
+                    <?php $this->render_clock_times_fields('social_post_times', $s['social_post_times'] ?? array(), 6); ?>
+                    <p class="description">If you fill any times (for example 09:00, 13:00, 18:00), stills use those slots instead of the hour gap. A missed slot posts on the next worker run. Reels, carousels, and collages still skip this wait.</p>
+                    <p><label for="tr-social-min-score">Minimum review score to post stills</label> <input id="tr-social-min-score" type="number" min="0" max="100" name="<?php echo esc_attr($option); ?>[social_min_review_score]" value="<?php echo esc_attr((int) ($s['social_min_review_score'] ?? 90)); ?>"> <span class="description">Default 90. Instagram captions never include a URL.</span></p>
                     <p><label for="tr-social-image-budget">Monthly social image budget (USD)</label> <input id="tr-social-image-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_image_budget_usd]" value="<?php echo esc_attr($s['social_image_budget_usd']); ?>"> <span class="description">Set to 0 to pause new social images. Saved graphics are still reused.</span></p>
                     <p class="description">Artwork is GPT Image 2 low; type is overlaid locally for stills. Image estimate $0.006 each. X API charges are separate. That file is a social asset only — it never becomes the article featured image.</p>
                     </div>
@@ -725,8 +752,11 @@ trait TechnoRapper_AI_Wire_Admin {
         ?>
 <script>
 (function () {
-  function isOn(el) {
+  function isOn(el, want) {
     if (!el) return false;
+    if (el.tagName === 'SELECT') {
+      return want ? el.value === want : (el.value !== '' && el.value !== 'manual');
+    }
     if (el.type === 'checkbox' || el.type === 'radio') return !!el.checked;
     var n = parseInt(el.value, 10);
     return !isNaN(n) && n > 0;
@@ -806,7 +836,7 @@ trait TechnoRapper_AI_Wire_Admin {
   }
   function reveal() {
     document.querySelectorAll('[data-tr-reveal]').forEach(function (box) {
-      box.hidden = !isOn(document.getElementById(box.getAttribute('data-tr-reveal')));
+      box.hidden = !isOn(document.getElementById(box.getAttribute('data-tr-reveal')), box.getAttribute('data-tr-reveal-value'));
     });
     document.querySelectorAll('[data-tr-reveal-any]').forEach(function (box) {
       box.hidden = !box.getAttribute('data-tr-reveal-any').split(',').some(function (id) {
@@ -858,6 +888,18 @@ trait TechnoRapper_AI_Wire_Admin {
 })();
 </script>
         <?php
+    }
+
+    private function render_clock_times_fields($field, $times, $max = 6) {
+        $times = self::sanitize_clock_times($times, $max);
+        while (count($times) < $max) {
+            $times[] = '';
+        }
+        echo '<p class="tr-ai-wire-clock-times">';
+        foreach ($times as $time) {
+            echo '<input type="time" name="' . esc_attr(self::OPTION) . '[' . esc_attr($field) . '][]" value="' . esc_attr($time) . '">';
+        }
+        echo '</p>';
     }
 
     private function model_select($field, $selected) {

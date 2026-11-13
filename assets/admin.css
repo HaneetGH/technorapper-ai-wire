@@ -64,6 +64,17 @@
     margin: 0;
 }
 
+.tr-ai-wire-clock-times {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.tr-ai-wire-clock-times input[type="time"] {
+    width: auto;
+}
+
 .tr-ai-wire-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

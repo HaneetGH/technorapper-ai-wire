@@ -998,6 +998,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
     public function test_fresh_install_is_paused_without_an_api_key() {
         $settings = TechnoRapper_AI_Wire::defaults();
         $this->assertSame('manual', $settings['cron_frequency']);
+        $this->assertSame(array(), $settings['cron_times']);
+        $this->assertSame(3, (int) $settings['social_still_spacing_hours']);
+        $this->assertSame(array(), $settings['social_post_times']);
         $this->assertSame(0, $settings['max_posts_per_day']);
         $this->assertSame(0, $settings['comic_daily_limit']);
         $this->assertSame(1, $settings['auto_publish']);
@@ -3335,6 +3338,116 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $row = $wpdb->get_row($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'", $next_id), ARRAY_A);
         $this->assertSame('queued', $row['status']);
         $this->assertSame(0, $publish_calls);
+    }
+
+    public function test_clock_times_are_normalized_and_invalid_values_dropped() {
+        $this->assertSame(array('09:00', '13:30'), TechnoRapper_AI_Wire::sanitize_clock_times(array('9:00', '13:30', '13:30', '25:00', 'nope')));
+        $this->assertSame(array('07:15', '19:00'), TechnoRapper_AI_Wire::sanitize_clock_times('19:00, 7:15'));
+        update_option('timezone_string', 'UTC');
+        update_option('gmt_offset', 0);
+        $after = gmmktime(10, 0, 0, 11, 13, 2026);
+        $this->assertSame(gmmktime(13, 0, 0, 11, 13, 2026), TechnoRapper_AI_Wire::next_clock_timestamp(array('09:00', '13:00', '18:00'), $after));
+        $this->assertSame(gmmktime(9, 0, 0, 11, 14, 2026), TechnoRapper_AI_Wire::next_clock_timestamp(array('09:00', '13:00', '18:00'), gmmktime(20, 0, 0, 11, 13, 2026)));
+        $saved = $this->plugin->sanitize_settings(array(
+            'cron_frequency' => 'at_times',
+            'cron_times' => array('09:00', '', '18:00'),
+            'social_platform_toggles' => 1,
+            'social_instagram_enabled' => 1,
+            'social_still_spacing_hours' => 1,
+            'social_post_times' => array('08:30', '20:00'),
+        ));
+        $this->assertSame('at_times', $saved['cron_frequency']);
+        $this->assertSame(array('09:00', '18:00'), $saved['cron_times']);
+        $this->assertSame(1, (int) $saved['social_still_spacing_hours']);
+        $this->assertSame(array('08:30', '20:00'), $saved['social_post_times']);
+    }
+
+    public function test_at_times_schedules_the_next_editorial_clock_slot() {
+        update_option('timezone_string', 'UTC');
+        update_option('gmt_offset', 0);
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::CRON_HOOK);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'cron_frequency' => 'at_times',
+            'cron_times' => array('09:00', '18:00'),
+        )), false);
+        $this->invoke_private('schedule_cron');
+        $next = wp_next_scheduled(TechnoRapper_AI_Wire::CRON_HOOK);
+        $this->assertNotFalse($next);
+        $this->assertSame(TechnoRapper_AI_Wire::next_clock_timestamp(array('09:00', '18:00'), time()), $next);
+    }
+
+    public function test_instagram_stills_wait_until_the_next_clock_slot() {
+        $this->onboard_social(array('instagram'));
+        update_option('timezone_string', 'UTC');
+        update_option('gmt_offset', 0);
+        $slot = gmdate('H:i', time() + (2 * HOUR_IN_SECONDS));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_times' => array($slot),
+            'social_still_spacing_hours' => 3,
+        )), false);
+        global $wpdb;
+        $old_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Posted just now',
+        ));
+        $now = current_time('mysql', true);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $old_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s'));
+        $this->assertSame(0, $this->invoke_private('instagram_stills_spacing_seconds'));
+        $wait = $this->invoke_private('instagram_spacing_wait_seconds');
+        $this->assertGreaterThan(HOUR_IN_SECONDS, $wait);
+        $this->assertLessThan(3 * HOUR_IN_SECONDS, $wait);
+    }
+
+    public function test_instagram_clock_slots_post_immediately_when_a_slot_was_missed() {
+        $this->onboard_social(array('instagram'));
+        update_option('timezone_string', 'UTC');
+        update_option('gmt_offset', 0);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_times' => array('09:00', '13:00', '18:00'),
+        )), false);
+        global $wpdb;
+        $old_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Old still',
+        ));
+        $then = gmdate('Y-m-d H:i:s', time() - (30 * HOUR_IN_SECONDS));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $old_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $then,
+            'updated_at' => $then,
+        ), array('%d', '%s', '%s', '%s', '%s'));
+        $this->assertSame(0, $this->invoke_private('instagram_spacing_wait_seconds'));
+    }
+
+    public function test_instagram_hour_gap_can_be_turned_off() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_still_spacing_hours' => 0,
+            'social_post_times' => array(),
+        )), false);
+        global $wpdb;
+        $old_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Just posted still',
+        ));
+        $now = current_time('mysql', true);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $old_id,
+            'platform' => 'instagram',
+            'status' => 'published',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s'));
+        $this->assertSame(0, $this->invoke_private('instagram_stills_spacing_seconds'));
+        $this->assertSame(0, $this->invoke_private('instagram_spacing_wait_seconds'));
     }
 
     public function test_carousel_pack_posts_during_the_instagram_still_gap() {
@@ -7207,6 +7320,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->social_settings_page();
         $html = ob_get_clean();
         $this->assertStringContainsString('id="tr-social-reel-enabled"', $html);
+        $this->assertStringContainsString('Hours between Instagram stills', $html);
+        $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_still_spacing_hours]"', $html);
+        $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_post_times][]"', $html);
+        $this->assertStringContainsString('Or post Instagram stills at exact times', $html);
         $this->assertStringContainsString('Enable Reels / YouTube Shorts video', $html);
         $this->assertStringContainsString('data-tr-reveal="tr-social-reel-enabled"', $html);
         $this->assertStringContainsString('data-tr-reveal="tr-social-yt-enabled"', $html);
@@ -7260,6 +7377,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->settings_page();
         $main = ob_get_clean();
         $this->assertStringContainsString('id="tr-comic-enabled"', $main);
+        $this->assertStringContainsString('At exact times of day', $main);
+        $this->assertStringContainsString('data-tr-reveal="tr-cron-frequency"', $main);
+        $this->assertStringContainsString('data-tr-reveal-value="at_times"', $main);
+        $this->assertTrue((bool) preg_match('/data-tr-reveal="tr-cron-frequency"[^>]*\bhidden\b/', $main));
+        $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[cron_times][]"', $main);
         $this->assertStringContainsString('Comic posts per day', $main);
         $this->assertTrue((bool) preg_match('/data-tr-reveal="tr-comic-enabled"[^>]*\bhidden\b/', $main));
         $this->assertStringContainsString('id="tr-enable-experiment"', $main);

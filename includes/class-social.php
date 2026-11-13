@@ -984,7 +984,7 @@ trait TechnoRapper_AI_Wire_Social {
                     $this->finish_instagram_pack($pack, $this->publish_x_pack($pack, $credentials, $settings));
                 } elseif ($row['platform'] === 'instagram') {
                     $this->finish_instagram_pack($pack, $this->publish_instagram_pack($pack, $credentials, $settings));
-                    $instagram_spacing_wait = max($instagram_spacing_wait, $this->instagram_stills_spacing_seconds());
+                    $instagram_spacing_wait = max($instagram_spacing_wait, $this->instagram_spacing_wait_seconds());
                 } else {
                     $result = $this->publish_social_item($row, $credentials, $settings);
                     if (is_wp_error($result)) {
@@ -1021,7 +1021,7 @@ trait TechnoRapper_AI_Wire_Social {
             }
             $this->finish_social_item($row['id'], 'published', $result['id'], $result['url'], '');
             if ((string) ($row['platform'] ?? '') === 'instagram' && !$this->social_row_is_reel($row)) {
-                $instagram_spacing_wait = max($instagram_spacing_wait, $this->instagram_stills_spacing_seconds());
+                $instagram_spacing_wait = max($instagram_spacing_wait, $this->instagram_spacing_wait_seconds());
             }
             break;
         }
@@ -1078,11 +1078,18 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function instagram_stills_spacing_seconds() {
-        return (int) self::SOCIAL_INSTAGRAM_STILL_SPACING;
+        $settings = $this->settings();
+        if (self::sanitize_clock_times($settings['social_post_times'] ?? array())) {
+            return 0;
+        }
+        $hours = min(12, max(0, (int) ($settings['social_still_spacing_hours'] ?? 3)));
+        return $hours * HOUR_IN_SECONDS;
     }
 
     private function instagram_spacing_wait_seconds() {
         global $wpdb;
+        $settings = $this->settings();
+        $times = self::sanitize_clock_times($settings['social_post_times'] ?? array());
         $last = $wpdb->get_var(
             "SELECT s.updated_at FROM {$wpdb->prefix}tr_ai_wire_social s
              WHERE s.platform = 'instagram' AND s.status = 'published'
@@ -1094,16 +1101,44 @@ trait TechnoRapper_AI_Wire_Social {
                )
              ORDER BY s.updated_at DESC LIMIT 1"
         );
-        if (!is_string($last) || $last === '') {
-            return 0;
+        $last_ts = 0;
+        if (is_string($last) && $last !== '') {
+            $parsed = strtotime($last . ' UTC');
+            if ($parsed) {
+                $last_ts = (int) $parsed;
+            }
         }
-        $ts = strtotime($last . ' UTC');
-        if (!$ts) {
+        if ($times) {
+            $anchor = $last_ts ? $last_ts : (time() - 59);
+            $next = self::next_clock_timestamp($times, $anchor);
+            if ($next < 1) {
+                return 0;
+            }
+            return $next > time() ? ($next - time()) : 0;
+        }
+        if ($last_ts < 1) {
             return 0;
         }
         $need = $this->instagram_stills_spacing_seconds();
-        $elapsed = time() - $ts;
+        if ($need < 1) {
+            return 0;
+        }
+        $elapsed = time() - $last_ts;
         return $elapsed >= $need ? 0 : ($need - $elapsed);
+    }
+
+    private function instagram_still_spacing_copy() {
+        $settings = $this->settings();
+        $times = self::sanitize_clock_times($settings['social_post_times'] ?? array());
+        if ($times) {
+            return 'Single Instagram posts go out at ' . implode(', ', $times) . ' (' . self::site_timezone_label() . ').';
+        }
+        $hours = min(12, max(0, (int) ($settings['social_still_spacing_hours'] ?? 3)));
+        if ($hours < 1) {
+            return 'Single Instagram posts are not delayed between each other.';
+        }
+        $unit = $hours === 1 ? 'hour' : 'hours';
+        return 'Single Instagram posts wait ' . $hours . ' ' . $unit . ' after the last still.';
     }
 
     private function social_queued_has_spacing_exempt() {
@@ -5797,7 +5832,7 @@ trait TechnoRapper_AI_Wire_Social {
         ?>
         <div class="wrap">
             <h1>Social queue</h1>
-            <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. Single Instagram posts still wait 3 hours between each other.'); ?></p></div><?php endif; ?>
+            <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. ' . $this->instagram_still_spacing_copy()); ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_script_regen'])) : ?><div class="notice notice-info is-dismissible"><p>Generating a new teach script. Older Reel video/voice files for that row were deleted. This page updates itself while it rebuilds.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use no talking face + Veo Lite 4s hooks. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>
@@ -5932,7 +5967,7 @@ trait TechnoRapper_AI_Wire_Social {
                 <?php submit_button('Generate collage now', 'primary', 'submit', false); ?>
             </form>
             </div>
-            <p class="description"><strong>Generate Reel now</strong> builds one spoken video and holds it on this page. Watch it, then click Post — it does not go live until you do. Auto Reels still post on their own when Reel posts per day is above 0. Carousel and collage skip the daily mix and that wait. Each of those packs at least 2 stories that have not already been posted. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. Single Instagram posts still wait 3 hours after the last Instagram post.</p>
+            <p class="description"><strong>Generate Reel now</strong> builds one spoken video and holds it on this page. Watch it, then click Post — it does not go live until you do. Auto Reels still post on their own when Reel posts per day is above 0. Carousel and collage skip the daily mix and that wait. Each of those packs at least 2 stories that have not already been posted. Instagram gets a swipeable carousel or one grid image. X attaches up to 4 of those images on one post. YouTube keeps receiving Reels only. A carousel or collage posts on the next worker run. <?php echo esc_html($this->instagram_still_spacing_copy()); ?></p>
             <?php
             $queued_now = $this->social_queued_count();
             $next_run = wp_next_scheduled(self::SOCIAL_CRON_HOOK);

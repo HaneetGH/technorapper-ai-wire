@@ -40,6 +40,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             if (!$can_steal) {
                 $summary['skipped'] = $foreground ? 'A run is already in progress. Wait a minute and try again.' : 'locked';
                 $this->store_last_run($summary);
+                $this->maybe_schedule_next_clock_cron($args);
                 return $summary;
             }
 
@@ -54,6 +55,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             if (!$deleted) {
                 $summary['skipped'] = 'Could not take over a previous run lock.';
                 $this->store_last_run($summary);
+                $this->maybe_schedule_next_clock_cron($args);
                 return $summary;
             }
             wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
@@ -61,6 +63,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             if (!add_option(self::PROCESSING_LOCK_OPTION, $lock, '', false)) {
                 $summary['skipped'] = 'Could not start a run because another worker took the lock.';
                 $this->store_last_run($summary);
+                $this->maybe_schedule_next_clock_cron($args);
                 return $summary;
             }
         }
@@ -83,7 +86,23 @@ trait TechnoRapper_AI_Wire_Feeds {
             }
         }
         $this->store_last_run($summary);
+        $this->maybe_schedule_next_clock_cron($args);
         return $summary;
+    }
+
+    /**
+     * After a no-arg scheduled tick, queue the next clock slot. Retry/continue
+     * events carry args and must not steal this reschedule.
+     */
+    private function maybe_schedule_next_clock_cron($args) {
+        if (!empty($args['foreground'])) {
+            return;
+        }
+        $reason = sanitize_key($args['reason'] ?? 'scheduled');
+        if ($reason !== 'scheduled') {
+            return;
+        }
+        self::ensure_clock_cron();
     }
 
     private function process_feeds_locked($lock_token, $args = array(), &$summary = null) {
