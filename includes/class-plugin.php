@@ -20,7 +20,7 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.3.1';
+    const VERSION = '0.3.2';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';

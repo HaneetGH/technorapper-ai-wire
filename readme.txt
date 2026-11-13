@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.1
+Stable tag: 0.3.2
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.2 =
+* Website queue runs skip held stories and keep going until Maximum posts per day is filled. Failed rows no longer use up Maximum items per run or stop the Fetch now job.
 
 = 0.3.1 =
 * Queue rows that were held for score, story-value, or a pre-publish HOLD get a Force publish button. Retry still re-runs the reviewer; Force publish goes live on that one story. Profanity and OpenAI Moderation still apply.
@@ -258,6 +261,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.2 =
+Fetch now keeps trying the next website story after holds, instead of stopping the job when the first few fail.
 
 = 0.3.1 =
 Held queue rows now have Force publish when you still want that story live. Retry still asks the reviewer again.
