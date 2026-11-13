@@ -434,6 +434,22 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['social_carousel_daily_limit'] = $mix['carousel'];
         $out['social_collage_daily_limit'] = $mix['collage'];
         $out['social_single_daily_limit'] = $mix['single'];
+        if (
+            in_array($out['social_reel_pipeline'], array('best', 'budget'), true)
+            && !empty($out['social_reel_enabled'])
+            && (int) $out['social_reel_daily_limit'] < 1
+        ) {
+            $mix = $this->clamp_social_mix_counts(array(
+                'reel' => 1,
+                'carousel' => $out['social_carousel_daily_limit'],
+                'collage' => $out['social_collage_daily_limit'],
+                'single' => $out['social_single_daily_limit'],
+            ), $mix_budget);
+            $out['social_reel_daily_limit'] = $mix['reel'];
+            $out['social_carousel_daily_limit'] = $mix['carousel'];
+            $out['social_collage_daily_limit'] = $mix['collage'];
+            $out['social_single_daily_limit'] = $mix['single'];
+        }
         $out['social_min_review_score'] = min(100, max(0, absint($input['social_min_review_score'] ?? $defaults['social_min_review_score'])));
         $out['social_still_spacing_hours'] = min(12, max(0, absint($input['social_still_spacing_hours'] ?? $defaults['social_still_spacing_hours'])));
         $out['social_post_times'] = self::sanitize_clock_times($input['social_post_times'] ?? array());

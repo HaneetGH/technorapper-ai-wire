@@ -4099,6 +4099,41 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, (int) $best['social_reel_include_host']);
         $this->assertSame(5, (int) $best['social_reel_clip_seconds']);
         $this->assertSame(1, (int) $best['social_reel_include_slides']);
+        $this->assertSame(1, (int) $best['social_reel_enabled']);
+        $this->assertSame(1, (int) $best['social_reel_daily_limit']);
+        $budget = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_instagram_enabled' => 1,
+            'social_reel_enabled' => 1,
+            'social_reel_pipeline' => 'budget',
+            'social_reel_daily_limit' => 0,
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
+            'social_single_daily_limit' => 2,
+        ));
+        $this->assertSame('budget', $budget['social_reel_pipeline']);
+        $this->assertSame('veo-lite', $budget['social_reel_video_model']);
+        $this->assertSame(1, (int) $budget['social_reel_daily_limit']);
+        $this->assertSame(3, (int) $budget['social_carousel_daily_limit']);
+        $raised = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_instagram_enabled' => 1,
+            'social_reel_enabled' => 1,
+            'social_reel_pipeline' => 'best',
+            'social_reel_daily_limit' => 2,
+            'social_mix_saved' => 1,
+        ));
+        $this->assertSame(2, (int) $raised['social_reel_daily_limit']);
+        $paused = $this->plugin->sanitize_settings(array(
+            'social_platform_toggles' => 1,
+            'social_instagram_enabled' => 1,
+            'social_reel_enabled' => 0,
+            'social_reel_pipeline' => 'best',
+            'social_reel_daily_limit' => 5,
+            'social_mix_saved' => 1,
+        ));
+        $this->assertSame(0, (int) $paused['social_reel_enabled']);
+        $this->assertSame(0, (int) $paused['social_reel_daily_limit']);
         $prompt = $this->invoke_private('social_reel_motion_prompt', array(array(
             'visual_brief' => 'Night server hall with a phone in the foreground',
         ), 12));
@@ -7358,6 +7393,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('MiniMax H3 Max', $html);
         $this->assertStringContainsString('This WordPress host does not need ffmpeg', $html);
         $this->assertStringContainsString('If this host has no ffmpeg, Fal also assembles the spoken MP4', $html);
+        $this->assertStringContainsString('the worker posts to Instagram and YouTube', $html);
+        $this->assertStringContainsString('Best/Budget set', $html);
         $this->assertStringContainsString('Hours between Instagram stills', $html);
         $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_still_spacing_hours]"', $html);
         $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_post_times][]"', $html);

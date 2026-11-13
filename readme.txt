@@ -57,8 +57,8 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.2.88 =
-* Best production path for Reels: voice first, lesson cards carry the cut, MiniMax H3 Max animates one approved still into short silent accents, then you watch and Post to Instagram and YouTube.
-* Budget path still uses Veo Lite. Custom keeps the talking-host upsell and every Fal motion model.
+* Best production path for Reels: voice first, lesson cards carry the cut, MiniMax H3 Max animates one approved still into short silent accents, then the worker auto-posts to Instagram and YouTube (at least one Reel per day).
+* Budget path still uses Veo Lite and also auto-posts. Custom keeps hold-for-review when Reel posts per day is 0, plus the talking-host upsell and every Fal motion model.
 * Hosts without ffmpeg stay on WordPress: Fal muxes the spoken MP4. A laptop kit is only the fallback if Fal assembly fails.
 
 = 0.2.87 =
@@ -218,7 +218,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.2.88 =
-On Social settings, pick Best production path for the highest-quality Reel generate-and-post flow. Leave Reel posts per day at 0 and click Post after you watch the cut.
+On Social settings, pick Best production path. Saving it auto-posts at least one Instagram Reel per day (H3 Max, Fal mux if the host has no ffmpeg). Custom with Reel posts per day at 0 still holds for review.
 
 = 0.2.87 =
 Optional: set exact run times on Feed tenants and Social settings. Interval schedules (every 3 hours, and so on) stay the default.

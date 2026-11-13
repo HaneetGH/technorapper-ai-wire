@@ -337,7 +337,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p class="description" id="tr-social-mix-remaining">Assign Reels, carousels, collages, and single-story posts so they add up to the total above. Set a type to 0 to turn it off. The job fills Reel quota first, then carousel, then collages, then singles.</p>
                     <div class="tr-ai-wire-grid">
                     <div data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
-                    <p class="tr-ai-wire-tile"><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"></p>
+                    <p class="tr-ai-wire-tile"><label for="tr-social-reel-daily">Reel posts per day</label> <input id="tr-social-reel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_reel_daily_limit]" value="<?php echo esc_attr($s['social_reel_daily_limit'] ?? 0); ?>"><span class="description">Best/Budget raise this to at least 1 so Instagram Reels auto-post. 0 on Custom holds for review.</span></p>
                     </div>
                     <div data-tr-reveal-any="tr-social-x-enabled,tr-social-ig-enabled"<?php echo $stills_on ? '' : ' hidden'; ?>>
                     <p class="tr-ai-wire-tile"><label for="tr-social-carousel-daily">Carousel posts per day</label> <input id="tr-social-carousel-daily" class="tr-social-mix-count" type="number" min="0" max="<?php echo esc_attr((string) $mix_budget); ?>" name="<?php echo esc_attr($option); ?>[social_carousel_daily_limit]" value="<?php echo esc_attr($s['social_carousel_daily_limit'] ?? 3); ?>"><span class="description">Swipeable Instagram posts.</span></p>
@@ -367,7 +367,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <div class="card tr-ai-wire-card" data-tr-reveal-any="tr-social-ig-enabled,tr-social-yt-enabled"<?php echo ($ig_on || $yt_on) ? '' : ' hidden'; ?>>
                     <h2>Reels / Shorts</h2>
                     <input type="hidden" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="0">
-                    <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X and Instagram stills keep posting on their own mix. Use <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Generate Reel now</a> on Social queue to build one, review it, then click Post. Leave <strong>Reel posts per day</strong> at 0 unless you want the worker to auto-post Reels. Checking this box does not steal still slots.</span></p>
+                    <p><label><input id="tr-social-reel-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_reel_enabled]" value="1" <?php checked($reel_on); ?>> <strong>Enable Reels / YouTube Shorts video</strong></label> <span class="description">Spoken 9:16 of one article. Instagram uses that file as a Reel; YouTube uploads the same file as a Short. X and Instagram stills keep posting on their own mix. <strong>Best</strong> and <strong>Budget</strong> auto-post at least one Reel per day. Custom with Reel posts per day at 0 still uses <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social')); ?>">Generate Reel now</a>, then you click Post. Checking this box alone does not steal still slots.</span></p>
                     <div data-tr-reveal="tr-social-reel-enabled"<?php echo $reel_on ? '' : ' hidden'; ?>>
                     <div class="tr-ai-wire-panel" style="border-left:4px solid #d63638;margin-bottom:12px;">
                         <h3 style="margin-top:0;">Dev — cheap test</h3>
@@ -390,7 +390,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p class="description"><?php echo esc_html($this->social_reel_recipe_summary($s)); ?></p>
                     <?php $pipeline = sanitize_key((string) ($s['social_reel_pipeline'] ?? 'custom')); ?>
                     <h3>Production path</h3>
-                    <p class="description">Best is the default quality route: voice first, lesson cards carry the Reel, MiniMax H3 Max animates one approved still into short silent accents, then you watch and Post to Instagram and YouTube. This WordPress host does not need ffmpeg — Fal muxes the spoken MP4. Budget keeps Veo Lite. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
+                    <p class="description">Best is the auto-post quality route: voice first, lesson cards carry the Reel, MiniMax H3 Max animates one approved still into short silent accents, then the worker posts to Instagram and YouTube. This WordPress host does not need ffmpeg — Fal muxes the spoken MP4. Budget keeps Veo Lite and also auto-posts. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
                     <div class="tr-ai-wire-choice">
                         <?php foreach ($this->social_reel_pipelines() as $pipe_id => $pipe_spec) : ?>
                         <label class="tr-ai-wire-choice-card<?php echo ($pipeline === $pipe_id) ? ' is-selected' : ''; ?>">
@@ -402,11 +402,11 @@ trait TechnoRapper_AI_Wire_Admin {
                     </div>
                     <ol class="tr-ai-wire-pipeline">
                         <li>A published article clears the social review-score floor.</li>
-                        <li>Click <strong>Generate Reel now</strong> (leave Reel posts per day at 0 unless you want auto-post).</li>
+                        <li>Best/Budget set <strong>Reel posts per day</strong> to at least 1. The worker picks that article, builds the Reel, and posts it. Generate Reel now still holds for review.</li>
                         <li>Voiceover is recorded first. Numbered lesson cards follow those spoken beats.</li>
                         <li>One text-free 9:16 still is animated at Fal (H3 Max on Best, Veo Lite on Budget) into at most two ~2s accents — never looped. If this host has no ffmpeg, Fal also assembles the spoken MP4.</li>
-                        <li>A guard refuses a motion-led cut. The teach Reel is held on Social queue.</li>
-                        <li>Click <strong>Post</strong>. Instagram gets a Reel (feed + AI disclosure). YouTube gets the same file as a Short. X still gets the poster only.</li>
+                        <li>A guard refuses a motion-led cut. Auto Reels publish when the MP4 is ready. Generate Reel now still holds on Social queue until you click Post.</li>
+                        <li>Instagram gets a Reel (feed + AI disclosure). YouTube gets the same file as a Short. X still gets the poster only.</li>
                     </ol>
                     <div class="tr-ai-wire-row">
                     <p><label for="tr-social-reel-weekly">Reel posts per week</label><br><input id="tr-social-reel-weekly" type="number" min="0" max="14" name="<?php echo esc_attr($option); ?>[social_reel_weekly_limit]" value="<?php echo esc_attr((int) ($s['social_reel_weekly_limit'] ?? 0)); ?>"><span class="description">0 means no weekly cap. Use 2 for a 1–2 Reels/week desk.</span></p>

@@ -171,7 +171,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return array(
             'best' => array(
                 'label' => 'Best production path',
-                'short' => 'H3 Max accents, lesson cards carry the voice, you watch then Post',
+                'short' => 'H3 Max accents; the worker posts to Instagram and YouTube',
                 'settings' => array(
                     'social_reel_recipe' => 'story',
                     'social_reel_include_host' => 0,
@@ -185,7 +185,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             ),
             'budget' => array(
                 'label' => 'Budget path',
-                'short' => 'Veo Lite 4s on a $10 video budget',
+                'short' => 'Veo Lite 4s; the worker posts on the $10 video budget',
                 'settings' => array(
                     'social_reel_recipe' => 'story',
                     'social_reel_include_host' => 0,
