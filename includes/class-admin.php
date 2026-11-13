@@ -390,7 +390,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p class="description"><?php echo esc_html($this->social_reel_recipe_summary($s)); ?></p>
                     <?php $pipeline = sanitize_key((string) ($s['social_reel_pipeline'] ?? 'custom')); ?>
                     <h3>Production path</h3>
-                    <p class="description">Best is the auto-post 60-second stick-figure newsroom roundup: 135–150 words, 3–5 stories, scene every 3–4 seconds, MiniMax H3 Max accents, then the worker posts to Instagram and YouTube. This WordPress host does not need ffmpeg — Fal muxes the spoken MP4. Budget keeps an 18s Veo Lite teach cut and also auto-posts. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
+                    <p class="description">Best is the auto-post 60-second stick-figure newsroom roundup: 135–150 words, 3–5 stories, scene every 3–4 seconds, MiniMax H3 Max accents, then the worker posts to Instagram and YouTube. On-screen scenes follow the voiceover; the brand sting is not half the video. This WordPress host does not need ffmpeg — Fal muxes the spoken MP4. Budget keeps an 18s Veo Lite teach cut and also auto-posts. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
                     <div class="tr-ai-wire-choice">
                         <?php foreach ($this->social_reel_pipelines() as $pipe_id => $pipe_spec) : ?>
                         <label class="tr-ai-wire-choice-card<?php echo ($pipeline === $pipe_id) ? ' is-selected' : ''; ?>">

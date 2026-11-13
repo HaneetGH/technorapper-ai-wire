@@ -4183,6 +4183,25 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('Hook', $roundup_cards[0]['label']);
         $this->assertSame('Follow', $roundup_cards[count($roundup_cards) - 1]['label']);
         $this->assertTrue($this->invoke_private('social_reel_teach_guard', array($slots, 60.0, 0.0)));
+        $long_vo = implode(' ', array_fill(0, 150, 'technorapper'));
+        $kept_vo = $this->invoke_private('sanitize_reel_script', array($long_vo, array(), get_post($lead), $best));
+        $this->assertSame(150, count(preg_split('/\s+/', $kept_vo, -1, PREG_SPLIT_NO_EMPTY)));
+        $scenes = $this->invoke_private('social_reel_spoken_scene_lines', array($long_vo, 16));
+        $this->assertCount(16, $scenes);
+        $this->assertStringStartsWith('technorapper', $scenes[0]);
+        $matched_slots = $this->invoke_private('social_reel_teach_slots', array($best, array(
+            'hook' => 'Tech just moved overnight',
+            'reel_script' => $long_vo,
+            'reel_captions' => $caps,
+        ), null, 60.0, 5.0, 0.0, false));
+        $first_card = '';
+        foreach ($matched_slots as $slot) {
+            if (($slot['kind'] ?? '') === 'card') {
+                $first_card = (string) $slot['caption'];
+                break;
+            }
+        }
+        $this->assertStringStartsWith('technorapper', $first_card);
         $budget = $this->plugin->sanitize_settings(array(
             'social_platform_toggles' => 1,
             'social_instagram_enabled' => 1,
@@ -6609,7 +6628,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             }
         }
         $this->assertSame(count($visual), $kinds);
-        $this->assertSame(12000, (int) $tracks[1]['keyframes'][0]['duration']);
+        $visual_ms = 0;
+        foreach ($visual as $frame) {
+            $visual_ms += (int) ($frame['duration'] ?? 0);
+        }
+        $this->assertSame($visual_ms, (int) $tracks[1]['keyframes'][0]['duration'], 'Audio must cover the pictures so Fal does not freeze the last frame.');
         $this->assertSame((int) $result['id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
         $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_fal_compose_request', true));
         remove_all_filters('tr_ai_wire_ffmpeg_path');

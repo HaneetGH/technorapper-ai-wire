@@ -522,6 +522,19 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return max(3.0, min($max, $seconds));
     }
 
+    private function social_reel_script_word_floor($settings = null) {
+        return $this->social_reel_is_roundup($settings) ? 130 : 12;
+    }
+
+    private function social_reel_script_clip_chars($settings = null) {
+        return $this->social_reel_is_roundup($settings) ? 2500 : 1200;
+    }
+
+    private function social_reel_script_word_count($script) {
+        $words = preg_split('/\s+/', trim(wp_strip_all_tags((string) $script)), -1, PREG_SPLIT_NO_EMPTY);
+        return is_array($words) ? count($words) : 0;
+    }
+
     private function social_reel_script_word_budget($settings = null) {
         $target = $this->social_reel_target_seconds($settings);
         if ($target >= 55) {
@@ -630,7 +643,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             (string) ($copy['hook'] ?? ''),
             $this->social_reel_dev_cheap_on($settings) ? 'cheap' : 'prod',
             !empty($settings['enable_web_search']) ? 'web' : 'local',
-            $this->social_reel_is_roundup($settings) ? 'roundup-v1' : 'lesson-v1',
+            $this->social_reel_is_roundup($settings) ? 'roundup-v2' : 'lesson-v1',
             implode(',', $this->social_reel_roundup_ids($post, $settings)),
         )));
     }
@@ -697,8 +710,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
 
     private function social_reel_enrich_lesson($post, $settings, $copy, $script) {
         $copy = is_array($copy) ? $copy : array();
+        $script = $this->sanitize_reel_script($script, $copy, $post, $settings);
         $fingerprint = $this->social_reel_lesson_key($post, $settings, $copy, $script);
-        $script = $this->social_reel_trim_script($script, $settings);
         $cached = json_decode((string) get_post_meta($post->ID, '_tr_ai_wire_reel_lesson', true), true);
         if (is_array($cached) && (string) ($cached['key'] ?? '') === $fingerprint && !empty($cached['reel_script'])) {
             $copy['reel_script'] = $this->sanitize_reel_script($cached['reel_script'], $copy, $post, $settings);
@@ -742,6 +755,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return array('copy' => $copy, 'script' => $script !== '' ? $script : $this->fallback_reel_script($copy, $post, $settings));
         }
         $next_script = $this->sanitize_reel_script($parsed['reel_script'] ?? $script, $copy, $post, $settings);
+        if ($this->social_reel_script_word_count($next_script) < $this->social_reel_script_word_floor($settings)) {
+            $next_script = $this->sanitize_reel_script($this->fallback_reel_script($copy, $post, $settings), $copy, $post, $settings);
+        }
         $next_caps = $this->sanitize_reel_captions($parsed['reel_captions'] ?? ($copy['reel_captions'] ?? array()), $next_script, $settings);
         $copy['reel_script'] = $next_script;
         $copy['reel_captions'] = $next_caps;
@@ -970,19 +986,22 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $parts = array('Tech just moved faster in the last 24 hours than all of last month — here are the updates you need to know.');
             foreach ($this->social_reel_roundup_stories($post, $settings) as $i => $story) {
                 $title = trim(wp_strip_all_tags((string) ($story['title'] ?? '')));
-                $take = trim(wp_strip_all_tags((string) (($story['key_takeaways'][0] ?? $story['lede'] ?? $story['excerpt'] ?? ''))));
+                $take = trim(wp_strip_all_tags((string) (($story['key_takeaways'][0] ?? $story['lede'] ?? ''))));
+                $excerpt = trim(wp_strip_all_tags((string) ($story['excerpt'] ?? '')));
                 if ($title === '') {
                     continue;
                 }
                 $parts[] = ($joins[$i] ?? 'Next up, ') . rtrim($title, '.') . '.';
                 if ($take !== '' && strcasecmp($take, $title) !== 0) {
-                    $parts[] = rtrim($this->clip_social_text($take, 140), '.') . '.';
+                    $parts[] = rtrim($this->clip_social_text($take, 180), '.') . '.';
+                }
+                if ($excerpt !== '' && strcasecmp($excerpt, $take) !== 0 && strcasecmp($excerpt, $title) !== 0) {
+                    $parts[] = rtrim($this->clip_social_text($excerpt, 220), '.') . '.';
                 }
             }
             $parts[] = 'Which update changes how you work? Follow for daily tech drops.';
             $roundup = $this->social_reel_trim_script(implode(' ', $parts), $settings);
-            $words = preg_split('/\s+/', $roundup, -1, PREG_SPLIT_NO_EMPTY);
-            if (is_array($words) && count($words) >= 12) {
+            if ($this->social_reel_script_word_count($roundup) >= 12) {
                 return $roundup;
             }
         }
@@ -1013,10 +1032,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $this->clip_social_block($script, 700);
     }
 
-    private function writer_reel_script_present($raw) {
-        $script = $this->clip_social_block(is_array($raw) ? ($raw['reel_script'] ?? '') : '', 1200);
-        $words = preg_split('/\s+/', $script, -1, PREG_SPLIT_NO_EMPTY);
-        return count($words) >= 12;
+    private function writer_reel_script_present($raw, $settings = null) {
+        $script = $this->clip_social_block(is_array($raw) ? ($raw['reel_script'] ?? '') : '', $this->social_reel_script_clip_chars($settings));
+        return $this->social_reel_script_word_count($script) >= 12;
     }
 
     private function social_reel_caption_limit($settings = null) {
@@ -1057,9 +1075,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     private function sanitize_reel_script($raw, $copy, $post, $settings = null) {
-        $script = $this->clip_social_block($raw, 1200);
-        $words = preg_split('/\s+/', $script, -1, PREG_SPLIT_NO_EMPTY);
-        if (count($words) < 12) {
+        $script = $this->clip_social_block($raw, $this->social_reel_script_clip_chars($settings));
+        if ($this->social_reel_script_word_count($script) < $this->social_reel_script_word_floor($settings)) {
             $script = $this->fallback_reel_script($copy, $post, $settings);
         }
         return $this->social_reel_trim_script($script, $settings);
@@ -1452,15 +1469,15 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($existing > 0 && (string) get_post_meta($existing, '_tr_ai_wire_voice_key', true) === $key) {
             $path = get_attached_file($existing);
             if ($path && file_exists($path) && filesize($path) > 512) {
-                $raw = (float) $this->social_mp3_duration($path);
+                $seconds = $this->social_reel_clamp_audio_seconds(
+                    $this->social_audio_duration($path, $script, $settings),
+                    $settings
+                );
+                $expected = $this->social_reel_script_word_count($script) / 2.5;
                 $max = $this->social_reel_max_audio_seconds($settings);
-                // Never reuse an overlong voice file — Fal can extend the mux to match it.
-                if ($raw <= 0 || $raw <= ($max + 5.0)) {
-                    $seconds = (float) get_post_meta($existing, '_tr_ai_wire_voice_seconds', true);
-                    if ($seconds <= 0) {
-                        $seconds = $this->social_audio_duration($path, $script, $settings);
-                    }
-                    $seconds = $this->social_reel_clamp_audio_seconds($seconds, $settings);
+                // Never reuse an overlong file, or a short leftover from an old 18s teach cut.
+                if ($seconds > 0 && $seconds <= ($max + 5.0) && ($expected < 20 || $seconds >= ($expected * 0.55))) {
+                    update_post_meta($existing, '_tr_ai_wire_voice_seconds', (string) $seconds);
                     return array('id' => $existing, 'path' => $path, 'key' => $key, 'seconds' => $seconds);
                 }
                 if (get_post_meta($existing, '_tr_ai_wire_social_asset', true) === '1') {
@@ -1788,6 +1805,25 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return $lines;
     }
 
+    /**
+     * On-screen lines taken from the spoken voiceover, in order, so the card
+     * the viewer sees is the beat they are hearing.
+     */
+    private function social_reel_spoken_scene_lines($script, $count) {
+        $count = max(1, (int) $count);
+        $words = preg_split('/\s+/', trim(wp_strip_all_tags((string) $script)), -1, PREG_SPLIT_NO_EMPTY);
+        if (!is_array($words) || !$words) {
+            return array();
+        }
+        $per = max(4, min(6, (int) ceil(count($words) / $count)));
+        $lines = array();
+        for ($i = 0; $i < count($words) && count($lines) < $count; $i += $per) {
+            $lines[] = implode(' ', array_slice($words, $i, $per));
+        }
+        $pad = $this->social_reel_card_lines(array('core' => $lines, 'extra' => array()), $count);
+        return array_slice($pad, 0, $count);
+    }
+
     private function social_reel_card_label($index, $total, $settings = null) {
         $index = (int) $index;
         $total = max(1, (int) $total);
@@ -1895,7 +1931,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 }
             }
             $card_total = $audio_ms - (count($accent_after) * $accent_ms);
-            $lines = $this->social_reel_card_lines($pool, $card_n);
+            $lines = $this->social_reel_is_roundup($settings)
+                ? $this->social_reel_spoken_scene_lines((string) ($copy['reel_script'] ?? ''), $card_n)
+                : $this->social_reel_card_lines($pool, $card_n);
+            if (count($lines) < $card_n) {
+                $lines = $this->social_reel_card_lines($pool, $card_n);
+            }
             $each = intdiv($card_total, $card_n);
             $tail_ms = max(0, $this->social_reel_ms($motion_seconds) - $accent_ms);
             $accents = 0;
@@ -2006,7 +2047,13 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $host = (is_array($parts['host'] ?? null) && !empty($parts['host']['path'])) ? $parts['host'] : null;
         $motion = (is_array($parts['motion'] ?? null) && !empty($parts['motion']['path'])) ? $parts['motion'] : null;
-        $audio = $this->social_reel_clamp_audio_seconds((float) ($voice['seconds'] ?? 0), $settings);
+        $audio = $this->social_reel_clamp_audio_seconds(
+            $this->social_audio_duration((string) ($voice['path'] ?? ''), (string) ($copy['reel_script'] ?? ''), $settings),
+            $settings
+        );
+        if ($audio < 3) {
+            $audio = $this->social_reel_clamp_audio_seconds((float) ($voice['seconds'] ?? 0), $settings);
+        }
         $motion_seconds = $motion ? $this->social_reel_motion_source_seconds((string) $motion['path'], $settings) : 0.0;
         $host_seconds = 0.0;
         if ($host) {
@@ -2020,7 +2067,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (is_wp_error($guard)) {
             return $guard;
         }
-        $sting_seconds = !empty($plan['sting']) ? (!empty($plan['story']) ? (float) $this->social_reel_sting_seconds($settings) : 2.0) : 0.0;
+        $sting_seconds = 0.0;
+        if (!empty($plan['sting']) && !$this->social_reel_is_roundup($settings)) {
+            $sting_seconds = !empty($plan['story']) ? (float) $this->social_reel_sting_seconds($settings) : 2.0;
+        }
         $use_sting = $sting_seconds > 0 && (string) get_post_meta($post->ID, '_tr_ai_wire_reel_no_sting', true) !== '1';
         $assets = $this->social_reel_teach_assets($post, $copy, is_string($photo_bytes) ? $photo_bytes : '', $slots, $use_sting, $sting_seconds, $end_caption, $bake);
         if (is_wp_error($assets)) {
@@ -2214,7 +2264,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 . ($slot['kind'] === 'card' ? ':' . (int) ($teach['assets']['cards'][(int) $slot['card']]['id'] ?? 0) : '');
         }
         $input_key = md5(implode('|', array(
-            self::SOCIAL_REEL_CUT,
+            $this->social_reel_cut_name($settings),
             (string) ($voice['key'] ?? ''),
             (int) ($teach['host']['id'] ?? 0),
             (int) ($teach['motion']['id'] ?? 0),
@@ -2230,10 +2280,14 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             if (is_wp_error($visual)) {
                 return $visual;
             }
+            $visual_ms = 0;
+            foreach ($visual as $frame) {
+                $visual_ms += (int) ($frame['duration'] ?? 0);
+            }
             return array('tracks' => array(
                 array('id' => 'visual', 'type' => 'video', 'keyframes' => $visual),
                 array('id' => 'voice', 'type' => 'audio', 'keyframes' => array(
-                    array('timestamp' => 0, 'duration' => $this->social_reel_ms($audio_seconds), 'url' => $voice_url),
+                    array('timestamp' => 0, 'duration' => max($visual_ms, $this->social_reel_ms($audio_seconds)), 'url' => $voice_url),
                 )),
             ));
         };
@@ -4044,7 +4098,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return new WP_Error('tr_ai_wire_social_image_key', 'Add the OpenAI API key before generating a Reel voiceover.');
         }
         $response = wp_remote_post('https://api.openai.com/v1/audio/speech', array(
-            'timeout' => 60,
+            'timeout' => $this->social_reel_is_roundup($settings) ? 120 : 60,
             'headers' => array(
                 'Authorization' => 'Bearer ' . $key,
                 'Content-Type' => 'application/json',

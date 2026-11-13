@@ -1839,14 +1839,14 @@ trait TechnoRapper_AI_Wire_Social {
             $maybe = json_decode($cached, true);
             if (is_array($maybe) && !empty($maybe['x']) && !empty($maybe['instagram'])) {
                 $decoded = $maybe;
-                if (!$this->social_wants_reel($settings, (int) $post->ID) || $this->writer_reel_script_present($decoded)) {
-                    return $this->sanitize_social_copy($decoded, $post);
+                if (!$this->social_wants_reel($settings, (int) $post->ID) || $this->writer_reel_script_present($decoded, $settings)) {
+                    return $this->sanitize_social_copy($decoded, $post, $settings);
                 }
             }
         }
         $generated = $this->generate_social_copy($post, $settings);
         if (!is_wp_error($generated) && is_array($generated)) {
-            $copy = $this->sanitize_social_copy($generated, $post);
+            $copy = $this->sanitize_social_copy($generated, $post, $settings);
             $guard = $this->policy_guard_social_copy($copy);
             if (is_wp_error($guard)) {
                 return $guard;
@@ -1859,9 +1859,9 @@ trait TechnoRapper_AI_Wire_Social {
             return $generated;
         }
         if (is_array($decoded)) {
-            return $this->sanitize_social_copy($decoded, $post);
+            return $this->sanitize_social_copy($decoded, $post, $settings);
         }
-        $copy = $this->sanitize_social_copy(array(), $post);
+        $copy = $this->sanitize_social_copy(array(), $post, $settings);
         $guard = $this->policy_guard_social_copy($copy);
         if (is_wp_error($guard)) {
             return $guard;
@@ -1929,7 +1929,7 @@ trait TechnoRapper_AI_Wire_Social {
         $system = $this->social_copy_system_prompt($brand, $comic);
         $user = $this->social_copy_user_prompt($brand, $profile, $snapshot, $comic, $s);
         $copy_settings = $s;
-        $copy_settings['max_output_tokens'] = min(1600, max(400, (int) ($s['max_output_tokens'] ?? 1600)));
+        $copy_settings['max_output_tokens'] = min($this->social_reel_is_roundup($s) ? 2200 : 1600, max(400, (int) ($s['max_output_tokens'] ?? 1600)));
         return $this->ai_json($s['writer_model'] ?? 'gpt-6-luna', $system, $user, $copy_settings, false);
     }
 
@@ -1983,7 +1983,7 @@ trait TechnoRapper_AI_Wire_Social {
         return $user;
     }
 
-    private function sanitize_social_copy($raw, $post) {
+    private function sanitize_social_copy($raw, $post, $settings = null) {
         $raw = is_array($raw) ? $raw : array();
         $url = get_permalink($post);
         $title = trim((string) $post->post_title);
@@ -2043,8 +2043,8 @@ trait TechnoRapper_AI_Wire_Social {
             'instagram_alt' => $alt,
             'hashtags' => $hashtags,
         );
-        $copy['reel_script'] = $this->sanitize_reel_script($raw['reel_script'] ?? '', $copy, $post);
-        $copy['reel_captions'] = $this->sanitize_reel_captions($raw['reel_captions'] ?? array(), $copy['reel_script']);
+        $copy['reel_script'] = $this->sanitize_reel_script($raw['reel_script'] ?? '', $copy, $post, $settings);
+        $copy['reel_captions'] = $this->sanitize_reel_captions($raw['reel_captions'] ?? array(), $copy['reel_script'], $settings);
         $copy['youtube_title'] = $this->sanitize_youtube_title($raw['youtube_title'] ?? '', $copy, $post);
         $copy['youtube_description'] = $this->sanitize_youtube_description($raw['youtube_description'] ?? '', $copy, $post);
         $copy['youtube_tags'] = $this->sanitize_youtube_tags($raw['youtube_tags'] ?? array(), $copy);
