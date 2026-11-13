@@ -18,9 +18,11 @@ if (!defined('ABSPATH')) {
  * track produced multi-hour broken outputs (still frame + voice), so cards are
  * baked to MP4 clips of their exact slot length first. Best roundups skip B-roll
  * and stitch unique JPEG cards with Fal images-to-video (frames/fps) so each
- * scene is held for seconds, then mux that held video with the voice. Compose
- * image-track timestamps were treated as 1-frame flashes. Each roundup card is a
- * unique 2D newsroom illustration of that desk story, not a recycled pose.
+ * scene is held for seconds, then mux that held video with the voice. The mux
+ * duration is the voiceover — a longer hold file is trimmed, never posted as
+ * leftover blank or frozen frames. Compose image-track timestamps were treated
+ * as 1-frame flashes. Each roundup card is a unique 2D newsroom illustration of
+ * that desk story, not a recycled pose.
  * Talking-host lip-sync remains an optional paid upsell.
  */
 trait TechnoRapper_AI_Wire_Social_Reel {
@@ -121,7 +123,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($hold > 0 && get_post_meta($hold, '_tr_ai_wire_social_asset', true) === '1') {
             wp_delete_attachment($hold, true);
         }
-        foreach (array('_tr_ai_wire_social_reel_id', '_tr_ai_wire_social_reel_kit_id', '_tr_ai_wire_fal_compose_request', '_tr_ai_wire_fal_hold', '_tr_ai_wire_reel_hold_id', '_tr_ai_wire_reel_no_sting') as $meta) {
+        $trim = (int) get_post_meta($post_id, '_tr_ai_wire_reel_trim_src', true);
+        if ($trim > 0 && $trim !== $video_id && get_post_meta($trim, '_tr_ai_wire_social_asset', true) === '1') {
+            wp_delete_attachment($trim, true);
+        }
+        foreach (array('_tr_ai_wire_social_reel_id', '_tr_ai_wire_social_reel_kit_id', '_tr_ai_wire_fal_compose_request', '_tr_ai_wire_fal_trim_request', '_tr_ai_wire_fal_hold', '_tr_ai_wire_reel_hold_id', '_tr_ai_wire_reel_trim_src', '_tr_ai_wire_reel_no_sting') as $meta) {
             delete_post_meta($post_id, $meta);
         }
         update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
@@ -2175,7 +2181,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 }
             }
             $card_total = $audio_ms - ($accent_n * $accent_ms);
-            $scene_ms = $this->social_reel_is_roundup($settings) ? 3500 : 4500;
+            $scene_ms = $this->social_reel_is_roundup($settings) ? self::SOCIAL_REEL_HOLD_MIN_SCENE_MS : 4500;
             $min_cards = $this->social_reel_is_roundup($settings) ? 8 : 3;
             if ($this->social_reel_is_roundup($settings)) {
                 $card_n = max((int) ceil($card_total / $scene_ms), $min_cards, $slides);
@@ -2185,6 +2191,14 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $card_n = max($min_cards, min($this->social_reel_max_cards($settings), $card_n, $available));
             }
             $card_n = max(1, min($card_n, intdiv($card_total, 1500)));
+            if ($this->social_reel_is_roundup($settings)) {
+                // Fal images-to-video pads sub-4s stills. Fewer longer holds stay
+                // inside the voice; 17×3.3s cards were coming back as a 64s clip.
+                $fit = intdiv($card_total, self::SOCIAL_REEL_HOLD_MIN_SCENE_MS);
+                if ($fit >= $min_cards) {
+                    $card_n = min($card_n, $fit);
+                }
+            }
             // Accents after the first card and near the middle — never at the end, never back to back.
             $accent_after = array();
             if ($accent_n >= 1 && $card_n >= 2) {
@@ -2582,7 +2596,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $have = get_attached_file($existing);
             if ($have && file_exists($have) && filesize($have) > 1024) {
                 $got = (float) $this->social_reel_output_seconds($have);
-                if ($got >= ($seconds * 0.95) && $got <= ($seconds + 1.5)) {
+                if ($got >= ($seconds * 0.95)) {
                     return array('id' => $existing, 'path' => $have, 'seconds' => $seconds);
                 }
             }
@@ -2615,7 +2629,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     return new WP_Error('tr_ai_wire_social_video_upload', sanitize_text_field($upload['error']));
                 }
                 $got = (float) $this->social_reel_output_seconds((string) $upload['file']);
-                if ($got <= 0 || $got < ($seconds * 0.95) || $got > ($seconds + 1.5)) {
+                if ($got <= 0 || $got < ($seconds * 0.95)) {
                     @unlink((string) $upload['file']);
                     $this->social_fal_pending_clear($post->ID, $meta_fal);
                     return new WP_Error(
@@ -2623,6 +2637,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                         'Fal returned a broken held-scenes clip (' . number_format($got, 2) . 's for ' . number_format($seconds, 1) . 's of voice). That would flash slides in milliseconds then go blank. Click Start over — do not Resume the bad file.'
                     );
                 }
+                // A longer hold is leftover frames. Keep the file; compose asks
+                // only for the voice length so the leftover is never posted.
                 $attachment_id = wp_insert_attachment(array(
                     'post_mime_type' => 'video/mp4',
                     'post_title' => 'Reel held scenes',
@@ -2643,7 +2659,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         ));
     }
 
-    /** Spread leftover frames across unique cards so none exceeds Fal's 1000-frame cap. */
+    /** Fit unique cards to the voice: pad leftover frames, then trim overflow. */
     private function social_reel_pad_hold_frames($images, $need) {
         $images = array_values((array) $images);
         $need = max(1, (int) $need);
@@ -2667,6 +2683,17 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($sum < $need) {
             return $this->social_reel_guard_error('held scenes cannot cover the voice without repeating a frame');
         }
+        $i = count($images) - 1;
+        while ($sum > $need && $i >= 0) {
+            $have = (int) $images[$i]['frames'];
+            $room = $have - 1;
+            if ($room > 0) {
+                $cut = min($room, $sum - $need);
+                $images[$i]['frames'] = $have - $cut;
+                $sum -= $cut;
+            }
+            $i--;
+        }
         return $images;
     }
 
@@ -2677,13 +2704,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             if (is_wp_error($url)) {
                 return $url;
             }
-            $ms = max(
-                $this->social_reel_ms((float) ($teach['hold']['seconds'] ?? 0)),
-                $this->social_reel_ms((float) ($teach['audio'] ?? 0))
-            );
+            $audio_ms = $this->social_reel_ms((float) ($teach['audio'] ?? 0));
+            $ms = $audio_ms > 0 ? $audio_ms : $this->social_reel_ms((float) ($teach['hold']['seconds'] ?? 0));
             return $this->social_reel_fill_visual_to_audio(array(
                 array('timestamp' => 0, 'duration' => $ms, 'url' => (string) $url),
-            ), $this->social_reel_ms((float) ($teach['audio'] ?? 0)));
+            ), $ms);
         }
         $image_track = (($teach['visual_type'] ?? 'video') === 'image');
         $motion_url = '';
@@ -2844,6 +2869,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $teach['motion'] = null;
             $teach['host'] = null;
         }
+        $trim_src = (int) get_post_meta($post->ID, '_tr_ai_wire_reel_trim_src', true);
+        if ($trim_src > 0) {
+            $teach['trimming'] = true;
+            return $this->social_reel_trim_mux_with_fal($post, $settings, $copy, $script, $teach, $trim_src);
+        }
         $voice = $teach['voice'];
         $audio_seconds = (float) $teach['audio'];
         $signature = array();
@@ -2875,6 +2905,9 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             if ($image_track) {
                 // Same length as the cards so Fal cannot pad leftover audio with black.
                 $voice_ms = max($voice_ms, $cover_ms);
+            } else {
+                // Never ask Fal for pictures longer than the voice (leftover freeze).
+                $voice_ms = min($voice_ms, $this->social_reel_ms($audio_seconds));
             }
             return array('tracks' => array(
                 array('id' => 'visual', 'type' => $image_track ? 'image' : 'video', 'keyframes' => $visual),
@@ -2883,42 +2916,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 )),
             ));
         };
-        $store = function ($bytes) use ($post, $copy, $script, $settings, $audio_seconds, $teach) {
-            if (!is_string($bytes) || strlen($bytes) < 1024) {
-                return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not return a usable Reel video.');
-            }
-            $stored = $this->store_social_video($post, $bytes, $copy, $script, $settings);
-            if (is_wp_error($stored)) {
-                return $stored;
-            }
-            $path = get_attached_file((int) $stored);
-            // Use uncapped probe — social_video_duration() ignores >90s and would
-            // treat a multi-hour freeze as 0 and keep it.
-            $got = $path ? (float) $this->social_reel_output_seconds($path) : 0.0;
-            $max = $this->social_reel_max_audio_seconds($settings) + 8.0;
-            $ceiling = $audio_seconds + (float) ($teach['sting_seconds'] ?? 0) + 1.25;
-            $problem = '';
-            if ($got > $max) {
-                $problem = 'Fal returned a broken overlong Reel (' . (string) (int) round($got) . 's). That usually means a still was muxed as video.';
-            } elseif ($got > $ceiling) {
-                $problem = 'Fal returned a Reel (' . number_format($got, 1) . 's) longer than the ' . number_format($audio_seconds, 1) . 's voiceover, so the leftover would be a blank or frozen screen.';
-            } elseif ($got > 0 && $got < ($audio_seconds * 0.95)) {
-                $problem = 'Fal returned a Reel (' . number_format($got, 1) . 's) much shorter than the ' . number_format($audio_seconds, 1) . 's voiceover.';
-            }
-            if ($problem !== '') {
-                if (get_post_meta((int) $stored, '_tr_ai_wire_social_asset', true) === '1') {
-                    wp_delete_attachment((int) $stored, true);
-                }
-                delete_post_meta($post->ID, '_tr_ai_wire_social_reel_id');
-                return new WP_Error('tr_ai_wire_reel_mux', $problem . ' Click Start over or Generate script again — do not Resume the bad file.');
-            }
-            update_post_meta($post->ID, '_tr_ai_wire_social_reel_id', (int) $stored);
-            $url = wp_get_attachment_url((int) $stored);
-            if (!$url || !$path) {
-                return new WP_Error('tr_ai_wire_ig_video_url', 'The Instagram Reel must have a public HTTP(S) Media Library URL.');
-            }
-            return array('id' => (int) $stored, 'url' => $url, 'path' => $path);
-        };
+        $store = $this->social_reel_fal_mux_store($post, $copy, $script, $settings, $audio_seconds, $teach);
         $result = $this->social_fal_step(array(
             'owner_id' => $post->ID,
             'post_id' => $post->ID,
@@ -2944,6 +2942,180 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'tr_ai_wire_reel_mux',
             $result->get_error_message() . ' Your voiceover, lesson cards, and clips are saved on this row, so Resume only retries the assembly and does not pay for them again.'
         );
+    }
+
+    /** Persist a Fal mux, trim leftover frames to the voice, or queue a Fal trim. */
+    private function social_reel_fal_mux_store($post, $copy, $script, $settings, $audio_seconds, $teach) {
+        return function ($bytes) use ($post, $copy, $script, $settings, $audio_seconds, $teach) {
+            if (!is_string($bytes) || strlen($bytes) < 1024) {
+                return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not return a usable Reel video.');
+            }
+            $stored = $this->store_social_video($post, $bytes, $copy, $script, $settings);
+            if (is_wp_error($stored)) {
+                return $stored;
+            }
+            $path = get_attached_file((int) $stored);
+            $got = $path ? (float) $this->social_reel_output_seconds($path) : 0.0;
+            $kept = $this->social_reel_keep_or_trim_mux(
+                $post,
+                (int) $stored,
+                $path,
+                $got,
+                (float) $audio_seconds,
+                (float) ($teach['sting_seconds'] ?? 0),
+                $settings,
+                !empty($teach['trimming'])
+            );
+            if (is_wp_error($kept)) {
+                return $kept;
+            }
+            $path = get_attached_file((int) $stored);
+            $url = wp_get_attachment_url((int) $stored);
+            if (!$url || !$path) {
+                return new WP_Error('tr_ai_wire_ig_video_url', 'The Instagram Reel must have a public HTTP(S) Media Library URL.');
+            }
+            return array('id' => (int) $stored, 'url' => $url, 'path' => $path);
+        };
+    }
+
+    /**
+     * Accept a mux that matches the voice. An overlong file that still covers
+     * the voice is leftover freeze — trim it instead of refusing the Reel.
+     */
+    private function social_reel_keep_or_trim_mux($post, $stored, $path, $got, $audio_seconds, $sting_seconds, $settings, $already_trim) {
+        $max = $this->social_reel_max_audio_seconds($settings) + 8.0;
+        $ceiling = $audio_seconds + (float) $sting_seconds + 1.25;
+        $problem = '';
+        if ($got > $max) {
+            $problem = 'Fal returned a broken overlong Reel (' . (string) (int) round($got) . 's). That usually means a still was muxed as video.';
+        } elseif ($got > $ceiling) {
+            $problem = 'Fal returned a Reel (' . number_format($got, 1) . 's) longer than the ' . number_format($audio_seconds, 1) . 's voiceover, so the leftover would be a blank or frozen screen.';
+        } elseif ($got > 0 && $got < ($audio_seconds * 0.95)) {
+            $problem = 'Fal returned a Reel (' . number_format($got, 1) . 's) much shorter than the ' . number_format($audio_seconds, 1) . 's voiceover.';
+        }
+        if ($problem === '') {
+            $this->social_reel_clear_trim_src($post->ID, (int) $stored);
+            update_post_meta($post->ID, '_tr_ai_wire_social_reel_id', (int) $stored);
+            return true;
+        }
+        $covers = ($got >= ($audio_seconds * 0.95) && $got <= $max && $got > $ceiling);
+        if ($covers && !$already_trim) {
+            $target = $audio_seconds + (float) $sting_seconds;
+            $trimmed = $this->social_reel_trim_mp4($path, $target);
+            if (!is_wp_error($trimmed) && (float) $trimmed <= $ceiling && (float) $trimmed >= ($audio_seconds * 0.95)) {
+                $this->social_reel_clear_trim_src($post->ID, (int) $stored);
+                update_post_meta($post->ID, '_tr_ai_wire_social_reel_id', (int) $stored);
+                return true;
+            }
+            $this->social_fal_pending_clear($post->ID, '_tr_ai_wire_fal_compose_request');
+            update_post_meta($post->ID, '_tr_ai_wire_reel_trim_src', (int) $stored);
+            $this->social_reel_progress_note($post->ID, 'Trimming leftover frames so the Reel matches the voiceover.');
+            return new WP_Error('tr_ai_wire_reel_video_wait', 'Trimming leftover frames at Fal so the pictures stop with the voiceover.');
+        }
+        if (get_post_meta((int) $stored, '_tr_ai_wire_social_asset', true) === '1') {
+            wp_delete_attachment((int) $stored, true);
+        }
+        delete_post_meta($post->ID, '_tr_ai_wire_social_reel_id');
+        $this->social_reel_clear_trim_src($post->ID, (int) $stored);
+        return new WP_Error('tr_ai_wire_reel_mux', $problem . ' Click Start over or Generate script again — do not Resume the bad file.');
+    }
+
+    /** Cut a finished MP4 to the voiceover when this host has ffmpeg. */
+    private function social_reel_trim_mp4($path, $seconds) {
+        $ffmpeg = $this->social_ffmpeg_path();
+        if ($ffmpeg === '' || !is_string($path) || $path === '' || !is_readable($path)) {
+            return new WP_Error('tr_ai_wire_reel_ffmpeg', 'This host has no ffmpeg to trim leftover frames.');
+        }
+        $seconds = max(1.0, (float) $seconds);
+        $out = dirname($path) . '/tr-trim-' . wp_generate_password(8, false, false) . '.mp4';
+        $t = sprintf('%.3F', $seconds);
+        $runs = array(
+            array('-y', '-i', $path, '-t', $t, '-c', 'copy', '-movflags', '+faststart', $out),
+            array(
+                '-y', '-i', $path, '-t', $t,
+                '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-level', '4.0',
+                '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
+                '-movflags', '+faststart', $out,
+            ),
+        );
+        foreach ($runs as $args) {
+            $result = $this->social_run_binary($ffmpeg, $args, 90);
+            if (is_wp_error($result) || !is_readable($out) || filesize($out) < 1024) {
+                @unlink($out);
+                continue;
+            }
+            $got = (float) $this->social_reel_output_seconds($out);
+            if ($got <= 0 || $got > ($seconds + 0.4)) {
+                @unlink($out);
+                continue;
+            }
+            if (!@rename($out, $path)) {
+                @unlink($out);
+                return new WP_Error('tr_ai_wire_social_video_upload', 'Could not replace the overlong Reel with the trimmed file.');
+            }
+            return $got;
+        }
+        return new WP_Error('tr_ai_wire_reel_mux', 'ffmpeg could not trim leftover frames from the Reel.');
+    }
+
+    /** Re-compose an overlong mux asking Fal for exactly the voiceover length. */
+    private function social_reel_trim_mux_with_fal($post, $settings, $copy, $script, $teach, $trim_src) {
+        $path = get_attached_file((int) $trim_src);
+        if (!$path || !file_exists($path) || filesize($path) < 1024) {
+            delete_post_meta($post->ID, '_tr_ai_wire_reel_trim_src');
+            return new WP_Error('tr_ai_wire_reel_mux', 'The overlong Reel to trim is missing. Click Start over or Generate script again.');
+        }
+        $voice = $teach['voice'];
+        $audio_seconds = (float) $teach['audio'];
+        $input_key = md5(implode('|', array(
+            'trim-v1',
+            (string) (int) $trim_src,
+            $this->social_reel_cut_name($settings),
+            (string) ($voice['key'] ?? ''),
+            number_format($audio_seconds, 3, '.', ''),
+        )));
+        $payload = function () use ($path, $voice, $audio_seconds) {
+            $video_url = $this->social_reel_file_data_url((string) $path, 'video/mp4', 'tr_ai_wire_reel_mux', 'The overlong Reel to trim is missing.');
+            if (is_wp_error($video_url)) {
+                return $video_url;
+            }
+            $voice_url = $this->social_reel_file_data_url((string) ($voice['path'] ?? ''), 'audio/mpeg', 'tr_ai_wire_reel_tts', 'The Reel voiceover file is missing.');
+            if (is_wp_error($voice_url)) {
+                return $voice_url;
+            }
+            $ms = $this->social_reel_ms($audio_seconds);
+            return array('tracks' => array(
+                array('id' => 'visual', 'type' => 'video', 'keyframes' => array(
+                    array('timestamp' => 0, 'duration' => $ms, 'url' => (string) $video_url),
+                )),
+                array('id' => 'voice', 'type' => 'audio', 'keyframes' => array(
+                    array('timestamp' => 0, 'duration' => $ms, 'url' => (string) $voice_url),
+                )),
+            ));
+        };
+        return $this->social_fal_step(array(
+            'owner_id' => $post->ID,
+            'post_id' => $post->ID,
+            'meta_key' => '_tr_ai_wire_fal_trim_request',
+            'endpoint' => self::SOCIAL_REEL_MUX_ENDPOINT,
+            'label' => 'trimmed MP4',
+            'estimate' => round(0.0002 * $audio_seconds, 4),
+            'enforce_budget' => false,
+            'settings' => $settings,
+            'input_key' => $input_key,
+            'payload' => $payload,
+            'store' => $this->social_reel_fal_mux_store($post, $copy, $script, $settings, $audio_seconds, $teach),
+        ));
+    }
+
+    private function social_reel_clear_trim_src($post_id, $keep_id = 0) {
+        $post_id = (int) $post_id;
+        $src = (int) get_post_meta($post_id, '_tr_ai_wire_reel_trim_src', true);
+        if ($src > 0 && $src !== (int) $keep_id && get_post_meta($src, '_tr_ai_wire_social_asset', true) === '1') {
+            wp_delete_attachment($src, true);
+        }
+        delete_post_meta($post_id, '_tr_ai_wire_reel_trim_src');
+        $this->social_fal_pending_clear($post_id, '_tr_ai_wire_fal_trim_request');
     }
 
     /** Local ffmpeg cut from the same teach slots: card stills, short accents, host hook, sting. */
