@@ -390,7 +390,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p class="description"><?php echo esc_html($this->social_reel_recipe_summary($s)); ?></p>
                     <?php $pipeline = sanitize_key((string) ($s['social_reel_pipeline'] ?? 'custom')); ?>
                     <h3>Production path</h3>
-                    <p class="description">Best is the default quality route: voice first, lesson cards carry the Reel, MiniMax H3 Max animates one approved still into short silent accents, then you watch and Post to Instagram and YouTube. Budget keeps Veo Lite. Custom unlocks every model and the talking-host upsell.</p>
+                    <p class="description">Best is the default quality route: voice first, lesson cards carry the Reel, MiniMax H3 Max animates one approved still into short silent accents, then you watch and Post to Instagram and YouTube. This WordPress host does not need ffmpeg — Fal muxes the spoken MP4. Budget keeps Veo Lite. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
                     <div class="tr-ai-wire-choice">
                         <?php foreach ($this->social_reel_pipelines() as $pipe_id => $pipe_spec) : ?>
                         <label class="tr-ai-wire-choice-card<?php echo ($pipeline === $pipe_id) ? ' is-selected' : ''; ?>">
@@ -404,7 +404,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <li>A published article clears the social review-score floor.</li>
                         <li>Click <strong>Generate Reel now</strong> (leave Reel posts per day at 0 unless you want auto-post).</li>
                         <li>Voiceover is recorded first. Numbered lesson cards follow those spoken beats.</li>
-                        <li>One text-free 9:16 still is animated at Fal (H3 Max on Best, Veo Lite on Budget) into at most two ~2s accents — never looped.</li>
+                        <li>One text-free 9:16 still is animated at Fal (H3 Max on Best, Veo Lite on Budget) into at most two ~2s accents — never looped. If this host has no ffmpeg, Fal also assembles the spoken MP4.</li>
                         <li>A guard refuses a motion-led cut. The teach Reel is held on Social queue.</li>
                         <li>Click <strong>Post</strong>. Instagram gets a Reel (feed + AI disclosure). YouTube gets the same file as a Short. X still gets the poster only.</li>
                     </ol>
@@ -589,10 +589,10 @@ trait TechnoRapper_AI_Wire_Admin {
                     </div>
                     <p><label for="tr-fal-key">Fal.ai API key</label><br><input id="tr-fal-key" name="social[fal_api_key]" type="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo $this->fal_api_key() !== '' ? esc_attr('Saved — enter a new key to replace it') : esc_attr('Required for Reel motion (H3 Max or Veo via Fal)'); ?>"></p>
                     <?php if ($this->fal_api_key() !== '') : ?><p><label><input type="checkbox" name="remove_fal_api_key" value="1"> Remove saved Fal.ai key</label></p><?php endif; ?>
-                    <?php if ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 && $this->fal_api_key() === '') : ?>
+                    <?php if ($this->fal_api_key() === '' && ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 || $this->social_ffmpeg_path() === '')) : ?>
                     <div class="notice notice-warning inline"><p>Reels need a Fal.ai API key to generate motion<?php echo $this->social_ffmpeg_path() === '' ? ' and to assemble the spoken MP4 (this host has no ffmpeg)' : ''; ?>. Until it is saved, Instagram Reel jobs will be held. The plugin will not Ken Burns the posters instead.</p></div>
                     <?php elseif ($this->social_ffmpeg_path() === '' && $this->fal_api_key() !== '') : ?>
-                    <div class="notice notice-info inline"><p>This WordPress host has no <code>ffmpeg</code>. Fal still generates motion. If the spoken MP4 cannot be assembled here, Social queue gives you a <strong>Download</strong> of motion + voice so you can run ffmpeg on your laptop, then upload the finished Reel.</p></div>
+                    <div class="notice notice-info inline"><p>This WordPress host has no <code>ffmpeg</code>. That is expected: Fal generates the motion clip and assembles the spoken MP4. Click <strong>Generate Reel now</strong>, wait for Download video, then Post. A laptop kit appears only if Fal assembly fails.</p></div>
                     <?php endif; ?>
                     <p class="description">A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, and the Fal models you selected. If this host has no ffmpeg, Fal also muxes the edit. One article only. Mini TTS about $0.004. Avatar Pro and face enhance are optional upsells on the video budget.</p>
                     </div>

@@ -59,6 +59,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 = 0.2.88 =
 * Best production path for Reels: voice first, lesson cards carry the cut, MiniMax H3 Max animates one approved still into short silent accents, then you watch and Post to Instagram and YouTube.
 * Budget path still uses Veo Lite. Custom keeps the talking-host upsell and every Fal motion model.
+* Hosts without ffmpeg stay on WordPress: Fal muxes the spoken MP4. A laptop kit is only the fallback if Fal assembly fails.
 
 = 0.2.87 =
 * Automatic processing can run at exact clock times (for example 09:00, 13:00, 18:00 in the site timezone), not only every N hours.

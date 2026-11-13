@@ -7356,6 +7356,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Best production path', $html);
         $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_reel_pipeline]"', $html);
         $this->assertStringContainsString('MiniMax H3 Max', $html);
+        $this->assertStringContainsString('This WordPress host does not need ffmpeg', $html);
+        $this->assertStringContainsString('If this host has no ffmpeg, Fal also assembles the spoken MP4', $html);
         $this->assertStringContainsString('Hours between Instagram stills', $html);
         $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_still_spacing_hours]"', $html);
         $this->assertStringContainsString('name="' . TechnoRapper_AI_Wire::OPTION . '[social_post_times][]"', $html);
@@ -7466,6 +7468,26 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'comic_daily_limit' => 0,
         ));
         $this->assertSame(1, (int) $comic_on['comic_daily_limit']);
+    }
+
+    public function test_host_without_ffmpeg_muxes_at_fal() {
+        add_filter('tr_ai_wire_ffmpeg_path', function () {
+            return '/tmp/missing-ffmpeg-binary';
+        });
+        $this->assertSame('', $this->invoke_private('social_ffmpeg_path'));
+        $this->assertFalse($this->invoke_private('social_reel_can_mux'));
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        $this->assertTrue($this->invoke_private('social_reel_can_mux'));
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        ob_start();
+        $this->plugin->social_settings_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('This WordPress host has no', $html);
+        $this->assertStringContainsString('Fal generates the motion clip and assembles the spoken MP4', $html);
+        $this->assertStringNotContainsString('run ffmpeg on your laptop', $html);
+        delete_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION);
+        remove_all_filters('tr_ai_wire_ffmpeg_path');
     }
 
     public function test_main_settings_save_does_not_clear_social_toggles() {
