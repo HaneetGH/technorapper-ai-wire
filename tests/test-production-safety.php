@@ -6268,8 +6268,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             } elseif (isset($card_urls[$url])) {
                 $kinds[] = 'card';
                 $card_ms += $dur;
-                // Each card clip is baked at exactly its slot length — never stretched.
-                $this->assertEqualsWithDelta($dur / 1000, $card_urls[$url], 0.01);
+                // Each card clip is baked at its slot length. 30fps hold rounding
+                // can land 1 frame off (3.25s → 98 frames → 3.267s).
+                $this->assertEqualsWithDelta($dur / 1000, $card_urls[$url], 0.04);
             } elseif ($url === (string) $end_url) {
                 $kinds[] = 'end';
             } else {
@@ -6887,6 +6888,14 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $captured = array();
         add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
             $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/images-to-video') !== false && strpos($url, '/requests/') === false) {
+                $body = json_decode((string) ($args['body'] ?? ''), true);
+                $fps = max(1, (int) ($body['fps'] ?? 30));
+                $frames = (int) (($body['images'][0]['frames'] ?? 0));
+                $ms = (int) round(1000 * $frames / $fps);
+                $captured['cards'] = (int) ($captured['cards'] ?? 0) + 1;
+                return $this->mock_http_ok(array('request_id' => 'card-' . (string) $captured['cards'] . '-' . $ms, 'status' => 'IN_QUEUE'));
+            }
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
                 $body = json_decode((string) ($args['body'] ?? ''), true);
                 $track = $body['tracks'][0] ?? array();
@@ -6901,11 +6910,15 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             if (strpos($url, '/status') !== false) {
                 return $this->mock_http_ok(array('status' => 'COMPLETED'));
             }
-            if (preg_match('#/requests/(card-\d+|final-cut)$#', $url, $m)) {
+            if (preg_match('#/requests/(card-\d+(?:-\d+)?|final-cut)$#', $url, $m)) {
                 return $this->mock_http_ok(array('video_url' => 'https://example.org/fal-' . $m[1] . '.mp4'));
             }
-            if (preg_match('#example\.org/fal-(card-\d+)\.mp4#', $url, $m)) {
-                return $this->mock_http_ok($this->fake_mp4_bytes(3.0, $m[1]));
+            if (preg_match('#example\.org/fal-(card-\d+(?:-\d+)?)\.mp4#', $url, $m)) {
+                $seconds = 3.0;
+                if (preg_match('/-(\d+)$/', $m[1], $ms)) {
+                    $seconds = max(0.5, ((int) $ms[1]) / 1000);
+                }
+                return $this->mock_http_ok($this->fake_mp4_bytes($seconds, $m[1]));
             }
             if (strpos($url, 'example.org/fal-final-cut.mp4') !== false) {
                 return $this->mock_http_ok(str_repeat('M', 2048));
