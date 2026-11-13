@@ -6790,7 +6790,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $visual = $captured['submit']['tracks'][0]['keyframes'] ?? array();
         $this->assertSame(15000, (int) ($visual[0]['duration'] ?? 0), 'Compose must ask for the voice length, not the 20s hold file.');
         $this->assertSame(15000, (int) ($captured['submit']['tracks'][1]['keyframes'][0]['duration'] ?? 0));
-        $this->assertSame((int) $result['id'], $this->invoke_private('social_reel_id', array($post_id)));
+        $this->assertSame((int) $result['id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_CUT, (string) get_post_meta((int) $result['id'], '_tr_ai_wire_reel_cut', true));
         remove_all_filters('tr_ai_wire_ffmpeg_path');
         remove_all_filters('tr_ai_wire_fal_poll_seconds');
         remove_all_filters('pre_http_request');
@@ -6894,12 +6895,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('leftover would be a blank', $wait->get_error_message());
         $this->assertSame(1, (int) $captured['compose']);
         $this->assertGreaterThan(0, (int) get_post_meta($post_id, '_tr_ai_wire_reel_trim_src', true));
-        $this->assertSame(0, $this->invoke_private('social_reel_id', array($post_id)));
+        $this->assertSame(0, (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
         $result = $this->invoke_private('social_reel_assemble_with_fal', $args);
         $this->assertFalse(is_wp_error($result), is_wp_error($result) ? $result->get_error_message() : '');
         $this->assertSame(2, (int) $captured['compose']);
         $this->assertSame(15000, (int) ($captured['mux'][1]['tracks'][0]['keyframes'][0]['duration'] ?? 0));
-        $this->assertSame((int) $result['id'], $this->invoke_private('social_reel_id', array($post_id)));
+        $this->assertSame((int) $result['id'], (int) get_post_meta($post_id, '_tr_ai_wire_social_reel_id', true));
+        $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_CUT, (string) get_post_meta((int) $result['id'], '_tr_ai_wire_reel_cut', true));
         $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_reel_trim_src', true));
         remove_all_filters('tr_ai_wire_ffmpeg_path');
         remove_all_filters('tr_ai_wire_fal_poll_seconds');
