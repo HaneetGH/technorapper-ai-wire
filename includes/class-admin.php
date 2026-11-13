@@ -390,7 +390,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p class="description"><?php echo esc_html($this->social_reel_recipe_summary($s)); ?></p>
                     <?php $pipeline = sanitize_key((string) ($s['social_reel_pipeline'] ?? 'custom')); ?>
                     <h3>Production path</h3>
-                    <p class="description">Best is the auto-post viral 2D newsroom roundup: at least 135 words (longer than 150 if 4–5 stories need it), unique illustrated scenes that match each story every 3–4 seconds, no repeated B-roll, and no blank leftover — the last unique card holds through the voice. Fal muxes those cards with the voiceover so a 3-second clip is not looped into a still or a blank screen. Then the worker posts to Instagram and YouTube. Budget keeps an 18s Veo Lite teach cut and also auto-posts. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
+                    <p class="description">Best is the auto-post viral 2D newsroom roundup: at least 135 words (longer than 150 if 4–5 stories need it), unique illustrated scenes that match each story every 3–4 seconds, no leftover 5s B-roll, and no millisecond slides. Fal holds each card for the spoken beat, then muxes the voice. Then the worker posts to Instagram and YouTube. Budget keeps an 18s Veo Lite teach cut and also auto-posts. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
                     <div class="tr-ai-wire-choice">
                         <?php foreach ($this->social_reel_pipelines() as $pipe_id => $pipe_spec) : ?>
                         <label class="tr-ai-wire-choice-card<?php echo ($pipeline === $pipe_id) ? ' is-selected' : ''; ?>">
@@ -404,7 +404,7 @@ trait TechnoRapper_AI_Wire_Admin {
                         <li>A published article clears the social review-score floor.</li>
                         <li>Best/Budget set <strong>Reel posts per day</strong> to at least 1. Best packs 3–5 desk stories into one spoken roundup (longer than 150 words when the stories need it) and posts it. Generate Reel now still holds for review.</li>
                         <li>Voiceover is recorded first. Best uses a viral 2D newsroom look; Budget uses numbered lesson cards.</li>
-                        <li>Best draws a unique illustrated scene that matches each story and holds those cards through the whole voice — no looped clip, no still, no blank leftover. Budget animates one text-free 9:16 still at Fal (Veo Lite) into at most one short accent — never looped. If this host has no ffmpeg, Fal also assembles the spoken MP4.</li>
+                        <li>Best draws a unique illustrated scene that matches each story and holds each card for seconds (never a 5s leftover clip, then millisecond slides, then a blank screen). Budget animates one text-free 9:16 still at Fal (Veo Lite) into at most one short accent — never looped. If this host has no ffmpeg, Fal also assembles the spoken MP4.</li>
                         <li>A guard refuses a motion-led cut. Auto Reels publish when the MP4 is ready. Generate Reel now still holds on Social queue until you click Post.</li>
                         <li>Instagram gets a Reel (feed + AI disclosure). YouTube gets the same file as a Short. X still gets the poster only.</li>
                     </ol>
@@ -551,7 +551,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     </div>
                     <details id="tr-social-reel-model" class="tr-ai-wire-details">
                         <summary>Motion model and Fal key</summary>
-                        <p class="description">Best production path uses <strong>MiniMax H3 Max</strong>. Budget uses <strong>Veo 3.1 Lite</strong>. Open the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> page for every model.</p>
+                        <p class="description">Best holds unique illustrated scenes with Fal images-to-video and does not generate MiniMax H3 Max B-roll. Budget uses <strong>Veo 3.1 Lite</strong> for short accents. Open the <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a> page for every model.</p>
                         <?php
                         $selected_model = (string) ($s['social_reel_video_model'] ?? 'veo-lite');
                         foreach ($this->social_reel_video_models() as $value => $spec) :
@@ -632,7 +632,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <p class="description">Change the cut, avatar face, and motion model on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>.</p>
             </div>
             <h2>Suggested Reel model</h2>
-            <p><strong>Best production path:</strong> viral 2D newsroom roundup — unique illustrated scenes that match each story, no looped B-roll, no blank leftover, Fal mux only. <strong>Budget path:</strong> Veo 3.1 Lite, 8 seconds, silent 720p, about <strong>$0.24 per clip</strong> and <strong>$7/month</strong> at one Reel/day. Switch Custom models below only after traffic can pay for them.</p>
+            <p><strong>Best production path:</strong> viral 2D newsroom roundup — unique illustrated scenes that match each story, each held for the spoken beat, no leftover 5s B-roll, no millisecond slides. <strong>Budget path:</strong> Veo 3.1 Lite, 8 seconds, silent 720p, about <strong>$0.24 per clip</strong> and <strong>$7/month</strong> at one Reel/day. Switch Custom models below only after traffic can pay for them.</p>
             <h2>Reel motion models (Fal.ai, silent)</h2>
             <table class="widefat striped" style="max-width:960px;">
                 <thead>

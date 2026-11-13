@@ -17,8 +17,9 @@ if (!defined('ABSPATH')) {
  * Fal's compose video track accepts only video files — JPEG stills on that
  * track produced multi-hour broken outputs (still frame + voice), so cards are
  * baked to MP4 clips of their exact slot length first. Best roundups skip B-roll
- * and mux unique JPEG cards on an image track whose timestamps cover the whole
- * voice — Fal must not pad the rest with a blank screen. Each roundup card is a
+ * and stitch unique JPEG cards with Fal images-to-video (frames/fps) so each
+ * scene is held for seconds, then mux that held video with the voice. Compose
+ * image-track timestamps were treated as 1-frame flashes. Each roundup card is a
  * unique 2D newsroom illustration of that desk story, not a recycled pose.
  * Talking-host lip-sync remains an optional paid upsell.
  */
@@ -116,7 +117,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($kit > 0 && get_post_meta($kit, '_tr_ai_wire_social_asset', true) === '1') {
             wp_delete_attachment($kit, true);
         }
-        foreach (array('_tr_ai_wire_social_reel_id', '_tr_ai_wire_social_reel_kit_id', '_tr_ai_wire_fal_compose_request', '_tr_ai_wire_reel_no_sting') as $meta) {
+        $hold = (int) get_post_meta($post_id, '_tr_ai_wire_reel_hold_id', true);
+        if ($hold > 0 && get_post_meta($hold, '_tr_ai_wire_social_asset', true) === '1') {
+            wp_delete_attachment($hold, true);
+        }
+        foreach (array('_tr_ai_wire_social_reel_id', '_tr_ai_wire_social_reel_kit_id', '_tr_ai_wire_fal_compose_request', '_tr_ai_wire_fal_hold', '_tr_ai_wire_reel_hold_id', '_tr_ai_wire_reel_no_sting') as $meta) {
             delete_post_meta($post_id, $meta);
         }
         update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
@@ -179,7 +184,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     'social_reel_recipe' => 'story',
                     'social_reel_include_host' => 0,
                     'social_reel_include_slides' => 1,
-                    'social_reel_include_broll' => 1,
+                    'social_reel_include_broll' => 0,
                     'social_reel_include_sting' => 1,
                     'social_reel_video_model' => 'h3-max',
                     'social_reel_clip_seconds' => 5,
@@ -240,7 +245,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 'resolution' => '768P',
                 'prompt_expansion_mode' => 'balanced',
                 'docs' => 'https://fal.ai/models/minimax/h3-max/image-to-video',
-                'blurb' => 'Fal’s current default image-to-video for one starting still. Silent 768P, 5s ≈ $0.18. Used by the Best production path.',
+                'blurb' => 'Fal’s current default image-to-video for one starting still. Silent 768P, 5s ≈ $0.18. Budget/Custom B-roll only — Best never muxes this leftover 5s clip.',
             ),
             'veo-lite' => array(
                 'label' => 'Veo 3.1 Lite',
@@ -1828,6 +1833,13 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return (int) round(max(0.0, (float) $seconds) * 1000);
     }
 
+    /** Fal images-to-video holds an image for `frames / fps` seconds (max 1000 frames). */
+    private function social_reel_hold_frames($ms, $fps = 0) {
+        $fps = $fps > 0 ? (int) $fps : (int) self::SOCIAL_REEL_HOLD_FPS;
+        $fps = max(1, min(120, $fps));
+        return max(1, min(1000, (int) round(max(1, (int) $ms) * $fps / 1000.0)));
+    }
+
     private function social_reel_detail_frame($post, $copy, $photo_bytes, $caption, $index, $meta = array()) {
         $caption = trim(wp_strip_all_tags((string) $caption));
         if ($caption === '') {
@@ -1869,7 +1881,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
 
     /**
      * Fal video tracks must only reference video files. Turn a JPEG card into an
-     * MP4 of exactly its slot length via an image-track compose, then reuse it.
+     * MP4 that actually lasts its slot: Fal images-to-video holds the still for
+     * `frames / fps` seconds. Compose image-track timestamps were 1-frame flashes.
      */
     private function social_reel_ensure_card_video($post, $card, $seconds, $index, $submit_only = false) {
         $seconds = round(max(1.0, min(30.0, (float) $seconds)), 3);
@@ -1880,12 +1893,15 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $meta_vid = '_tr_ai_wire_reel_card_vid_' . (string) $index;
         $meta_fal = '_tr_ai_wire_fal_card_' . (string) $index;
-        $key = md5((string) ($card['key'] ?? $path) . '|' . number_format($seconds, 3, '.', '') . '|card-v2');
+        $key = md5((string) ($card['key'] ?? $path) . '|' . number_format($seconds, 3, '.', '') . '|card-v3');
         $existing = (int) get_post_meta($post->ID, $meta_vid, true);
         if ($existing > 0 && (string) get_post_meta($existing, '_tr_ai_wire_card_key', true) === $key) {
             $have = get_attached_file($existing);
             if ($have && file_exists($have) && filesize($have) > 1024) {
-                return array('id' => $existing, 'path' => $have, 'seconds' => $seconds);
+                $got = (float) $this->social_reel_output_seconds($have);
+                if ($got >= ($seconds * 0.9) && $got <= ($seconds + 3.0)) {
+                    return array('id' => $existing, 'path' => $have, 'seconds' => $seconds);
+                }
             }
         }
         $image_url = $this->social_reel_file_data_url($path, 'image/jpeg', 'tr_ai_wire_reel_cards', 'A Reel lesson card image is missing.');
@@ -1897,7 +1913,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'owner_id' => $post->ID,
             'post_id' => $post->ID,
             'meta_key' => $meta_fal,
-            'endpoint' => self::SOCIAL_REEL_MUX_ENDPOINT,
+            'endpoint' => self::SOCIAL_REEL_HOLD_ENDPOINT,
             'label' => $label,
             'estimate' => 0.0002,
             'enforce_budget' => false,
@@ -1906,18 +1922,13 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'input_key' => $key,
             'submit_only' => $submit_only,
             'payload' => function () use ($image_url, $seconds) {
+                $fps = (int) self::SOCIAL_REEL_HOLD_FPS;
                 return array(
-                    'tracks' => array(
+                    'fps' => $fps,
+                    'images' => array(
                         array(
-                            'id' => 'card',
-                            'type' => 'image',
-                            'keyframes' => array(
-                                array(
-                                    'timestamp' => 0,
-                                    'duration' => $this->social_reel_ms($seconds),
-                                    'url' => $image_url,
-                                ),
-                            ),
+                            'url' => $image_url,
+                            'frames' => $this->social_reel_hold_frames($this->social_reel_ms($seconds), $fps),
                         ),
                     ),
                 );
@@ -1933,12 +1944,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     return new WP_Error('tr_ai_wire_social_video_upload', sanitize_text_field($upload['error']));
                 }
                 $got = (float) $this->social_reel_output_seconds((string) $upload['file']);
-                if ($got > $seconds + 3.0) {
+                if ($got <= 0 || $got < ($seconds * 0.9) || $got > $seconds + 3.0) {
                     @unlink((string) $upload['file']);
                     $this->social_fal_pending_clear($post->ID, $meta_fal);
                     return new WP_Error(
                         'tr_ai_wire_reel_cards',
-                        'Fal returned a broken ' . $label . ' clip (' . (string) (int) round($got) . 's for a ' . number_format($seconds, 1) . 's card). The build stopped instead of muxing it. Click Resume to render that card again.'
+                        'Fal returned a broken ' . $label . ' clip (' . number_format($got, 2) . 's for a ' . number_format($seconds, 1) . 's card). A 1-frame flash would race through slides in milliseconds. The build stopped instead of muxing it. Click Resume to render that card again.'
                     );
                 }
                 $attachment_id = wp_insert_attachment(array(
@@ -2332,6 +2343,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         }
         $host = (is_array($parts['host'] ?? null) && !empty($parts['host']['path'])) ? $parts['host'] : null;
         $motion = (is_array($parts['motion'] ?? null) && !empty($parts['motion']['path'])) ? $parts['motion'] : null;
+        if ($this->social_reel_is_roundup($settings)) {
+            // A leftover 5s H3 clip must never lead the Best cut.
+            $host = null;
+            $motion = null;
+        }
         $declared = (float) ($voice['seconds'] ?? 0);
         $measured = $this->social_audio_duration((string) ($voice['path'] ?? ''), (string) ($copy['reel_script'] ?? ''), $settings);
         // Prefer the real file when it is longer than a stale stored length (that
@@ -2506,8 +2522,169 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         return array('cards' => $cards, 'end' => $end);
     }
 
+    /**
+     * Stitch unique roundup JPEGs into one MP4 that holds each scene for its
+     * spoken beat. Fal compose image-track timestamps were 1-frame flashes.
+     */
+    private function social_reel_ensure_scene_hold($post, $teach, $settings) {
+        $fps = (int) self::SOCIAL_REEL_HOLD_FPS;
+        $images = array();
+        $seen = array();
+        foreach ((array) ($teach['slots'] ?? array()) as $slot) {
+            if (($slot['kind'] ?? '') !== 'card') {
+                return $this->social_reel_guard_error('a roundup cannot reuse a B-roll clip');
+            }
+            $card = $teach['assets']['cards'][(int) $slot['card']] ?? array();
+            if (empty($card['jpeg'])) {
+                return $this->social_reel_guard_error('lesson card ' . ((int) $slot['card'] + 1) . ' has no still');
+            }
+            $url = $this->social_reel_file_data_url((string) $card['jpeg'], 'image/jpeg', 'tr_ai_wire_reel_cards', 'A Reel lesson card is missing.');
+            if (is_wp_error($url)) {
+                return $url;
+            }
+            $url = (string) $url;
+            if ($url === '' || isset($seen[$url])) {
+                return $this->social_reel_guard_error('a scene repeats on screen');
+            }
+            $seen[$url] = true;
+            $images[] = array(
+                'url' => $url,
+                'frames' => $this->social_reel_hold_frames((int) ($slot['ms'] ?? 0), $fps),
+            );
+        }
+        if (!$images) {
+            return $this->social_reel_guard_error('the picture track is empty');
+        }
+        $need = max(1, (int) round(((float) ($teach['audio'] ?? 0)) * $fps));
+        $images = $this->social_reel_pad_hold_frames($images, $need);
+        if (is_wp_error($images)) {
+            return $images;
+        }
+        $frames = 0;
+        foreach ($images as $image) {
+            $frames += (int) $image['frames'];
+        }
+        $seconds = round($frames / max(1, $fps), 3);
+        $signature = array();
+        foreach ($images as $image) {
+            $signature[] = md5((string) $image['url']) . ':' . (string) (int) $image['frames'];
+        }
+        $key = md5(implode('|', array(
+            self::SOCIAL_REEL_HOLD_ENDPOINT,
+            (string) $fps,
+            implode(',', $signature),
+            $this->social_reel_cut_name($settings),
+        )));
+        $meta_vid = '_tr_ai_wire_reel_hold_id';
+        $meta_fal = '_tr_ai_wire_fal_hold';
+        $existing = (int) get_post_meta($post->ID, $meta_vid, true);
+        if ($existing > 0 && (string) get_post_meta($existing, '_tr_ai_wire_hold_key', true) === $key) {
+            $have = get_attached_file($existing);
+            if ($have && file_exists($have) && filesize($have) > 1024) {
+                $got = (float) $this->social_reel_output_seconds($have);
+                if ($got >= ($seconds * 0.95) && $got <= ($seconds + 1.5)) {
+                    return array('id' => $existing, 'path' => $have, 'seconds' => $seconds);
+                }
+            }
+        }
+        return $this->social_fal_step(array(
+            'owner_id' => $post->ID,
+            'post_id' => $post->ID,
+            'meta_key' => $meta_fal,
+            'endpoint' => self::SOCIAL_REEL_HOLD_ENDPOINT,
+            'label' => 'held illustrated scenes',
+            'estimate' => 0.0004,
+            'enforce_budget' => false,
+            'track_usage' => false,
+            'settings' => $settings,
+            'input_key' => $key,
+            'payload' => function () use ($images, $fps) {
+                return array(
+                    'fps' => $fps,
+                    'images' => $images,
+                );
+            },
+            'store' => function ($bytes) use ($post, $meta_vid, $meta_fal, $key, $seconds) {
+                if (!is_string($bytes) || strlen($bytes) < 1024) {
+                    return new WP_Error('tr_ai_wire_reel_mux', 'Fal did not return a usable held-scenes clip.');
+                }
+                $old = (int) get_post_meta($post->ID, $meta_vid, true);
+                $name = 'technorapper-social-hold-' . (int) $post->ID . '.mp4';
+                $upload = wp_upload_bits($name, null, $bytes);
+                if (!empty($upload['error'])) {
+                    return new WP_Error('tr_ai_wire_social_video_upload', sanitize_text_field($upload['error']));
+                }
+                $got = (float) $this->social_reel_output_seconds((string) $upload['file']);
+                if ($got <= 0 || $got < ($seconds * 0.95) || $got > ($seconds + 1.5)) {
+                    @unlink((string) $upload['file']);
+                    $this->social_fal_pending_clear($post->ID, $meta_fal);
+                    return new WP_Error(
+                        'tr_ai_wire_reel_mux',
+                        'Fal returned a broken held-scenes clip (' . number_format($got, 2) . 's for ' . number_format($seconds, 1) . 's of voice). That would flash slides in milliseconds then go blank. Click Start over — do not Resume the bad file.'
+                    );
+                }
+                $attachment_id = wp_insert_attachment(array(
+                    'post_mime_type' => 'video/mp4',
+                    'post_title' => 'Reel held scenes',
+                    'post_status' => 'inherit',
+                    'post_parent' => 0,
+                ), $upload['file'], 0, true);
+                if (is_wp_error($attachment_id)) {
+                    return $attachment_id;
+                }
+                update_post_meta($attachment_id, '_tr_ai_wire_social_asset', '1');
+                update_post_meta($attachment_id, '_tr_ai_wire_hold_key', $key);
+                update_post_meta($post->ID, $meta_vid, (int) $attachment_id);
+                if ($old > 0 && $old !== (int) $attachment_id && get_post_meta($old, '_tr_ai_wire_social_asset', true) === '1') {
+                    wp_delete_attachment($old, true);
+                }
+                return array('id' => (int) $attachment_id, 'path' => (string) $upload['file'], 'seconds' => $seconds);
+            },
+        ));
+    }
+
+    /** Spread leftover frames across unique cards so none exceeds Fal's 1000-frame cap. */
+    private function social_reel_pad_hold_frames($images, $need) {
+        $images = array_values((array) $images);
+        $need = max(1, (int) $need);
+        if (!$images) {
+            return $this->social_reel_guard_error('the picture track is empty');
+        }
+        $sum = 0;
+        foreach ($images as $image) {
+            $sum += (int) ($image['frames'] ?? 0);
+        }
+        $i = count($images) - 1;
+        while ($sum < $need && $i >= 0) {
+            $room = 1000 - (int) $images[$i]['frames'];
+            if ($room > 0) {
+                $add = min($room, $need - $sum);
+                $images[$i]['frames'] = (int) $images[$i]['frames'] + $add;
+                $sum += $add;
+            }
+            $i--;
+        }
+        if ($sum < $need) {
+            return $this->social_reel_guard_error('held scenes cannot cover the voice without repeating a frame');
+        }
+        return $images;
+    }
+
     /** Fal compose keyframes, one unique file per teach slot, then the end card. */
     private function social_reel_fal_teach_keyframes($teach) {
+        if (!empty($teach['hold']['path'])) {
+            $url = $this->social_reel_file_data_url((string) $teach['hold']['path'], 'video/mp4', 'tr_ai_wire_reel_mux', 'The held illustrated scenes clip is missing.');
+            if (is_wp_error($url)) {
+                return $url;
+            }
+            $ms = max(
+                $this->social_reel_ms((float) ($teach['hold']['seconds'] ?? 0)),
+                $this->social_reel_ms((float) ($teach['audio'] ?? 0))
+            );
+            return $this->social_reel_fill_visual_to_audio(array(
+                array('timestamp' => 0, 'duration' => $ms, 'url' => (string) $url),
+            ), $this->social_reel_ms((float) ($teach['audio'] ?? 0)));
+        }
         $image_track = (($teach['visual_type'] ?? 'video') === 'image');
         $motion_url = '';
         $host_url = '';
@@ -2657,6 +2834,16 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if (is_wp_error($teach)) {
             return $teach;
         }
+        if (($teach['visual_type'] ?? '') === 'image') {
+            $hold = $this->social_reel_ensure_scene_hold($post, $teach, $settings);
+            if (is_wp_error($hold)) {
+                return $hold;
+            }
+            $teach['hold'] = $hold;
+            $teach['visual_type'] = 'video';
+            $teach['motion'] = null;
+            $teach['host'] = null;
+        }
         $voice = $teach['voice'];
         $audio_seconds = (float) $teach['audio'];
         $signature = array();
@@ -2667,6 +2854,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $input_key = md5(implode('|', array(
             $this->social_reel_cut_name($settings),
             (string) ($voice['key'] ?? ''),
+            (int) ($teach['hold']['id'] ?? 0),
             (int) ($teach['host']['id'] ?? 0),
             (int) ($teach['motion']['id'] ?? 0),
             $teach['use_sting'] ? (string) (int) ($teach['assets']['end']['id'] ?? 0) : 'no-sting',
@@ -2767,7 +2955,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $this->social_reel_progress_note(
             $post->ID,
             $this->social_reel_is_roundup($settings)
-                ? 'Assembling the viral 2D newsroom roundup on this server: unique illustrated scenes cover the whole voice, no blanks.'
+                ? 'Assembling the viral 2D newsroom roundup on this server: each illustrated scene is held for the spoken beat, no blanks.'
                 : 'Assembling the teach cut on this server: lesson cards first, short B-roll accents only.'
         );
         $clips = array();
@@ -2861,10 +3049,20 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'state' => $cards_done ? 'done' : (($cards_active || $cards_total > 0) ? 'active' : 'todo'),
             'detail' => (!$cards_done && $cards_total > 0) ? ((string) $cards_ready . ' of ' . (string) $cards_total . ' ready') : '',
         );
+        if ($roundup) {
+            $hold_info = $describe('_tr_ai_wire_fal_hold');
+            $hold_done = $finished || (int) get_post_meta($post_id, '_tr_ai_wire_reel_hold_id', true) > 0;
+            $steps[] = array(
+                'key' => 'hold',
+                'label' => 'Hold each illustrated scene for the spoken beat',
+                'state' => $hold_done ? 'done' : ($hold_info['active'] ? 'active' : 'todo'),
+                'detail' => $hold_done ? '' : $hold_info['detail'],
+            );
+        }
         $info = $describe('_tr_ai_wire_fal_compose_request');
         $steps[] = array(
             'key' => 'assemble',
-            'label' => $roundup ? 'Assemble the viral 2D newsroom roundup' : 'Assemble the teach cut (lesson cards + voice + sting)',
+            'label' => $roundup ? 'Assemble the viral 2D newsroom roundup (held scenes + voice)' : 'Assemble the teach cut (lesson cards + voice + sting)',
             'state' => $finished ? 'done' : ($info['active'] ? 'active' : 'todo'),
             'detail' => $finished ? '' : $info['detail'],
         );
@@ -3035,7 +3233,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             return $this->social_reel_assemble_locally($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
         }
         $note = $this->social_reel_is_roundup($settings)
-            ? 'Assembling a viral 2D newsroom roundup at Fal: unique illustrated scenes that match each story, no repeated B-roll.'
+            ? 'Assembling a viral 2D newsroom roundup at Fal: each illustrated scene is held for the spoken beat, no leftover 5s B-roll, no millisecond slides.'
             : 'Assembling a teach Reel at Fal: lesson cards first, short B-roll accents only.';
         if (!empty($plan['host'])) {
             $note = 'Assembling a story Reel at Fal: cold-open lesson card, short host hook, then lesson cards.';
