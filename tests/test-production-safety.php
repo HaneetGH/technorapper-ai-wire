@@ -179,6 +179,22 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         return is_string($bytes) ? $bytes : '';
     }
 
+    private function scene_jpeg_bytes($salt) {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg')) {
+            return $this->tiny_jpeg_bytes();
+        }
+        $im = imagecreatetruecolor(256, 448);
+        $n = abs(crc32((string) $salt)) % 180;
+        imagefilledrectangle($im, 0, 0, 255, 447, imagecolorallocate($im, 12, 22, 44));
+        imagefilledrectangle($im, 40, 80, 216, 300, imagecolorallocate($im, 20 + $n, 36, 68));
+        imagefilledellipse($im, 128, 160, 48, 48, imagecolorallocate($im, 255, 209, 72));
+        ob_start();
+        imagejpeg($im, null, 82);
+        $bytes = ob_get_clean();
+        imagedestroy($im);
+        return is_string($bytes) && strlen($bytes) >= 512 ? $bytes : $this->tiny_jpeg_bytes();
+    }
+
     private function mock_http_ok($body) {
         return array(
             'headers' => array(),
@@ -4108,13 +4124,14 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(240, $this->invoke_private('social_reel_script_word_budget', array($best)));
         $this->assertStringContainsString('180–240', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertStringContainsString('150 is a floor, not a cap', $this->invoke_private('social_reel_script_brief', array($best)));
-        $this->assertStringContainsString('stick-figure', $this->invoke_private('social_reel_script_brief', array($best)));
+        $this->assertStringContainsString('2D clean vector newsroom', $this->invoke_private('social_reel_script_brief', array($best)));
+        $this->assertStringContainsString('reel_scene_briefs', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertStringContainsString('Meanwhile', $this->invoke_private('social_reel_script_brief', array($best)));
         $this->assertGreaterThan(60.0, $this->invoke_private('social_reel_max_audio_seconds', array($best)));
         $prompt_best = $this->invoke_private('social_reel_motion_prompt', array(array(
             'visual_brief' => 'Stick figure at a news desk',
         ), 12, $best));
-        $this->assertStringContainsString('stick-figure', $prompt_best);
+        $this->assertStringContainsString('2D clean vector newsroom', $prompt_best);
         $this->assertStringContainsString('Animate this exact still', $prompt_best);
         $this->assertStringContainsString('no text', $prompt_best);
         $this->assertSame(24, $this->invoke_private('social_reel_caption_limit', array($best)));
@@ -4162,11 +4179,13 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Follow for daily', $fallback);
         $this->assertGreaterThanOrEqual(12, count(preg_split('/\s+/', $fallback, -1, PREG_SPLIT_NO_EMPTY)));
         $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_LAYOUT, $this->invoke_private('social_reel_layout_key', array($best)));
-        $this->assertStringContainsString('Stick-figure newsroom roundup', $this->invoke_private('social_reel_recipe_summary', array($best)));
+        $this->assertStringContainsString('Viral 2D newsroom roundup', $this->invoke_private('social_reel_recipe_summary', array($best)));
+        $this->assertStringContainsString('unique illustrated scenes that match each story', $this->invoke_private('social_reel_recipe_summary', array($best)));
         $this->assertStringContainsString('Meanwhile', $this->invoke_private('social_reel_tts_instructions', array($best)));
         $this->assertEqualsWithDelta(96.0, $this->invoke_private('social_reel_clamp_audio_seconds', array(122.0, $best)), 0.01);
         $user_best = $this->invoke_private('social_copy_user_prompt', array('TechnoRapper', array(), array('title' => 'Chip news'), false, $best));
-        $this->assertStringContainsString('2D clean vector stick-figure newsroom', $user_best);
+        $this->assertStringContainsString('viral 2D clean vector newsroom', $user_best);
+        $this->assertStringContainsString('reel_scene_briefs', $user_best);
         $this->assertStringContainsString('Go past 150', $user_best);
         $this->assertStringContainsString('Pack 3–5 supplied desk stories', $user_best);
         $cheap_best = array_merge($best, array('social_reel_dev_cheap' => 1));
@@ -4230,11 +4249,34 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 $this->assertLessThanOrEqual(4500, (int) $slot['ms']);
             }
         }
-        $this->assertStringStartsWith('technorapper', $first_card);
+        $this->assertSame('Hook in three seconds', $first_card);
         $this->assertGreaterThanOrEqual(12, count($matched_cards));
         $this->assertLessThanOrEqual(24, count($matched_cards));
         $this->assertSame(count($matched_cards), count(array_unique(wp_list_pluck($matched_cards, 'caption'))));
         $this->assertTrue($this->invoke_private('social_reel_teach_guard', array($matched_slots, 60.0, 0.0)));
+        $this->assertSame('Hook in three seconds', $this->invoke_private('social_reel_roundup_scene_lines', array($roundup_copy, 12, $best))[0]);
+        $look = $this->invoke_private('social_reel_scene_look');
+        $this->assertStringContainsString('2D clean vector illustration', $look);
+        $this->assertStringContainsString('midnight navy', $look);
+        $this->assertStringContainsString('yellow-head stick mascot', $look);
+        $prompt_a = $this->invoke_private('social_reel_scene_prompt', array(
+            'Chip delay hits phones',
+            'Yellow mascot at a dark foundry gate with stalled wafer crates',
+            array('title' => 'TSMC delay', 'key_takeaways' => array('Wafers slip a quarter')),
+            0,
+        ));
+        $prompt_b = $this->invoke_private('social_reel_scene_prompt', array(
+            'Cloud bill jumps overnight',
+            'Mascot under a giant glowing server invoice in a cyan-lit hall',
+            array('title' => 'AWS hike', 'key_takeaways' => array('Bills climb')),
+            1,
+        ));
+        $this->assertStringContainsString($look, $prompt_a);
+        $this->assertStringContainsString('Unique scene 1', $prompt_a);
+        $this->assertStringContainsString('foundry', $prompt_a);
+        $this->assertStringContainsString('Unique scene 2', $prompt_b);
+        $this->assertStringContainsString('invoice', $prompt_b);
+        $this->assertNotSame($prompt_a, $prompt_b);
         $budget = $this->plugin->sanitize_settings(array(
             'social_platform_toggles' => 1,
             'social_instagram_enabled' => 1,
@@ -6508,6 +6550,22 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $captured = array();
         add_filter('pre_http_request', function ($preempt, $args, $url) use (&$captured) {
             $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'flux/schnell') !== false && strpos($url, '/requests/') === false) {
+                $body = json_decode((string) ($args['body'] ?? ''), true);
+                $captured['scenes'] = (array) ($captured['scenes'] ?? array());
+                $captured['scenes'][] = (string) ($body['prompt'] ?? '');
+                $n = count($captured['scenes']);
+                return $this->mock_http_ok(array('request_id' => 'scene-' . (string) $n, 'status' => 'IN_QUEUE'));
+            }
+            if (preg_match('#/requests/scene-(\d+)/status#', $url)) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (preg_match('#/requests/scene-(\d+)$#', $url, $m)) {
+                return $this->mock_http_ok(array('images' => array(array('url' => 'https://example.org/scene-' . $m[1] . '.jpg'))));
+            }
+            if (preg_match('#example\.org/scene-(\d+)\.jpg#', $url, $m)) {
+                return $this->mock_http_ok($this->scene_jpeg_bytes('scene-' . $m[1]));
+            }
             if (strpos($url, 'queue.fal.run') !== false && strpos($url, 'ffmpeg-api/compose') !== false && strpos($url, '/requests/') === false) {
                 $captured['submit'] = json_decode((string) ($args['body'] ?? ''), true);
                 $captured['endpoint'] = $url;
@@ -6559,6 +6617,10 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $voice_ms = (int) ($tracks[1]['keyframes'][0]['duration'] ?? 0);
         $this->assertSame(15000, $clock);
         $this->assertSame($clock, $voice_ms);
+        $this->assertGreaterThanOrEqual(8, count($captured['scenes'] ?? array()));
+        $this->assertSame(count($captured['scenes']), count(array_unique($captured['scenes'])));
+        $this->assertStringContainsString('2D clean vector illustration', (string) ($captured['scenes'][0] ?? ''));
+        $this->assertStringContainsString('Unique scene 1', (string) ($captured['scenes'][0] ?? ''));
         $this->assertSame(TechnoRapper_AI_Wire::SOCIAL_REEL_ROUNDUP_CUT, (string) get_post_meta((int) $result['id'], '_tr_ai_wire_reel_cut', true));
         remove_all_filters('tr_ai_wire_ffmpeg_path');
         remove_all_filters('tr_ai_wire_fal_poll_seconds');
@@ -7752,7 +7814,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('this host has no ffmpeg', $html);
         $this->assertStringContainsString('If this host has no ffmpeg, Fal also assembles the spoken MP4', $html);
         $this->assertStringContainsString('no blank leftover', $html);
-        $this->assertStringContainsString('stick-figure newsroom roundup', $html);
+        $this->assertStringContainsString('viral 2D newsroom', $html);
+        $this->assertStringContainsString('unique illustrated scenes that match each story', $html);
         $this->assertStringContainsString('60 seconds (Best roundup)', $html);
         $this->assertStringContainsString('3–5 desk stories', $html);
         $this->assertStringContainsString('Best/Budget set', $html);
