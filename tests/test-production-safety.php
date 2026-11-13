@@ -3318,6 +3318,51 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('Stopped by administrator.', $last['skipped']);
     }
 
+    public function test_cancel_background_job_stops_a_stuck_reel_worker() {
+        $job_id = wp_generate_uuid4();
+        update_option(TechnoRapper_AI_Wire::JOB_OPTION, array(
+            'id' => $job_id,
+            'kind' => 'social_pack',
+            'pack_kind' => 'reel',
+            'status' => 'running',
+            'percent' => 55,
+            'message' => 'Waiting at Fal',
+            'created_at' => time() - 1800,
+            'updated_at' => time(),
+            'cancelled' => 0,
+        ), false);
+        update_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION, $job_id, false);
+        $prop = new ReflectionProperty('TechnoRapper_AI_Wire', 'background_job_id');
+        $prop->setAccessible(true);
+        $prop->setValue($this->plugin, $job_id);
+        global $wpdb;
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Stuck Reel'));
+        $now = current_time('mysql', true);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'processing',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s'));
+        $cancelled = $this->invoke_private('cancel_background_job', array('Stopped the stuck Reel job.'));
+        $this->assertSame('done', $cancelled['status']);
+        $this->assertSame(1, (int) $cancelled['cancelled']);
+        $this->assertSame($job_id, get_option(TechnoRapper_AI_Wire::JOB_CANCEL_OPTION));
+        $this->assertFalse((bool) get_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION));
+        $this->assertTrue($this->invoke_private('background_job_was_cancelled'));
+        $this->assertFalse($this->invoke_private('note_background_progress', array(70, 'Still waiting')));
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d",
+            $post_id
+        ), ARRAY_A);
+        $this->assertSame('needs_review', $row['status']);
+        $this->assertStringContainsString('Stopped the stuck Reel job', (string) $row['error_text']);
+        $replacement = $this->invoke_private('enqueue_background_job', array('social_pack', array('pack_kind' => 'reel'), true));
+        $this->assertSame('queued', $replacement['status']);
+        $this->assertNotSame($job_id, $replacement['id']);
+    }
+
     public function test_delete_queue_item_removes_only_that_row() {
         $keep = $this->create_queue_item();
         $gone = $this->create_queue_item();

@@ -1291,6 +1291,9 @@ trait TechnoRapper_AI_Wire_Social {
         $processed = 0;
         $max = max(1, (int) $max);
         for ($i = 0; $i < $max; $i++) {
+            if ($this->background_job_was_cancelled()) {
+                break;
+            }
             $this->note_background_progress(10 + (int) (80 * (($i + 1) / $max)), 'Publishing social item ' . ($i + 1));
             $before = $this->social_queued_count();
             if ($before < 1) {
@@ -5304,6 +5307,17 @@ trait TechnoRapper_AI_Wire_Social {
         echo '<div class="tr-ai-wire-reel-build-actions">';
         if ($live) {
             echo '<button type="button" class="button tr-ai-wire-reel-check">Check now</button> ';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline-block;margin-right:8px;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_stop_run">';
+            wp_nonce_field('tr_ai_wire_stop_run');
+            echo '<button class="button">Stop job</button>';
+            echo '</form>';
+            echo '<form method="post" style="display:inline-block;margin-right:8px;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_stop_and_rerun_reel">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+            wp_nonce_field('tr_ai_wire_stop_and_rerun_reel');
+            echo '<button class="button button-secondary">Stop and rerun Reel</button>';
+            echo '</form>';
         }
         $stale = $status === 'processing' && (time() - (int) strtotime((string) ($row['updated_at'] ?? '') . ' UTC')) > 180;
         if (!$live || $stale) {
@@ -5918,6 +5932,7 @@ trait TechnoRapper_AI_Wire_Social {
         <div class="wrap">
             <h1>Social queue</h1>
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. ' . $this->instagram_still_spacing_copy()); ?></p></div><?php endif; ?>
+            <?php if (!empty($_GET['job_stopped'])) : ?><div class="notice notice-warning is-dismissible"><p>Background job stopped. Saved Reel steps are kept — use Resume on the row, or Stop and rerun Reel / Generate Reel now.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_script_regen'])) : ?><div class="notice notice-info is-dismissible"><p>Generating a new teach script. Older Reel video/voice files for that row were deleted. This page updates itself while it rebuilds.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use no talking face + Veo Lite 4s hooks. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>
@@ -6032,6 +6047,34 @@ trait TechnoRapper_AI_Wire_Social {
                 </div>
                 <p class="description" style="margin:8px 0 0;">Cheap test forces no talking face + story hooks + Veo Lite 4s. Production picks (including host / Pro / Fast) stay saved and apply when you switch back.</p>
             </div>
+            <?php
+            $bg_job = get_option(self::JOB_OPTION, array());
+            $bg_busy = is_array($bg_job) && in_array((string) ($bg_job['status'] ?? ''), array('queued', 'running'), true);
+            $bg_kind = is_array($bg_job) ? (string) ($bg_job['kind'] ?? '') : '';
+            $bg_reelish = in_array($bg_kind, array('social_pack', 'social', 'social_retry'), true);
+            $live_reel = $this->social_building_reel_rows();
+            $live_reel_id = !empty($live_reel[0]['id']) ? (int) $live_reel[0]['id'] : 0;
+            if ($bg_busy) :
+                ?>
+            <div class="notice notice-warning" style="margin:12px 0;">
+                <p><strong>A background job is running<?php echo $bg_reelish ? ' (Reel / social)' : ''; ?>.</strong>
+                    <?php echo esc_html((string) ($bg_job['message'] ?? 'Working…')); ?>
+                    If it has been stuck for a long time, stop it here and rerun.</p>
+                <p class="tr-ai-wire-actions" style="margin:8px 0 0;">
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
+                        <input type="hidden" name="action" value="tr_ai_wire_stop_run">
+                        <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
+                        <?php submit_button('Stop job', 'delete', 'submit', false); ?>
+                    </form>
+                    <form method="post" style="display:inline-block;">
+                        <input type="hidden" name="action" value="tr_ai_wire_stop_and_rerun_reel">
+                        <input type="hidden" name="item_id" value="<?php echo esc_attr((string) $live_reel_id); ?>">
+                        <?php wp_nonce_field('tr_ai_wire_stop_and_rerun_reel'); ?>
+                        <?php submit_button('Stop and rerun Reel', 'primary', 'submit', false); ?>
+                    </form>
+                </p>
+            </div>
+            <?php endif; ?>
             <div class="tr-ai-wire-actions">
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="tr_ai_wire_generate_social_pack">

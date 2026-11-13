@@ -185,7 +185,7 @@ trait TechnoRapper_AI_Wire_Admin {
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
                 <input type="hidden" name="action" value="tr_ai_wire_stop_run">
                 <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
-                <p class="description">Stops the current run after the item already in flight. Scheduled runs still start again on the next interval unless the schedule is Manual only.</p>
+                <p class="description">Stops the current website or Reel background job so you can rerun it. Saved Reel steps stay on the row. Scheduled website runs still start again on the next interval unless the schedule is Manual only.</p>
                 <?php submit_button('Stop current run', 'delete'); ?>
             </form>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">

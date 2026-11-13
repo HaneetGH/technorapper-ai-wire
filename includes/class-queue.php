@@ -166,8 +166,13 @@ trait TechnoRapper_AI_Wire_Queue {
             wp_die(esc_html__('You are not allowed to stop this task.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_stop_run');
-        $this->stop_running_jobs();
-        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=stopped'));
+        $this->cancel_background_job('Stopped by administrator. Saved Reel steps are kept — use Resume or Generate Reel now.');
+        $redirect = admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=stopped');
+        $ref = wp_get_referer();
+        if (is_string($ref) && strpos($ref, 'page=tr-ai-wire-social') !== false) {
+            $redirect = admin_url('admin.php?page=tr-ai-wire-social&job_stopped=1');
+        }
+        wp_safe_redirect($redirect);
         exit;
     }
 
