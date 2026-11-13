@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.88
+Stable tag: 0.2.89
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,10 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.89 =
+* Best production path is now a 60-second stick-figure newsroom roundup: 135–150 words, 3–5 desk stories, scene every 3–4 seconds, then auto-post to Instagram and YouTube.
+* Budget stays the 18-second Veo Lite teach cut. Custom is unchanged.
 
 = 0.2.88 =
 * Best production path for Reels: voice first, lesson cards carry the cut, MiniMax H3 Max animates one approved still into short silent accents, then the worker auto-posts to Instagram and YouTube (at least one Reel per day).
@@ -216,6 +220,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.89 =
+Best production path is a 60-second stick-figure news roundup (3–5 stories) that auto-posts. Budget is still the short Veo Lite teach cut.
 
 = 0.2.88 =
 On Social settings, pick Best production path. Saving it auto-posts at least one Instagram Reel per day (H3 Max, Fal mux if the host has no ffmpeg). Custom with Reel posts per day at 0 still holds for review.

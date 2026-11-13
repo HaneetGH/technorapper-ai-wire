@@ -390,7 +390,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <p class="description"><?php echo esc_html($this->social_reel_recipe_summary($s)); ?></p>
                     <?php $pipeline = sanitize_key((string) ($s['social_reel_pipeline'] ?? 'custom')); ?>
                     <h3>Production path</h3>
-                    <p class="description">Best is the auto-post quality route: voice first, lesson cards carry the Reel, MiniMax H3 Max animates one approved still into short silent accents, then the worker posts to Instagram and YouTube. This WordPress host does not need ffmpeg — Fal muxes the spoken MP4. Budget keeps Veo Lite and also auto-posts. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
+                    <p class="description">Best is the auto-post 60-second stick-figure newsroom roundup: 135–150 words, 3–5 stories, scene every 3–4 seconds, MiniMax H3 Max accents, then the worker posts to Instagram and YouTube. This WordPress host does not need ffmpeg — Fal muxes the spoken MP4. Budget keeps an 18s Veo Lite teach cut and also auto-posts. Custom unlocks every model and the talking-host upsell (talking host is tighter with local ffmpeg because Fal cannot seek the host clip).</p>
                     <div class="tr-ai-wire-choice">
                         <?php foreach ($this->social_reel_pipelines() as $pipe_id => $pipe_spec) : ?>
                         <label class="tr-ai-wire-choice-card<?php echo ($pipeline === $pipe_id) ? ' is-selected' : ''; ?>">
@@ -402,8 +402,8 @@ trait TechnoRapper_AI_Wire_Admin {
                     </div>
                     <ol class="tr-ai-wire-pipeline">
                         <li>A published article clears the social review-score floor.</li>
-                        <li>Best/Budget set <strong>Reel posts per day</strong> to at least 1. The worker picks that article, builds the Reel, and posts it. Generate Reel now still holds for review.</li>
-                        <li>Voiceover is recorded first. Numbered lesson cards follow those spoken beats.</li>
+                        <li>Best/Budget set <strong>Reel posts per day</strong> to at least 1. Best packs 3–5 desk stories into one 60s roundup and posts it. Generate Reel now still holds for review.</li>
+                        <li>Voiceover is recorded first. Best uses a stick-figure newsroom; Budget uses numbered lesson cards.</li>
                         <li>One text-free 9:16 still is animated at Fal (H3 Max on Best, Veo Lite on Budget) into at most two ~2s accents — never looped. If this host has no ffmpeg, Fal also assembles the spoken MP4.</li>
                         <li>A guard refuses a motion-led cut. Auto Reels publish when the MP4 is ready. Generate Reel now still holds on Social queue until you click Post.</li>
                         <li>Instagram gets a Reel (feed + AI disclosure). YouTube gets the same file as a Short. X still gets the poster only.</li>
@@ -411,7 +411,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <div class="tr-ai-wire-row">
                     <p><label for="tr-social-reel-weekly">Reel posts per week</label><br><input id="tr-social-reel-weekly" type="number" min="0" max="14" name="<?php echo esc_attr($option); ?>[social_reel_weekly_limit]" value="<?php echo esc_attr((int) ($s['social_reel_weekly_limit'] ?? 0)); ?>"><span class="description">0 means no weekly cap. Use 2 for a 1–2 Reels/week desk.</span></p>
                     <p><label for="tr-social-video-budget">Monthly Reel video budget (USD)</label><br><input id="tr-social-video-budget" type="number" min="0" step="0.01" name="<?php echo esc_attr($option); ?>[social_video_budget_usd]" value="<?php echo esc_attr($s['social_video_budget_usd'] ?? 10); ?>"><span class="description">Raise this before Fast, Kling, or a talking host. <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-costs')); ?>">Price estimate</a></span></p>
-                    <p><label for="tr-social-reel-target">Spoken length</label><br><select id="tr-social-reel-target" name="<?php echo esc_attr($option); ?>[social_reel_target_seconds]"><?php foreach (array(15 => '15 seconds', 18 => '18 seconds (default)', 30 => '30 seconds', 45 => '45 seconds') as $target_n => $target_label) : ?><option value="<?php echo esc_attr((string) $target_n); ?>" <?php selected((int) ($s['social_reel_target_seconds'] ?? 18), $target_n); ?>><?php echo esc_html($target_label); ?></option><?php endforeach; ?></select></p>
+                    <p><label for="tr-social-reel-target">Spoken length</label><br><select id="tr-social-reel-target" name="<?php echo esc_attr($option); ?>[social_reel_target_seconds]"><?php foreach (array(15 => '15 seconds', 18 => '18 seconds (default)', 30 => '30 seconds', 45 => '45 seconds', 60 => '60 seconds (Best roundup)') as $target_n => $target_label) : ?><option value="<?php echo esc_attr((string) $target_n); ?>" <?php selected((int) ($s['social_reel_target_seconds'] ?? 18), $target_n); ?>><?php echo esc_html($target_label); ?></option><?php endforeach; ?></select></p>
                     </div>
                     <?php
                     $current_voice = (string) ($s['social_reel_tts_voice'] ?? 'cedar');
@@ -632,7 +632,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <p class="description">Change the cut, avatar face, and motion model on <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-social-settings')); ?>">Social settings</a>.</p>
             </div>
             <h2>Suggested Reel model</h2>
-            <p><strong>Best production path:</strong> MiniMax H3 Max, 5 seconds, silent 768P. About <strong>$0.18 per clip</strong>. <strong>Budget path:</strong> Veo 3.1 Lite, 8 seconds, silent 720p, about <strong>$0.24 per clip</strong> and <strong>$7/month</strong> at one Reel/day. Switch Custom models below only after traffic can pay for them.</p>
+            <p><strong>Best production path:</strong> 60-second stick-figure newsroom roundup, MiniMax H3 Max 5s silent 768P accents, about <strong>$0.18 per clip</strong>. <strong>Budget path:</strong> Veo 3.1 Lite, 8 seconds, silent 720p, about <strong>$0.24 per clip</strong> and <strong>$7/month</strong> at one Reel/day. Switch Custom models below only after traffic can pay for them.</p>
             <h2>Reel motion models (Fal.ai, silent)</h2>
             <table class="widefat striped" style="max-width:960px;">
                 <thead>

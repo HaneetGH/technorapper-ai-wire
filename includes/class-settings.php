@@ -385,7 +385,7 @@ trait TechnoRapper_AI_Wire_Settings {
         }
         $out['social_reel_fact_slides'] = min(4, max(1, absint($input['social_reel_fact_slides'] ?? $defaults['social_reel_fact_slides'])));
         $target = absint($input['social_reel_target_seconds'] ?? $defaults['social_reel_target_seconds']);
-        $out['social_reel_target_seconds'] = in_array($target, array(15, 18, 30, 45), true) ? $target : 18;
+        $out['social_reel_target_seconds'] = in_array($target, array(15, 18, 30, 45, 60), true) ? $target : 18;
         $out['social_reel_sting_seconds'] = min(4, max(1, absint($input['social_reel_sting_seconds'] ?? $defaults['social_reel_sting_seconds'])));
         $locked = $this->social_reel_apply_pipeline($out);
         foreach (array(
