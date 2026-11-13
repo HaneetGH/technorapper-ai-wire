@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.94
+Stable tag: 0.2.95
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.95 =
+* Failed queue and social jobs now print a red error. Retry/Resume clears that message immediately, then shows the new one if the next attempt fails.
 
 = 0.2.94 =
 * Best roundup Reels hold each illustrated scene for seconds, not one frame. Fal stitches the unique cards with images-to-video (frames/fps), then muxes the voice. A leftover 5s B-roll clip is never placed in that cut, so you do not get a short video, then millisecond slides, then a blank screen.
@@ -237,6 +240,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.95 =
+Failed rows show a red error. Retry clears it; a second failure prints the new message.
 
 = 0.2.94 =
 Best Reels hold each illustrated scene for the time it is spoken. The leftover 5s B-roll clip is not muxed in, so cards do not flash in milliseconds.

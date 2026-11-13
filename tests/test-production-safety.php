@@ -8477,6 +8477,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('name="pack_kind" value="carousel"', $html);
         $this->assertStringContainsString('name="pack_kind" value="collage"', $html);
         $this->assertStringContainsString('name="pack_kind" value="reel"', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('role="alert"', $html);
         $this->assertStringNotContainsString('Regenerate graphic and post again', $html);
     }
 
@@ -8561,6 +8563,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('Post existing graphic to Instagram', $html);
         $this->assertStringContainsString('Download video', $html);
         $this->assertStringContainsString('action=tr_ai_wire_download_reel', $html);
+        $this->assertStringNotContainsString('tr-ai-wire-social-error', $html);
     }
 
     public function test_reel_laptop_kit_is_downloadable_when_ffmpeg_is_missing() {
@@ -8678,6 +8681,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->social_distribution_page();
         $html = ob_get_clean();
         $this->assertStringContainsString('The Reel build stopped', $html);
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Fal could not assemble the finished MP4', $html);
         $this->assertStringContainsString('Resume building this Reel', $html);
         $this->assertStringContainsString('tr_ai_wire_resume_reel', $html);
         $this->assertStringContainsString('Start over with a new Reel', $html);
@@ -10406,5 +10411,92 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNull($this->invoke_private('claim_background_job', array($job['id'])));
         delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
         delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
+    }
+
+    public function test_held_reel_copy_is_not_a_red_failure() {
+        $this->assertFalse($this->invoke_private('social_error_is_failure', array('Held: Watch this Reel, then click Post to Instagram. It has not been posted yet.')));
+        $this->assertTrue($this->invoke_private('social_error_is_failure', array('Fal could not assemble the finished MP4: no reason given.')));
+        $this->assertFalse($this->invoke_private('social_error_is_failure', array('')));
+    }
+
+    public function test_retry_clears_old_error_before_the_job_runs() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'error',
+            'error_text' => 'Old OpenAI timeout.',
+        ), array('id' => $id));
+        $this->invoke_private('enqueue_background_job', array('retry', array('item_id' => $id)));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('error', $row['status']);
+        $this->assertSame('', (string) $row['error_text']);
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
+    }
+
+    public function test_queue_page_prints_a_red_error_for_failed_items() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'error',
+            'error_text' => 'OpenAI returned HTTP 500.',
+        ), array('id' => $id));
+        ob_start();
+        $this->plugin->queue_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('tr-ai-wire-item-error', $html);
+        $this->assertStringContainsString('OpenAI returned HTTP 500.', $html);
+        $this->assertStringContainsString('role="alert"', $html);
+    }
+
+    public function test_social_retry_clears_old_error_and_shows_the_next_failure() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Retry error row',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Old mux failed.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $this->invoke_private('enqueue_background_job', array('social_retry', array('item_id' => $id)));
+        $cleared = $wpdb->get_row($wpdb->prepare("SELECT error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('', (string) $cleared['error_text']);
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_social', array(
+            'status' => 'needs_review',
+            'error_text' => 'Fal answered HTTP 502.',
+        ), array('id' => $id));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('tr-ai-wire-social-error', $html);
+        $this->assertStringContainsString('Fal answered HTTP 502.', $html);
+        $this->assertStringNotContainsString('Old mux failed.', $html);
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        delete_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION);
+    }
+
+    public function test_job_progress_bar_turns_red_on_error() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $_GET['page'] = 'tr-ai-wire-queue';
+        ob_start();
+        $this->plugin->render_job_ui();
+        $html = ob_get_clean();
+        unset($_GET['page']);
+        $this->assertStringContainsString('#tr-ai-wire-progress.is-error', $html);
+        $this->assertStringContainsString('clearItemErrors', $html);
+        $this->assertStringContainsString("box.classList.toggle('is-error', failed)", $html);
     }
 }

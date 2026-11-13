@@ -5269,8 +5269,8 @@ trait TechnoRapper_AI_Wire_Social {
         } else {
             echo '<p class="tr-ai-wire-reel-build-title"><strong>The Reel build stopped.</strong> Nothing was posted. Finished steps are saved and are not paid for again.</p>';
             $error = $this->social_error_copy((string) ($row['error_text'] ?? ''));
-            if ($error !== '') {
-                echo '<p class="tr-ai-wire-social-error">' . esc_html($error) . '</p>';
+            if ($this->social_error_is_failure($error)) {
+                echo '<p class="tr-ai-wire-social-error" role="alert">' . esc_html($error) . '</p>';
             }
         }
         echo '<ol class="tr-ai-wire-reel-steps">';
@@ -5726,6 +5726,14 @@ trait TechnoRapper_AI_Wire_Social {
         return $error;
     }
 
+    private function social_error_is_failure($error) {
+        $error = trim((string) $error);
+        if ($error === '') {
+            return false;
+        }
+        return stripos($error, 'Held:') !== 0;
+    }
+
     private function social_queue_caption($row, $copy) {
         $platform = (string) ($row['platform'] ?? '');
         if ($platform === 'instagram' && !empty($copy['instagram'])) {
@@ -5748,7 +5756,7 @@ trait TechnoRapper_AI_Wire_Social {
         $caption = $this->social_queue_caption($row, $copy);
         $error = $this->social_error_copy((string) ($row['error_text'] ?? ''));
         $status = sanitize_key((string) ($row['status'] ?? ''));
-        echo '<div class="tr-ai-wire-social-item">';
+        echo '<div class="tr-ai-wire-social-item" data-item-id="' . esc_attr((string) (int) ($row['id'] ?? 0)) . '">';
         echo '<div class="tr-ai-wire-social-preview">';
         if ($image_id > 0) {
             $full = wp_get_attachment_url($image_id);
@@ -5823,8 +5831,8 @@ trait TechnoRapper_AI_Wire_Social {
         } elseif (!empty($row['remote_id'])) {
             echo '<p>Published media ID: ' . esc_html($row['remote_id']) . '</p>';
         }
-        if ($error !== '') {
-            echo '<p class="tr-ai-wire-social-error">' . esc_html($error) . '</p>';
+        if ($this->social_error_is_failure($error)) {
+            echo '<p class="tr-ai-wire-social-error" role="alert">' . esc_html($error) . '</p>';
         }
         if (($status === 'needs_review' || $status === 'published') && !$building) {
             $this->render_social_retry_form($row, $image_id, $status);
