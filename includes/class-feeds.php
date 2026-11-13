@@ -35,7 +35,7 @@ trait TechnoRapper_AI_Wire_Feeds {
             $existing = get_option(self::PROCESSING_LOCK_OPTION, array());
             $created_at = is_array($existing) ? absint($existing['created_at'] ?? 0) : 0;
             $lock_age = $created_at ? ($now - $created_at) : self::PROCESSING_LOCK_TTL + 1;
-            $can_steal = $foreground ? $lock_age > 90 : ($lock_age > self::PROCESSING_LOCK_TTL);
+            $can_steal = $foreground ? $lock_age > 200 : ($lock_age > self::PROCESSING_LOCK_TTL);
 
             if (!$can_steal) {
                 $summary['skipped'] = $foreground ? 'A run is already in progress. Wait a minute and try again.' : 'locked';
@@ -136,16 +136,15 @@ trait TechnoRapper_AI_Wire_Feeds {
         $filled_this_run = 0;
         $run_limit = (int) $s['max_items_per_run'];
         $started_at = microtime(true);
-        $time_budget_seconds = $foreground ? 90 : 25;
+        // Foreground Fetch now needs room for several writer+reviewer passes;
+        // ~6 validations used to exhaust the old 90s budget and look like a stop.
+        $time_budget_seconds = $foreground ? 180 : 25;
         $reason = sanitize_key($args['reason'] ?? '');
-        if ($reason === 'continue') {
-            $this->note_background_progress(20, 'Continuing unfinished items');
-        } else {
-            $this->note_background_progress(12, 'Fetching feeds');
-            $this->ingest_new_feed_items($s, $summary);
-            $this->note_background_progress(20, 'Feeds checked');
-        }
+        $this->note_background_progress(12, $reason === 'continue' ? 'Continuing unfinished items' : 'Fetching feeds');
+        $this->ingest_new_feed_items($s, $summary);
+        $this->note_background_progress(20, 'Feeds checked');
         $touched = array();
+        $reingested = false;
         while ((microtime(true) - $started_at) < $time_budget_seconds) {
             if (!$this->refresh_processing_lock($lock_token)) {
                 return;
@@ -159,6 +158,12 @@ trait TechnoRapper_AI_Wire_Feeds {
             }
             $waiting_id = $this->next_pipeline_item_id($touched);
             if ($waiting_id < 1) {
+                if (!$reingested && $this->remaining_posts_today($s) > 0) {
+                    $reingested = true;
+                    $this->note_background_progress(22, 'Looking for more feed stories');
+                    $this->ingest_new_feed_items($s, $summary);
+                    continue;
+                }
                 break;
             }
             if ($foreground) {
@@ -169,7 +174,10 @@ trait TechnoRapper_AI_Wire_Feeds {
             $touched[(int) $waiting_id] = true;
             $processed_this_run++;
             $summary['processed'] = $processed_this_run;
-            $this->note_background_progress(20 + (int) (70 * max($filled_this_run, 1) / max(1, $run_limit)), 'Processing item ' . $processed_this_run);
+            $this->note_background_progress(
+                20 + (int) (70 * max($filled_this_run, 1) / max(1, $run_limit)),
+                'Validating story ' . $processed_this_run
+            );
             $row = $this->get_item((int) $waiting_id);
             $status = (string) ($row['status'] ?? '');
             if ($status === 'draft') {

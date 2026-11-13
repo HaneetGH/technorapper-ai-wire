@@ -1672,6 +1672,58 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertEmpty($gate['blocking_issues']);
     }
 
+    public function test_pre_publish_gate_ignores_bare_model_hold_without_hard_blockers() {
+        $gate = $this->invoke_private('evaluate_pre_publish_gate', array(
+            $this->complete_rewrite_for_score(),
+            $this->passing_review_for_score(90, array(
+                'gate_status' => 'HOLD',
+                'blocking_issues' => array('Consider a warmer transition into Why it matters.'),
+                'final_reason' => 'Soft style preference only.',
+            )),
+            array('source_title' => 'Apple announced the M5 chip'),
+            TechnoRapper_AI_Wire::defaults(),
+        ));
+        $this->assertNotSame('HOLD', $gate['status']);
+        $this->assertEmpty($gate['blocking_issues']);
+        $this->assertTrue(in_array('Reviewer marked HOLD without a hard blocker; publishing with warnings.', $gate['warnings'], true));
+    }
+
+    public function test_pre_publish_gate_still_holds_hard_model_blockers() {
+        $gate = $this->invoke_private('evaluate_pre_publish_gate', array(
+            $this->complete_rewrite_for_score(),
+            $this->passing_review_for_score(90, array(
+                'gate_status' => 'HOLD',
+                'blocking_issues' => array('Title is a near-duplicate of the source headline.'),
+            )),
+            array('source_title' => 'Completely different source headline about routers'),
+            TechnoRapper_AI_Wire::defaults(),
+        ));
+        $this->assertSame('HOLD', $gate['status']);
+        $this->assertNotEmpty($gate['blocking_issues']);
+    }
+
+    public function test_reviewed_story_publishes_when_model_hold_is_soft_only() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode($this->complete_rewrite_for_score()),
+            'review_json' => wp_json_encode($this->passing_review_for_score(92, array(
+                'gate_status' => 'HOLD',
+                'blocking_issues' => array('Readability could be a touch smoother.'),
+            ))),
+        ), array('id' => $id));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['auto_publish'] = 1;
+        $settings['max_posts_per_day'] = 5;
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertSame('', (string) $row['error_text']);
+        $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
+    }
+
     public function test_pre_publish_gate_holds_auto_publish_on_a_live_duplicate() {
         $first = $this->create_queue_item();
         $this->invoke_private('create_draft', array($first, array(
