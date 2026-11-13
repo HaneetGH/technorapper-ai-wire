@@ -2515,6 +2515,61 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertFalse($this->invoke_private('should_force_publish_retry', array($item, $rewrite, $review, $settings)));
     }
 
+    public function test_admin_force_publish_overrides_story_value_and_prepublish_hold() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held: not worth publishing. The story is too thin.',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 40,
+                'policy_flags' => array(),
+                'fact_flags' => array(),
+                'gate_status' => 'HOLD',
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+                'story_value' => array(
+                    'publish' => false,
+                    'substance' => 'thin',
+                    'reader_demand' => 'low',
+                    'adds_value' => false,
+                    'reason' => 'No named change.',
+                ),
+            )),
+        ), array('id' => $id));
+        $this->invoke_private('admin_force_publish_queue_item', array($id));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertSame('', (string) $row['error_text']);
+        $gate = get_post_meta((int) $row['wp_post_id'], '_tr_ai_wire_prepublish_gate', true);
+        $this->assertIsArray($gate);
+        $this->assertNotSame('HOLD', (string) ($gate['status'] ?? ''));
+        $this->assertStringContainsString('administrator', (string) ($gate['final_reason'] ?? ''));
+        $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
+    }
+
+    public function test_admin_force_publish_without_a_rewrite_stays_held() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held: not worth publishing. It is a best-of list, and readers are unlikely to look for it.',
+            'rewrite_json' => '',
+            'review_json' => '',
+        ), array('id' => $id));
+        $this->invoke_private('admin_force_publish_queue_item', array($id));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertStringContainsString('Retry first', (string) $row['error_text']);
+    }
+
     public function test_retry_rescores_a_score_and_fact_flag_hold() {
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
         $settings = TechnoRapper_AI_Wire::defaults();
@@ -10758,6 +10813,29 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Not published.', $html);
         $this->assertStringContainsString('OpenAI returned HTTP 500.', $html);
         $this->assertStringContainsString('role="alert"', $html);
+        $this->assertStringContainsString('Retry', $html);
+        $this->assertStringNotContainsString('Force publish', $html);
+    }
+
+    public function test_queue_page_offers_force_publish_when_a_held_article_exists() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held by pre-publish gate.',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+        ), array('id' => $id));
+        ob_start();
+        $this->plugin->queue_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Force publish', $html);
+        $this->assertStringContainsString('tr_ai_wire_force_publish_item', $html);
+        $this->assertStringContainsString('Held, not published.', $html);
     }
 
     public function test_social_retry_clears_old_error_and_shows_the_next_failure() {

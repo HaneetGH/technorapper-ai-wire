@@ -1203,7 +1203,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         }
         if ($wanted === 'publish') {
             $gate = get_post_meta($post_id, '_tr_ai_wire_prepublish_gate', true);
-            if ($this->pre_publish_gate_holds($gate)) {
+            if (empty($s['_admin_force_publish']) && $this->pre_publish_gate_holds($gate)) {
                 return;
             }
         }
