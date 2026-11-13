@@ -1955,10 +1955,10 @@ trait TechnoRapper_AI_Wire_Social {
             . 'on_image_kicker: optional 1–3 word label such as TECH NEWS or AI NEWS when it fits. Use RUMORS only if the article itself is a rumor or leak. '
             . 'on_image_bullets: exactly 3 short bullets grounded in the article. Put 2–4 key words in **double asterisks**. Never invent facts. '
             . ($this->social_reel_is_roundup($settings)
-                ? 'visual_brief: viral 2D clean vector newsroom, midnight navy, cyan rim light, one yellow-head stick mascot, unique illustrated set per packed story, no photoreal people, no letters or numbers in the artwork. '
+                ? 'visual_brief: viral 2D clean vector newsroom, midnight navy, cyan rim light, unique illustrated set per packed story that makes the story obvious. A person or mascot is optional; no-person object scenes are good; never a person from behind in every beat. No photoreal people, no letters or numbers in the artwork. '
                 : ('visual_brief: describe only a fully clothed news photograph built to stop a thumb (extreme crop, one glowing object, rain on glass, dusk rim light, surprising scale). '
                     . (!empty($comic) ? 'Add one sly photoreal visual beat that makes someone smile — cold coffee beside a glowing phone, an empty night office with one light on, a spinning wait cursor on a laptop — while remaining a real photograph. ' : '')
-                    . 'Device close-up, office from behind, factory, night city, server hall, or product still life. All people fully clothed in ordinary work or street clothes, faces not identifiable. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '))
+                    . 'Device close-up, empty office, factory, night city, server hall, or product still life. A person is optional — no-person stills are good. If a person appears they are fully clothed in ordinary work or street clothes, faces not identifiable, not seen from behind. Adults only. No celebrities, no real brand logos, no screenshots, no illustration, no letters or numbers in the artwork (type is overlaid later). Do not include the headline wording. '))
             . 'x_text: hook plus one curiosity line that makes them tap the link; do not include the URL. instagram_caption: hook as the first line (named change, not a tease), 2–4 short lines that pay off the curiosity, one save or send ask, then tell them the full story is in the bio. Never ask for likes or follows. Never include a URL or permalink. Instagram hides posts that look like link spam. cta: tell them to read the full story on ' . $brand . '. hashtags: 3–5 specific tags, no spam. instagram_alt: factual description of the graphic. '
             . 'reel_script: write the spoken Reel in this same Writer pass — do not leave the voiceover for another model. ' . $this->social_reel_script_brief($settings)
             . ($this->social_reel_is_roundup($settings)
@@ -1967,7 +1967,7 @@ trait TechnoRapper_AI_Wire_Social {
             . (!empty($comic) ? 'A light wry line is fine after the takeaway; do not turn the Reel into a bit. ' : '')
             . 'Do not say “full story” or “link in bio” until after the lesson. No hashtags, no URL. '
             . ($this->social_reel_is_roundup($settings)
-                ? 'reel_captions: 12–24 short on-screen scene lines (max 6 words) that change every 3–4 seconds and name the packed desk story on screen. reel_scene_briefs: one unique illustrated-set brief per caption (room, prop, mascot action) — never a generic desk twice. '
+                ? 'reel_captions: 12–24 short on-screen scene lines (max 6 words) that change every 3–4 seconds and name the packed desk story on screen. reel_scene_briefs: one unique illustrated-set brief per caption that makes the story obvious (room, device, map, object). A person or mascot is optional. Never a person from behind in every beat, never a generic desk twice. '
                 : 'reel_captions: 4–5 short on-screen lesson lines (max 6 words) matching those beats — big sparse text for animated cards and B-roll. ')
             . 'youtube_title: 40–70 characters, max 100, no < or >, a specific name/number/twist the article supports. '
             . (!empty($comic) ? 'A dry wink is fine if the named change is still obvious. ' : '')
@@ -3505,14 +3505,14 @@ trait TechnoRapper_AI_Wire_Social {
     private function social_image_camera($post, $revision = 0, $comic = false) {
         $cameras = array(
             'tight overhead still life of one device on a dark desk, hard side light, wet reflections',
-            'over-the-shoulder of a fully clothed person frozen at a blooming monitor, face not identifiable',
             'extreme close-up of a phone or laptop edge, neon bokeh, rain on glass',
-            'wide empty office at night from behind, one fully clothed figure, one light on, dusk windows',
             'macro of a keyboard, cable, or chip with a single rim light and dust in the beam',
+            'empty newsroom desk at night, cyan monitor glow, no people',
+            'wide city grid at dusk from a high window, no figures',
         );
         if (!empty($comic)) {
-            $cameras[] = 'over-the-shoulder of a fully clothed person slumped at a glowing laptop, coffee gone cold, face not identifiable';
             $cameras[] = 'empty conference table at night with one laptop open and chairs pushed back, dusk windows';
+            $cameras[] = 'cold coffee beside a glowing phone on a dark desk, no people';
         }
         $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
         $index = (int) (sprintf('%u', crc32('cam:' . $id . ':' . (int) $revision)) % count($cameras));

@@ -4277,7 +4277,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $look = $this->invoke_private('social_reel_scene_look');
         $this->assertStringContainsString('2D clean vector illustration', $look);
         $this->assertStringContainsString('midnight navy', $look);
-        $this->assertStringContainsString('yellow-head stick mascot', $look);
+        $this->assertStringContainsString('person or yellow-head stick mascot is optional', $look);
+        $this->assertStringContainsString('do not show a person from behind', $look);
         $prompt_a = $this->invoke_private('social_reel_scene_prompt', array(
             'Chip delay hits phones',
             'Yellow mascot at a dark foundry gate with stalled wafer crates',
@@ -6491,6 +6492,12 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         ), 57.0 / 64.8));
         $this->assertSame(150, (int) $scaled[0]['frames']);
         $this->assertSame(150, (int) $scaled[1]['frames']);
+        $scale_post = $this->factory()->post->create();
+        $this->assertTrue($this->invoke_private('social_reel_note_hold_scale', array($scale_post, 55.8, 63.9, 14)));
+        $this->assertSame(12, (int) get_post_meta($scale_post, '_tr_ai_wire_hold_keep', true));
+        $this->assertTrue($this->invoke_private('social_reel_note_hold_scale', array($scale_post, 55.8, 63.9, 14)));
+        $this->assertTrue($this->invoke_private('social_reel_note_hold_scale', array($scale_post, 55.8, 63.9, 14)));
+        $this->assertTrue($this->invoke_private('social_reel_note_hold_scale', array($scale_post, 55.8, 63.9, 14)), 'An overlong 63.9s hold must keep rebuilding, not fail with leftover freeze.');
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'social_fal_loop_keyframes'));
         $this->assertFalse(method_exists('TechnoRapper_AI_Wire', 'compose_social_reel_motion'));
         $repeat = $guard(array(

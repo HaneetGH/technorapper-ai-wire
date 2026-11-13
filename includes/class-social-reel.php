@@ -633,7 +633,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 . 'Use Meanwhile, Next up, or Even crazier between stories. '
                 . 'End with a polarizing comment question, then a 3-word follow CTA such as Follow for daily tech drops. '
                 . 'reel_captions is the VISUAL CUE column: 8–18 short scene lines (max 6 words) in voiceover order, each naming the packed desk story on screen. '
-                . 'reel_scene_briefs is one unique illustration brief per caption, grounded in that story (set, prop, mascot action) — never a generic desk twice. reel_script is the VOICEOVER column. '
+                . 'reel_scene_briefs is one unique illustration brief per caption that makes the story obvious (room, device, map, object, or graphic). A person or mascot is optional — empty no-person scenes are good. Never a person seen from behind in every beat, never a generic desk twice. reel_script is the VOICEOVER column. '
                 . 'Ban: today we discuss, in this video, according to reports, experts say, let’s dive in, moving on, in conclusion.';
         }
         $target = $this->social_reel_target_seconds($settings);
@@ -755,7 +755,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 . 'Viral 2D clean vector newsroom. Ground every claim in the supplied stories. Never invent prices, quotes, dates, or extra companies. Return JSON only.';
             $user = 'Build the two-column roundup: VISUAL CUE (reel_captions) and VOICEOVER (reel_script), plus reel_scene_briefs.'
                 . "\n" . $this->social_reel_script_brief($settings)
-                . "\nVisual style: a locked viral 2D newsroom (midnight navy, cyan light, one yellow-head stick mascot). Each reel_captions line must match the story being spoken at that beat. Each reel_scene_briefs line is a unique illustrated set for that story — different room, prop, and mascot action. No photoreal people, no letters in the artwork, no generic empty desk twice."
+                . "\nVisual style: a locked viral 2D newsroom (midnight navy, cyan light). Each reel_captions line must match the story being spoken at that beat. Each reel_scene_briefs line is a unique illustrated set that makes that story obvious — different room, device, map, or object. A yellow-head stick mascot is optional, not required. No person from behind in every scene. No-person scenes are good. No photoreal people, no letters in the artwork, no generic empty desk twice."
                 . "\nCurrent draft script:\n" . $script
                 . "\nStories JSON (use 3–5; if fewer, stay on those facts — do not invent a fifth company):\n" . wp_json_encode($stories)
                 . "\nReturn JSON keys: reel_script, reel_captions (array), reel_scene_briefs (array).";
@@ -994,7 +994,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $id = ($post instanceof WP_Post) ? (int) $post->ID : (int) $post;
         $move = $moves[(int) (sprintf('%u', crc32('reel-cam:' . $id)) % count($moves))];
         if ($this->social_reel_is_roundup($settings)) {
-            $prompt = '2D clean vector newsroom, vertical 9:16. Animate this exact still; do not redesign the yellow-head stick mascot. Camera: '
+            $prompt = '2D clean vector newsroom, vertical 9:16. Animate this exact still; keep the same illustrated set. A person or mascot is optional. Camera: '
                 . $move
                 . '. Flat colour, thin line art, same identity. ';
             $prompt .= $brief !== '' ? ('Action: ' . $brief . '. ') : 'Subtle newsroom motion only — ticker, papers, screen glow. ';
@@ -1131,7 +1131,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
 
     /** Locked viral 2D newsroom look shared by every Best roundup illustration. */
     private function social_reel_scene_look() {
-        return '2D clean vector illustration, viral tech-news Instagram Reel, midnight navy newsroom, cyan rim light, one yellow-head stick mascot, flat colour, bold graphic shapes, high contrast, no photoreal people, no photograph, no text, no letters, no numbers, no logos, no watermarks';
+        return '2D clean vector illustration, viral tech-news Instagram Reel, midnight navy newsroom, cyan rim light, flat colour, bold graphic shapes, high contrast, story-first scene the viewer can understand at a glance, a person or yellow-head stick mascot is optional, no-person object and environment scenes are good, do not show a person from behind, no photoreal people, no photograph, no text, no letters, no numbers, no logos, no watermarks';
     }
 
     private function social_reel_scene_prompt($caption, $brief, $story, $index) {
@@ -1146,10 +1146,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         if ($take !== '' && stripos($scene, $take) === false) {
             $scene .= '. Stake: ' . $take;
         }
-        $beat = ((int) $index % 6 === 0) ? 'wide newsroom establishing shot' : (((int) $index % 2 === 0) ? 'medium desk shot' : 'close graphic insert');
+        $beat = ((int) $index % 6 === 0) ? 'wide establishing shot of the story' : (((int) $index % 2 === 0) ? 'medium story set' : 'close graphic of the named object');
         return $this->social_reel_scene_look()
             . '. Unique scene ' . (string) ((int) $index + 1) . ', ' . $beat . ': ' . $scene
-            . '. Do not repeat a previous set. Vertical 9:16, keep the top 12% and bottom 22% simple so type can sit there later.';
+            . '. Illustrate the story so a viewer understands it without a person. Do not repeat a previous set. Vertical 9:16, keep the top 12% and bottom 22% simple so type can sit there later.';
     }
 
     private function social_reel_scene_story($copy, $post, $index) {
@@ -2573,7 +2573,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $audio = (float) ($teach['audio'] ?? 0);
         $need = max(1, (int) round($audio * $fps));
         $keep = (int) get_post_meta($post->ID, '_tr_ai_wire_hold_keep', true);
-        if ($keep >= 8 && $keep < count($images)) {
+        if ($keep >= 6 && $keep < count($images)) {
             $images = array_slice($images, 0, $keep);
         }
         $images = $this->social_reel_pad_hold_frames($images, $need);
@@ -2734,32 +2734,31 @@ trait TechnoRapper_AI_Wire_Social_Reel {
     }
 
     /**
-     * Fal images-to-video often returns a longer clip than frames/fps. Remember
-     * the inflation, optionally drop trailing cards, and drop the bad hold so
-     * Resume rebuilds at the spoken length.
+     * Fal images-to-video often returns a longer clip than frames/fps (about
+     * 4.5s minimum per still). Drop trailing cards on the first miss so the
+     * next hold lands on the voice, then scale frames with a safety margin.
      */
     private function social_reel_note_hold_scale($post_id, $audio, $got, $image_n = 0) {
         $post_id = (int) $post_id;
         $audio = max(1.0, (float) $audio);
         $got = max(0.01, (float) $got);
         $tries = (int) get_post_meta($post_id, '_tr_ai_wire_hold_scale_tries', true);
-        if ($tries >= 3) {
-            return false;
-        }
+        $n = max(1, (int) $image_n);
+        $per = $got / $n;
+        $keep = max(6, min($n - 1, (int) floor($audio / max(0.4, $per))));
+        $can_drop = ($keep < $n);
         $prev = (float) get_post_meta($post_id, '_tr_ai_wire_hold_scale', true);
         if ($prev <= 0 || $prev > 1) {
             $prev = 1.0;
         }
-        $scale = max(0.4, min(0.98, $prev * ($audio / $got)));
+        $scale = max(0.35, min(0.95, $prev * ($audio / $got) * 0.9));
+        if ($tries >= 8 && !$can_drop && $scale >= ($prev - 0.01)) {
+            return false;
+        }
         update_post_meta($post_id, '_tr_ai_wire_hold_scale', $scale);
         update_post_meta($post_id, '_tr_ai_wire_hold_scale_tries', $tries + 1);
-        $n = max(1, (int) $image_n);
-        if ($tries >= 1 && $n > 8) {
-            $per = $got / $n;
-            $keep = max(8, min($n - 1, (int) floor($audio / max(0.4, $per))));
-            if ($keep < $n) {
-                update_post_meta($post_id, '_tr_ai_wire_hold_keep', $keep);
-            }
+        if ($can_drop) {
+            update_post_meta($post_id, '_tr_ai_wire_hold_keep', $keep);
         }
         $this->social_reel_drop_hold($post_id);
         $this->social_fal_pending_clear($post_id, '_tr_ai_wire_fal_compose_request');

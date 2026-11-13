@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.2.98
+Stable tag: 0.2.99
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.2.99 =
+* Best Reels no longer require a person or mascot in every scene — no-person story art is fine. Fal stills that come back longer than the voice (63.9s vs 55.8s) drop trailing cards on the first miss so leftover freeze is not posted.
 
 = 0.2.98 =
 * Website posts keep filling Maximum posts per day after editorial holds. Failed/quarantined RSS items do not use a daily slot, and pending/generated rows are processed before those holds so a run does not stop on red errors.
@@ -249,6 +252,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.2.99 =
+Best Reels illustrate the story without a person in every scene, and drop extra cards when Fal returns a clip longer than the voiceover. Update, then Start over — do not Resume the leftover file.
 
 = 0.2.98 =
 Website queue runs keep going after red editorial holds until today's post cap is filled. Failed items do not count as published.
