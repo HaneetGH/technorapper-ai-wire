@@ -5310,7 +5310,7 @@ trait TechnoRapper_AI_Wire_Social {
             echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline-block;margin-right:8px;">';
             echo '<input type="hidden" name="action" value="tr_ai_wire_stop_run">';
             wp_nonce_field('tr_ai_wire_stop_run');
-            echo '<button class="button">Stop job</button>';
+            echo '<button class="button">Stop and delete from queue</button>';
             echo '</form>';
             echo '<form method="post" style="display:inline-block;margin-right:8px;">';
             echo '<input type="hidden" name="action" value="tr_ai_wire_stop_and_rerun_reel">';
@@ -5932,7 +5932,7 @@ trait TechnoRapper_AI_Wire_Social {
         <div class="wrap">
             <h1>Social queue</h1>
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. ' . $this->instagram_still_spacing_copy()); ?></p></div><?php endif; ?>
-            <?php if (!empty($_GET['job_stopped'])) : ?><div class="notice notice-warning is-dismissible"><p>Background job stopped. Saved Reel steps are kept — use Resume on the row, or Stop and rerun Reel / Generate Reel now.</p></div><?php endif; ?>
+            <?php if (!empty($_GET['job_stopped'])) : ?><div class="notice notice-warning is-dismissible"><p>Background job stopped and the stuck Reel/social rows were removed from the queue. WordPress posts stay. Open <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-now')); ?>">Now in queue</a> or Generate Reel now.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_script_regen'])) : ?><div class="notice notice-info is-dismissible"><p>Generating a new teach script. Older Reel video/voice files for that row were deleted. This page updates itself while it rebuilds.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use no talking face + Veo Lite 4s hooks. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>
@@ -6064,7 +6064,7 @@ trait TechnoRapper_AI_Wire_Social {
                     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-right:8px;">
                         <input type="hidden" name="action" value="tr_ai_wire_stop_run">
                         <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
-                        <?php submit_button('Stop job', 'delete', 'submit', false); ?>
+                        <?php submit_button('Stop and delete from queue', 'delete', 'submit', false); ?>
                     </form>
                     <form method="post" style="display:inline-block;">
                         <input type="hidden" name="action" value="tr_ai_wire_stop_and_rerun_reel">
@@ -6072,6 +6072,7 @@ trait TechnoRapper_AI_Wire_Social {
                         <?php wp_nonce_field('tr_ai_wire_stop_and_rerun_reel'); ?>
                         <?php submit_button('Stop and rerun Reel', 'primary', 'submit', false); ?>
                     </form>
+                    <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-now')); ?>">Now in queue</a>
                 </p>
             </div>
             <?php endif; ?>

@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.4
+Stable tag: 0.3.5
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.5 =
+* Stop job removes the stuck Reel/social rows from the queue (WordPress posts stay). A new Now in queue page shows the live background job plus unfinished website and social rows.
 
 = 0.3.4 =
 * Stuck Reel / background jobs can be stopped from the progress bar or Social queue, then resumed or regenerated. A job that keeps updating while waiting on Fal no longer blocks Stop and Rerun for half an hour.
@@ -267,6 +270,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.5 =
+Stop job now deletes the stuck queue rows. Open Now in queue to see what is waiting right now.
 
 = 0.3.4 =
 Use Stop job / Stop and rerun Reel on Social queue when a Reel build hangs.

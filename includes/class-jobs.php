@@ -54,11 +54,14 @@ trait TechnoRapper_AI_Wire_Jobs {
         }
         if ($job_action === 'tr_ai_wire_stop_run') {
             check_ajax_referer('tr_ai_wire_stop_run');
-            wp_send_json_success($this->public_job($this->cancel_background_job('Stopped by administrator. Saved Reel steps are kept — use Resume or Generate Reel now.')));
+            wp_send_json_success($this->public_job($this->cancel_background_job(
+                'Stopped. Active Reel/social rows were removed from the queue. WordPress posts stay.',
+                array('delete_queue' => true)
+            )));
         }
         if ($job_action === 'tr_ai_wire_stop_and_rerun_reel') {
             check_ajax_referer('tr_ai_wire_stop_and_rerun_reel');
-            $this->cancel_background_job('Stopped the stuck Reel job so it can run again.');
+            $this->cancel_background_job('Stopped the stuck Reel job so it can run again.', array('delete_queue' => false));
             $item_id = absint($_POST['item_id'] ?? 0);
             if ($item_id > 0 && $this->resume_social_reel_build($item_id)) {
                 wp_send_json_success($this->public_job($this->enqueue_background_job('social', array(), true)));
@@ -127,8 +130,9 @@ trait TechnoRapper_AI_Wire_Jobs {
             if ($quiet > 420 || $wall > 1500) {
                 $this->cancel_background_job(
                     $wall > 1500
-                        ? 'This background task ran too long and was stopped. Saved Reel steps are kept — use Stop and rerun Reel, Resume, or Generate Reel now.'
-                        : 'This background task stopped answering. Saved progress is kept. Reload the page and use Resume or Check now on the row.'
+                        ? 'This background task ran too long and was stopped. Active queue rows were removed. Generate Reel now to start clean.'
+                        : 'This background task stopped answering. Active queue rows were removed. Reload and check Now in queue.',
+                    array('delete_queue' => true)
                 );
                 $job = get_option(self::JOB_OPTION, array());
             }
@@ -168,7 +172,7 @@ trait TechnoRapper_AI_Wire_Jobs {
             <div class="tr-ai-wire-progress-row">
                 <div class="tr-ai-wire-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tr-ai-wire-progress-bar"></div></div>
                 <div class="tr-ai-wire-progress-actions">
-                    <button type="button" class="button button-small tr-ai-wire-stop-job" hidden>Stop job</button>
+                    <button type="button" class="button button-small tr-ai-wire-stop-job" hidden>Stop and delete from queue</button>
                     <button type="button" class="button button-small button-primary tr-ai-wire-rerun-reel" hidden>Stop and rerun Reel</button>
                 </div>
             </div>
@@ -715,8 +719,16 @@ trait TechnoRapper_AI_Wire_Jobs {
     /**
      * Hard-stop the current background worker so Stop / Rerun works even while
      * a Reel is stuck waiting on Fal and still refreshing progress.
+     *
+     * @param array $args {
+     *   @type bool $delete_queue When true (default), remove active social/reel
+     *                            queue rows. When false, park them for Resume.
+     * }
      */
-    private function cancel_background_job($message = 'Stopped by administrator.') {
+    private function cancel_background_job($message = 'Stopped by administrator.', $args = array()) {
+        $args = wp_parse_args(is_array($args) ? $args : array(), array(
+            'delete_queue' => true,
+        ));
         $job = get_option(self::JOB_OPTION, array());
         $old_id = is_array($job) ? (string) ($job['id'] ?? '') : '';
         if ($old_id !== '') {
@@ -724,7 +736,11 @@ trait TechnoRapper_AI_Wire_Jobs {
         }
         delete_option(self::JOB_LOCK_OPTION);
         $this->stop_running_jobs($message);
-        $this->release_stuck_social_processing($message);
+        if (!empty($args['delete_queue'])) {
+            $this->delete_active_social_queue_rows();
+        } else {
+            $this->park_stuck_social_processing($message);
+        }
         if (!is_array($job)) {
             $job = array();
         }
@@ -733,12 +749,13 @@ trait TechnoRapper_AI_Wire_Jobs {
         $job['message'] = sanitize_text_field($message);
         $job['updated_at'] = time();
         $job['cancelled'] = 1;
-        $job['effect'] = '';
+        $job['effect'] = !empty($args['delete_queue']) ? 'reload' : '';
         update_option(self::JOB_OPTION, $job, false);
         return $job;
     }
 
-    private function release_stuck_social_processing($reason) {
+    /** Park processing rows so Resume can continue without paying finished steps again. */
+    private function park_stuck_social_processing($reason) {
         global $wpdb;
         $table = $wpdb->prefix . 'tr_ai_wire_social';
         if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
@@ -754,6 +771,70 @@ trait TechnoRapper_AI_Wire_Jobs {
             $msg,
             $now
         ));
+    }
+
+    /**
+     * Remove unfinished social/reel queue rows for a stopped job. Keeps published
+     * social posts and WordPress articles.
+     */
+    private function delete_active_social_queue_rows() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'tr_ai_wire_social';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+            return 0;
+        }
+        $rows = $wpdb->get_results(
+            "SELECT s.id, s.post_id, s.status
+             FROM {$table} s
+             WHERE s.status IN ('queued', 'processing')
+                OR (
+                    s.status = 'needs_review'
+                    AND EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} h
+                        WHERE h.post_id = s.post_id
+                          AND h.meta_key = '_tr_ai_wire_social_hold_reel'
+                          AND h.meta_value = '1'
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} m
+                        WHERE m.post_id = s.post_id
+                          AND m.meta_key = '_tr_ai_wire_social_mode'
+                          AND m.meta_value = 'reel'
+                    )
+                )",
+            ARRAY_A
+        );
+        $deleted = 0;
+        $seen_posts = array();
+        foreach ((array) $rows as $row) {
+            $id = (int) ($row['id'] ?? 0);
+            $post_id = (int) ($row['post_id'] ?? 0);
+            $status = sanitize_key((string) ($row['status'] ?? ''));
+            if ($id < 1) {
+                continue;
+            }
+            // Keep ordinary queued stills; only purge active work + held Reel builds.
+            if ($status === 'queued') {
+                $hold = $post_id > 0 ? (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true) : '';
+                $mode = $post_id > 0 ? (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true) : '';
+                if ($hold !== '1' && $mode !== 'reel') {
+                    continue;
+                }
+            }
+            if ($post_id > 0 && empty($seen_posts[$post_id])) {
+                $seen_posts[$post_id] = true;
+                delete_post_meta($post_id, '_tr_ai_wire_social_hold_reel');
+                delete_post_meta($post_id, '_tr_ai_wire_social_force_pack');
+                if ((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true) === 'reel') {
+                    $this->purge_social_reel_assets($post_id, array('keep_broll' => false, 'regen_script' => true));
+                    delete_post_meta($post_id, '_tr_ai_wire_social_mode');
+                }
+            }
+            if ($wpdb->delete($table, array('id' => $id), array('%d'))) {
+                $deleted++;
+            }
+        }
+        return $deleted;
     }
 
     private function background_job_was_cancelled() {

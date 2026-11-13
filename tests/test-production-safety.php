@@ -3319,7 +3319,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('Stopped by administrator.', $last['skipped']);
     }
 
-    public function test_cancel_background_job_stops_a_stuck_reel_worker() {
+    public function test_cancel_background_job_deletes_stuck_reel_from_queue() {
         $job_id = wp_generate_uuid4();
         update_option(TechnoRapper_AI_Wire::JOB_OPTION, array(
             'id' => $job_id,
@@ -3338,6 +3338,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $prop->setValue($this->plugin, $job_id);
         global $wpdb;
         $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Stuck Reel'));
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
         $now = current_time('mysql', true);
         $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
             'post_id' => $post_id,
@@ -3346,22 +3348,60 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'created_at' => $now,
             'updated_at' => $now,
         ), array('%d', '%s', '%s', '%s', '%s'));
-        $cancelled = $this->invoke_private('cancel_background_job', array('Stopped the stuck Reel job.'));
+        $cancelled = $this->invoke_private('cancel_background_job', array(
+            'Stopped the stuck Reel job.',
+            array('delete_queue' => true),
+        ));
         $this->assertSame('done', $cancelled['status']);
         $this->assertSame(1, (int) $cancelled['cancelled']);
         $this->assertSame($job_id, get_option(TechnoRapper_AI_Wire::JOB_CANCEL_OPTION));
         $this->assertFalse((bool) get_option(TechnoRapper_AI_Wire::JOB_LOCK_OPTION));
         $this->assertTrue($this->invoke_private('background_job_was_cancelled'));
         $this->assertFalse($this->invoke_private('note_background_progress', array(70, 'Still waiting')));
-        $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT status, error_text FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d",
+        $left = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d",
             $post_id
-        ), ARRAY_A);
-        $this->assertSame('needs_review', $row['status']);
-        $this->assertStringContainsString('Stopped the stuck Reel job', (string) $row['error_text']);
+        ));
+        $this->assertSame(0, $left);
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
+        $this->assertSame('publish', get_post_status($post_id));
         $replacement = $this->invoke_private('enqueue_background_job', array('social_pack', array('pack_kind' => 'reel'), true));
         $this->assertSame('queued', $replacement['status']);
         $this->assertNotSame($job_id, $replacement['id']);
+    }
+
+    public function test_now_queue_page_lists_live_website_and_social_rows() {
+        $website_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'pending'), array('id' => $website_id));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Live social wait'));
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        $now = current_time('mysql', true);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s'));
+        update_option(TechnoRapper_AI_Wire::JOB_OPTION, array(
+            'id' => wp_generate_uuid4(),
+            'kind' => 'social_pack',
+            'pack_kind' => 'reel',
+            'status' => 'running',
+            'percent' => 20,
+            'message' => 'Assemble teach cut',
+            'created_at' => time() - 40,
+            'updated_at' => time(),
+        ), false);
+        ob_start();
+        $this->plugin->now_queue_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Now in queue', $html);
+        $this->assertStringContainsString('Assemble teach cut', $html);
+        $this->assertStringContainsString('pending', $html);
+        $this->assertStringContainsString('Live social wait', $html);
+        $this->assertStringContainsString('Stop and delete from queue', $html);
     }
 
     public function test_delete_queue_item_removes_only_that_row() {
