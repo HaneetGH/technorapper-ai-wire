@@ -604,7 +604,11 @@ trait TechnoRapper_AI_Wire_SEO {
             }
         }
         foreach ($this->string_list($review['blocking_issues'] ?? array()) as $issue) {
-            $blocking[] = $issue;
+            if ($this->pre_publish_issue_is_hard($issue)) {
+                $blocking[] = $issue;
+            } else {
+                $warnings[] = $issue;
+            }
         }
         foreach ($this->string_list($review['warnings'] ?? array()) as $warning) {
             $warnings[] = $warning;
@@ -644,11 +648,17 @@ trait TechnoRapper_AI_Wire_SEO {
         $recommended = array_values(array_unique(array_filter(array_map('strval', $recommended))));
 
         $model_status = strtoupper(str_replace(array(' ', '-'), '_', (string) ($review['gate_status'] ?? '')));
+        // A bare reviewer gate_status=HOLD must not zero the day when local
+        // checks and hard blockers are clear. Soft model nits become warnings.
         $status = 'PUBLISH';
-        if ($blocking || $model_status === 'HOLD') {
+        if ($blocking) {
             $status = 'HOLD';
-        } elseif ($warnings || $model_status === 'PUBLISH_WITH_WARNINGS') {
+        } elseif ($warnings || $model_status === 'PUBLISH_WITH_WARNINGS' || $model_status === 'HOLD') {
             $status = 'PUBLISH WITH WARNINGS';
+            if ($model_status === 'HOLD' && !$blocking) {
+                $warnings[] = 'Reviewer marked HOLD without a hard blocker; publishing with warnings.';
+                $warnings = array_values(array_unique(array_filter(array_map('strval', $warnings))));
+            }
         }
         $seo_score = isset($review['seo_score']) ? (int) $review['seo_score'] : (int) ($rewrite['seo']['seo_score'] ?? 0);
         $editorial_score = isset($review['editorial_score']) ? (int) $review['editorial_score'] : (int) ($review['score'] ?? 0);
@@ -705,6 +715,21 @@ trait TechnoRapper_AI_Wire_SEO {
 
     private function pre_publish_gate_holds($gate) {
         return is_array($gate) && (($gate['status'] ?? '') === 'HOLD' || !empty($gate['blocking_issues']));
+    }
+
+    /**
+     * Only hard P0/P1 failures may HOLD auto-publish. Soft style/SEO nits from
+     * the reviewer become warnings so a conservative model cannot stop the day.
+     */
+    private function pre_publish_issue_is_hard($issue) {
+        $text = strtolower(trim(preg_replace('/\s+/', ' ', wp_strip_all_tags((string) $issue))));
+        if ($text === '') {
+            return false;
+        }
+        return (bool) preg_match(
+            '/clickbait|placeholder|empty heading|near-?duplicate|same-intent|cannibal|synonym-?spin|fabricat|invented|contradict|unsupported|missing (?:a )?(?:excerpt|meta|slug|primary topic|keyphrase|title)|title is missing|title is too vague|unclear title|no primary topic|policy|hate|self-harm|misstates the publication|source headline/',
+            $text
+        );
     }
 
     private function format_pre_publish_gate($gate) {

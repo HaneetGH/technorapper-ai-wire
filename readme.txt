@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.2
+Stable tag: 0.3.3
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.3 =
+* Website posts publish again when the reviewer marks a soft HOLD without a hard blocker. Fetch now also re-checks feeds, validates longer than ~6 stories per tick, and keeps filling Maximum posts per day.
 
 = 0.3.2 =
 * Website queue runs skip held stories and keep going until Maximum posts per day is filled. Failed rows no longer use up Maximum items per run or stop the Fetch now job.
@@ -261,6 +264,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.3 =
+Soft reviewer HOLDs no longer block website publish, and Fetch now keeps validating past the first handful of stories.
 
 = 0.3.2 =
 Fetch now keeps trying the next website story after holds, instead of stopping the job when the first few fail.

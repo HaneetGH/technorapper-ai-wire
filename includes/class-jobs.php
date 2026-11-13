@@ -396,38 +396,47 @@ trait TechnoRapper_AI_Wire_Jobs {
         try {
             if ($job['kind'] === 'fetch') {
                 if (function_exists('set_time_limit')) {
-                    set_time_limit(400);
+                    set_time_limit(900);
                 }
                 $this->note_background_progress(8, 'Fetching feeds');
                 $summary = $this->process_feeds(array('foreground' => true, 'reason' => 'manual'));
                 $rounds = 0;
-                while ($rounds < 12 && is_array($summary) && empty($summary['skipped'])) {
+                $idle_rounds = 0;
+                while ($rounds < 20 && is_array($summary) && empty($summary['skipped'])) {
                     $s = $this->settings();
                     if ($this->remaining_posts_today($s) <= 0) {
                         break;
                     }
                     $waiting = $this->next_pipeline_item_id();
-                    if ($waiting < 1) {
+                    $has_unfinished = false;
+                    if ($waiting > 0) {
+                        $row = $this->get_item($waiting);
+                        $has_unfinished = $this->pipeline_item_is_unfinished($row);
+                    }
+                    // Keep going even when the unfinished queue looks empty: the
+                    // next continue tick re-ingests feeds for more stories.
+                    if (!$has_unfinished && (int) ($summary['published'] ?? 0) + (int) ($summary['drafts'] ?? 0) > 0 && $idle_rounds >= 1) {
                         break;
                     }
-                    $row = $this->get_item($waiting);
-                    if (!$this->pipeline_item_is_unfinished($row)) {
+                    if (!$has_unfinished && $idle_rounds >= 2) {
                         break;
                     }
                     $rounds++;
-                    $this->note_background_progress(25 + min(60, $rounds * 5), 'Filling today\'s post cap');
+                    $this->note_background_progress(25 + min(60, $rounds * 3), 'Filling today\'s post cap');
                     $more = $this->process_feeds(array('foreground' => true, 'reason' => 'continue'));
                     if (!is_array($more)) {
                         break;
                     }
-                    foreach (array('processed', 'drafts', 'published', 'quarantined') as $key) {
+                    foreach (array('processed', 'drafts', 'published', 'quarantined', 'new_items', 'feeds_checked') as $key) {
                         $summary[$key] = (int) ($summary[$key] ?? 0) + (int) ($more[$key] ?? 0);
                     }
                     if (!empty($more['skipped'])) {
                         $summary['skipped'] = $more['skipped'];
                     }
-                    if ((int) ($more['processed'] ?? 0) < 1) {
-                        break;
+                    if ((int) ($more['processed'] ?? 0) < 1 && (int) ($more['new_items'] ?? 0) < 1) {
+                        $idle_rounds++;
+                    } else {
+                        $idle_rounds = 0;
                     }
                 }
                 $message = $this->background_fetch_message($summary);
