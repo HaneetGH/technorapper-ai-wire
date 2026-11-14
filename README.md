@@ -93,7 +93,7 @@ Automated WordPress integration tests now exercise selected critical paths. They
 3. Open **AI Wire** in wp-admin. This is the central configuration screen: enter the API key, choose the processing schedule, add feeds, set daily/monthly limits, choose models, and configure editorial and analytics options.
 4. Save the API key in the **OpenAI API connection** section. The key is stored separately in a non-autoloaded WordPress option, never shown again in the form, and can be replaced or removed there. A key supplied through `OPENAI_API_KEY` or `TR_AI_WIRE_OPENAI_API_KEY` in `wp-config.php` remains supported as a fallback. Dashboard key takes precedence.
 5. Save the remaining configuration using **Save settings**. Use **Fetch feeds and process queue now** to queue a background worker. The page stays open and a progress bar tracks fetch, rewrite, and review. Scheduled runs still use WP-Cron.
-6. Inspect **AI Wire → Queue & usage**. Passing items go live when **Auto-publish** is checked (the default). Uncheck it to keep drafts. **Retry** asks the reviewer again. **Force publish** on a held row with a written article goes live anyway (score, story-value, and pre-publish HOLD are skipped; profanity/moderation still apply). **Stop current run**, **Clear unfinished**, **Clean board**, and a row **Delete** stay on the page: long work shows the progress bar, and delete or clean updates the table in place. WordPress posts stay.
+6. Inspect **AI Wire → Queue & usage**. Passing items at or above the minimum review score go live when **Auto-publish** is checked (the default). A thin or low-demand label on that pass does not hold them. Uncheck Auto-publish to keep drafts. **Retry** asks the reviewer again. **Force publish** on a held row with a written article goes live anyway (score, story-value, and pre-publish HOLD are skipped; profanity/moderation still apply). Best-of, deal, coupon, and recap titles stay held unless the reviewer marks that people are searching for them. **Stop current run**, **Clear unfinished**, **Clean board**, and a row **Delete** stay on the page: long work shows the progress bar, and delete or clean updates the table in place. WordPress posts stay.
 
 ### Dashboard configuration reference
 
@@ -104,7 +104,8 @@ All day-to-day settings are available in one place under **AI Wire**:
 | OpenAI API key | Credential used for writer and reviewer requests; saved separately from ordinary settings |
 | Automatic processing schedule | Hourly, every 3, 6 or 12 hours, daily, or manual-only |
 | Feed tenants | Each RSS/Atom feed is onboarded as its own tenant in wp-admin. The plugin does not ship any feeds; add the URLs you want |
-| Maximum posts per day | Daily draft and auto-published post cap; `0` pauses creation |
+| Maximum posts per day | Daily cap of posts this plugin created today. Held stories do not use a slot. `0` pauses creation |
+| Hot topics | Phrases you type, one per line. A feed story that mentions one is written before the rest. Review still applies |
 | Maximum items per run | Caps the number of queued retries and new feed items processed in one scheduled/manual run (1–100) |
 | Monthly API budget | Local estimated USD spend ceiling; `0` stops AI calls |
 | Monthly token limit | This plugin's combined monthly input/output token ceiling. Separate from the OpenAI credit balance and project budget. Default is 200,000,000. `0` stops AI calls |

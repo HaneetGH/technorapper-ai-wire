@@ -1168,6 +1168,7 @@ trait TechnoRapper_AI_Wire_Publisher {
                 '_tr_ai_wire_voice' => $this->item_is_comic($item) ? 'comic' : 'straight',
                 '_tr_ai_wire_source_guid' => sanitize_text_field($item['source_guid']),
                 '_tr_ai_wire_queue_id' => (int) $id,
+                '_tr_ai_wire_created_gmt' => current_time('mysql', true),
                 '_tr_ai_wire_tenant_id' => $this->tenant_id_for_url($item['feed_url'] ?? ''),
                 '_tr_ai_wire_review' => wp_json_encode($review),
             ),

@@ -191,13 +191,12 @@ trait TechnoRapper_AI_Wire_AI {
         if ($notes === '') {
             return false;
         }
-        if (preg_match('/missing (?:a )?(?:keyphrase|takeaway|faq|h2)|source headline|mirrored|synonym-?spin|generic headline|thin section|paraphrase|unsupported|press blurb|restated|clone/', $notes)) {
+        if (preg_match('/missing (?:a )?(?:keyphrase|takeaway|faq|h2)|source headline|mirrored|synonym-?spin|generic headline|thin section|paraphrase|unsupported claim|press blurb|restated|clone/', $notes)) {
             return true;
         }
-        if (preg_match('/readability|transition word|sentence length|passive voice|style nit|nice-to-have|comma splice|hyphen|\bhumor\b|\bwry\b|\bwit\b|\bcomic\b|\bjoke/', $notes)) {
-            return false;
-        }
-        return true;
+        // A leftover note that is not one of those defects is not a reason to
+        // park a complete article under 90. Reviewers add harmless asides.
+        return false;
     }
 
     private function rewrite_missing_ranking_items($rewrite) {
@@ -218,7 +217,7 @@ trait TechnoRapper_AI_Wire_AI {
         return false;
     }
 
-    private function titles_are_near_duplicates($left, $right) {
+    private function titles_are_near_duplicates($left, $right, $minimum = 82) {
         $a = strtolower(preg_replace('/[^a-z0-9]+/', '', (string) $left));
         $b = strtolower(preg_replace('/[^a-z0-9]+/', '', (string) $right));
         if (strlen($a) < 8 || strlen($b) < 8) {
@@ -228,7 +227,11 @@ trait TechnoRapper_AI_Wire_AI {
             return true;
         }
         similar_text($a, $b, $percent);
-        return $percent >= 82;
+        $minimum = (float) $minimum;
+        if ($minimum < 50) {
+            $minimum = 82;
+        }
+        return $percent >= $minimum;
     }
 
     private function review_notes_text($review) {
@@ -350,7 +353,13 @@ trait TechnoRapper_AI_Wire_AI {
             $reasons[] = 'similarity_risk=' . $risk;
         }
         if (!empty($s['draft_require_grounded']) && $this->is_explicitly_false($review['pragmatism']['is_grounded'] ?? null)) {
-            $reasons[] = 'not grounded in the source';
+            $facts_clear = $this->flag_list_is_empty($review['fact_flags'] ?? null);
+            $score_clears = $score >= $min_score && ($verdict === 'pass' || (!empty($s['draft_allow_revise']) && $verdict === 'revise'));
+            // A pass at the dashboard minimum with an empty fact list is grounded.
+            // Models set is_grounded false on labeled analysis and then every post waits for Force publish.
+            if (!$facts_clear || !$score_clears) {
+                $reasons[] = 'not grounded in the source';
+            }
         }
         if (!empty($s['draft_require_useful']) && empty($review['pragmatism']['is_useful'])) {
             $reasons[] = 'not useful';
@@ -365,7 +374,12 @@ trait TechnoRapper_AI_Wire_AI {
             $reasons[] = 'fact flags';
         }
         $value = $this->story_value_model_reason($review['story_value'] ?? null);
-        if ($value !== '' && !$this->people_are_searching($review) && !($demand_post && $this->story_value_is_only_low_demand($review['story_value'] ?? null))) {
+        $score_clears = $score >= $min_score && ($verdict === 'pass' || (!empty($s['draft_allow_revise']) && $verdict === 'revise'));
+        // Story-value is a filter for items under the dashboard minimum.
+        // A pass that already cleared that score was being quarantined whenever
+        // the reviewer marked ordinary tech news as thin or low-demand, so
+        // nothing auto-published and every row needed Force publish.
+        if ($value !== '' && !$score_clears && !$this->people_are_searching($review) && !($demand_post && $this->story_value_is_only_low_demand($review['story_value'] ?? null))) {
             $reasons[] = $value;
         }
         return $reasons;
@@ -509,7 +523,17 @@ trait TechnoRapper_AI_Wire_AI {
             $words = array();
         }
         $concrete = preg_match('/\d|[$£€]|announc|launch|recall|acqui|releas|unveil|earnings|lawsuit|breach|price|\bships?\b|\bban(?:s|ned)?\b|\bversion\b|cve-|\bsues?\b|\bsuing\b|\bbuys?\b|\bbought\b|\bcuts?\b|\bdelays?\b|\bconfirms?\b|\bleaks?\b/i', $title . ' ' . $body);
-        if (count($words) < 35 && !$concrete) {
+        $significant = 0;
+        $stop = array('a', 'an', 'the', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'from', 'is', 'are', 'as', 'how', 'why', 'what', 'when', 'this', 'that', 'its', 'new');
+        foreach (preg_split('/\s+/', $title, -1, PREG_SPLIT_NO_EMPTY) as $word) {
+            $clean = strtolower(preg_replace('/[^a-z0-9]/', '', (string) $word));
+            if ($clean !== '' && strlen($clean) > 2 && !in_array($clean, $stop, true)) {
+                $significant++;
+            }
+        }
+        // RSS excerpts are often under 35 words. A named headline still goes to
+        // the writer. Only a vague short title with a short body is skipped.
+        if (count($words) < 35 && !$concrete && $significant < 3) {
             return 'Held: not worth publishing. The source is too thin to show a development readers would search for.';
         }
         return '';
@@ -898,15 +922,59 @@ trait TechnoRapper_AI_Wire_AI {
     }
 
     private function remaining_posts_today($s) {
-        global $wpdb;
         $limit = (int) $s['max_posts_per_day'];
         if ($limit <= 0) {
             return 0;
         }
-        $start = gmdate('Y-m-d 00:00:00');
-        $end = gmdate('Y-m-d 23:59:59');
-        $count = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->table} WHERE status IN ('draft', 'published') AND wp_post_id IS NOT NULL AND updated_at BETWEEN %s AND %s", $start, $end));
-        return max(0, $limit - $count);
+        return max(0, $limit - $this->posts_created_today_count($s));
+    }
+
+    /**
+     * Operator phrases. A story that mentions one is written before the rest.
+     * Matching does not skip review, and a hold still does not use a daily slot.
+     */
+    private function hot_topic_phrases($s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $parts = preg_split('/[\r\n,]+/', (string) ($s['hot_topics'] ?? ''));
+        $out = array();
+        foreach ((array) $parts as $part) {
+            $part = trim(wp_strip_all_tags((string) $part));
+            if (strlen($part) < 2 || strlen($part) > 80) {
+                continue;
+            }
+            $key = strtolower($part);
+            $out[$key] = $part;
+            if (count($out) >= 40) {
+                break;
+            }
+        }
+        return array_values($out);
+    }
+
+    private function sanitize_hot_topics($value) {
+        $lines = array();
+        foreach ($this->hot_topic_phrases(array('hot_topics' => (string) $value)) as $phrase) {
+            $lines[] = sanitize_text_field($phrase);
+        }
+        return implode("\n", $lines);
+    }
+
+    private function item_matches_hot_topic($item, $s = null) {
+        $phrases = $this->hot_topic_phrases($s);
+        if (!$phrases || !is_array($item)) {
+            return false;
+        }
+        $hay = strtolower(wp_strip_all_tags((string) ($item['source_title'] ?? '') . ' ' . (string) ($item['source_body'] ?? '')));
+        if ($hay === '' || $hay === ' ') {
+            return false;
+        }
+        foreach ($phrases as $phrase) {
+            $pattern = '/(?<![a-z0-9])' . preg_quote(strtolower($phrase), '/') . '(?![a-z0-9])/';
+            if (preg_match($pattern, $hay)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function comics_desk_daily_limit($s) {
@@ -930,40 +998,50 @@ trait TechnoRapper_AI_Wire_AI {
     }
 
     private function comics_desk_assigned_today($s = null) {
-        global $wpdb;
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
-        $urls = $this->comics_desk_feed_urls($s);
-        if (!$urls) {
-            return 0;
-        }
-        $start = gmdate('Y-m-d 00:00:00');
-        $end = gmdate('Y-m-d 23:59:59');
-        $placeholders = implode(',', array_fill(0, count($urls), '%s'));
-        $params = array_merge($urls, array($start, $end));
-        return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table}
-             WHERE status IN ('draft', 'published') AND wp_post_id IS NOT NULL
-               AND feed_url IN ({$placeholders})
-               AND updated_at BETWEEN %s AND %s",
-            $params
-        ));
+        return $this->count_plugin_posts_created_today($this->comics_desk_feed_urls($s));
     }
 
     private function posts_created_today_count($s = null) {
+        unset($s);
+        return $this->count_plugin_posts_created_today();
+    }
+
+    /**
+     * Posts this plugin inserted today. Held rows and later edits to an older
+     * post do not consume Maximum posts per day.
+     */
+    private function count_plugin_posts_created_today($feed_urls = null) {
         global $wpdb;
-        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
-        $limit = (int) ($s['max_posts_per_day'] ?? 0);
-        if ($limit <= 0) {
+        if (is_array($feed_urls) && !$feed_urls) {
             return 0;
         }
         $start = gmdate('Y-m-d 00:00:00');
         $end = gmdate('Y-m-d 23:59:59');
+        $params = array($start, $end, $start, $end);
+        $feed_sql = '';
+        if (is_array($feed_urls)) {
+            $feed_sql = ' AND q.feed_url IN (' . implode(',', array_fill(0, count($feed_urls), '%s')) . ')';
+            $params = array_merge($params, $feed_urls);
+        }
         return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table}
-             WHERE status IN ('draft', 'published') AND wp_post_id IS NOT NULL
-               AND updated_at BETWEEN %s AND %s",
-            $start,
-            $end
+            "SELECT COUNT(DISTINCT p.ID)
+             FROM {$wpdb->posts} p
+             INNER JOIN {$this->table} q ON q.wp_post_id = p.ID
+             WHERE q.status IN ('draft', 'published')
+               AND p.post_status IN ('publish', 'draft', 'pending', 'future', 'private')
+               AND p.post_type = 'post'
+               AND (
+                    p.post_date_gmt BETWEEN %s AND %s
+                    OR EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} c
+                        WHERE c.post_id = p.ID
+                          AND c.meta_key = '_tr_ai_wire_created_gmt'
+                          AND c.meta_value BETWEEN %s AND %s
+                    )
+               )
+               {$feed_sql}",
+            $params
         ));
     }
 

@@ -744,8 +744,11 @@ trait TechnoRapper_AI_Wire_SEO {
         if ($text === '') {
             return false;
         }
+        // Match a real failure, not a mention. "no policy issues", "unsupported
+        // as a style note", and "differs from the source headline" were matching
+        // and holding every auto-publish.
         return (bool) preg_match(
-            '/clickbait|placeholder|empty heading|near-?duplicate|same-intent|cannibal|synonym-?spin|fabricat|invented|contradict|unsupported|missing (?:a )?(?:excerpt|meta|slug|primary topic|keyphrase|title)|title is missing|title is too vague|unclear title|no primary topic|policy|hate|self-harm|misstates the publication|source headline/',
+            '/\b(?:clickbait|placeholder text|empty heading|near-?duplicate|same-intent article|cannibali[sz]|synonym-?spin of the source|fabricat\w*|invent(?:s|ed)? (?:a |an )?(?:quote|stat|fact|number|link)|contradicts the source|title is missing|title is too vague|unclear title|no primary topic|hate speech|self-harm|misstates the publication)\b/',
             $text
         );
     }
@@ -810,7 +813,9 @@ trait TechnoRapper_AI_Wire_SEO {
                 return $post;
             }
             $existing_intent = (string) get_post_meta($post->ID, '_tr_ai_wire_search_intent', true);
-            if ($search_intent !== '' && $existing_intent !== '' && $this->titles_are_near_duplicates($search_intent, $existing_intent)) {
+            // Search intents share boilerplate ("what changed and why it matters").
+            // Only an almost identical intent is the same story. Titles stay at 82.
+            if ($search_intent !== '' && $existing_intent !== '' && $this->titles_are_near_duplicates($search_intent, $existing_intent, 94)) {
                 return $post;
             }
         }

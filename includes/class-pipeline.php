@@ -71,6 +71,10 @@ trait TechnoRapper_AI_Wire_Pipeline {
     private function next_pipeline_item_id($exclude = array()) {
         $s = $this->settings();
         $tried = is_array($exclude) ? $exclude : array();
+        $hot_id = $this->next_hot_topic_item_id($tried, $s);
+        if ($hot_id > 0) {
+            return $hot_id;
+        }
         for ($i = 0; $i < 40; $i++) {
             $id = $this->next_pipeline_item_id_raw($tried);
             if ($id < 1) {
@@ -81,6 +85,55 @@ trait TechnoRapper_AI_Wire_Pipeline {
                 return $id;
             }
             $tried[$id] = true;
+        }
+        return 0;
+    }
+
+    /** Hot-topic stories go first. A hold is not in this set, so it does not block the rest. */
+    private function next_hot_topic_item_id($exclude, $s) {
+        $phrases = $this->hot_topic_phrases($s);
+        if (!$phrases) {
+            return 0;
+        }
+        global $wpdb;
+        $exclude_ids = array();
+        foreach ((array) $exclude as $key => $value) {
+            $id = is_int($key) && $key > 0 ? $key : (int) $value;
+            if ($id > 0) {
+                $exclude_ids[] = $id;
+            }
+        }
+        $exclude_ids = array_values(array_unique($exclude_ids));
+        $not_in = $exclude_ids ? ' AND id NOT IN (' . implode(',', array_map('intval', $exclude_ids)) . ')' : '';
+        $likes = array();
+        $params = array(current_time('mysql', true));
+        foreach ($phrases as $phrase) {
+            $like = '%' . $wpdb->esc_like($phrase) . '%';
+            $likes[] = '(source_title LIKE %s OR source_body LIKE %s)';
+            $params[] = $like;
+            $params[] = $like;
+        }
+        $ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT id FROM {$this->table}
+             WHERE (
+                (status IN ('pending', 'new', 'waiting_budget', 'generated', 'rewritten') AND (wp_post_id IS NULL OR wp_post_id = 0))
+                OR status = 'reviewed'
+                OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s))
+             )
+             AND (" . implode(' OR ', $likes) . ")
+             {$not_in}
+             ORDER BY id DESC
+             LIMIT 20",
+            $params
+        ));
+        foreach ((array) $ids as $id) {
+            $item = $this->get_item((int) $id);
+            if (!$this->item_matches_hot_topic($item, $s)) {
+                continue;
+            }
+            if ($this->lane_has_room_for_item($item, $s, $exclude)) {
+                return (int) $id;
+            }
         }
         return 0;
     }
@@ -161,8 +214,13 @@ trait TechnoRapper_AI_Wire_Pipeline {
         // Once that flag is true, this website posts it. A thin source with
         // nothing to search is still held before a model call.
         if ($value_hold !== '' && !$this->people_are_searching($review)) {
-            $awaiting_search_judgment = $review === null && $this->story_value_local_is_filler($item);
-            if (!$awaiting_search_judgment) {
+            $filler = $this->story_value_local_is_filler($item);
+            $awaiting_search_judgment = $review === null && $filler;
+            $stored_rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
+            // The thin-source check only skips a model call. Once an article
+            // exists, a short RSS excerpt must not quarantine it again.
+            $past_thin_filter = !$filler && $this->has_usable_rewrite($stored_rewrite);
+            if (!$past_thin_filter && !$awaiting_search_judgment) {
                 if ($status !== 'quarantined') {
                     $this->quarantine_item($id, $value_hold, $item);
                 }
@@ -248,15 +306,8 @@ trait TechnoRapper_AI_Wire_Pipeline {
                 $this->handle_stage_error($id, $review);
                 return;
             }
-            if (!is_array($review['story_value'] ?? null)) {
-                $review['story_value'] = array(
-                    'publish' => false,
-                    'substance' => 'thin',
-                    'reader_demand' => 'low',
-                    'adds_value' => false,
-                    'reason' => 'The reviewer did not say this story is worth publishing.',
-                );
-            }
+            // A missing story_value must not become a fake "thin" hold.
+            // story_value_model_reason() already ignores an absent object.
             if (!is_array($review['audience'] ?? null)) {
                 $review['audience'] = array(
                     'pop_culture_top' => false,

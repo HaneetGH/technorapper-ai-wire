@@ -2964,6 +2964,83 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
     }
 
+    public function test_daily_cap_ignores_holds_and_updates_to_older_posts() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['max_posts_per_day'] = 5;
+        $settings['auto_publish'] = 1;
+        $published_id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($published_id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-cap-live',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ), array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        ), array('verdict' => 'pass'), $settings));
+        $this->assertSame(4, $this->invoke_private('remaining_posts_today', array($settings)));
+
+        $held_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held for editorial review: verdict=reject',
+            'updated_at' => current_time('mysql', true),
+        ), array('id' => $held_id));
+        $this->assertSame(4, $this->invoke_private('remaining_posts_today', array($settings)));
+
+        $old_post = wp_insert_post(array(
+            'post_title' => 'Yesterday story',
+            'post_status' => 'publish',
+            'post_date' => '2026-11-13 12:00:00',
+            'post_date_gmt' => '2026-11-13 12:00:00',
+        ));
+        $old_id = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'published',
+            'wp_post_id' => (int) $old_post,
+            'updated_at' => current_time('mysql', true),
+        ), array('id' => $old_id));
+        $this->assertSame(4, $this->invoke_private('remaining_posts_today', array($settings)));
+    }
+
+    public function test_hot_topic_is_written_before_a_newer_story() {
+        $previous = get_option(TechnoRapper_AI_Wire::OPTION, array());
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'hot_topics' => "Justice League\nTMNT",
+            'max_posts_per_day' => 5,
+        )), false);
+        $newer_id = $this->create_queue_item();
+        $hot_id = $this->create_queue_item();
+        $decoy_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'source_title' => 'A quiet phone rumor',
+        ), array('id' => $newer_id));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'source_title' => 'DC Debuts Monstrous Redesign For Justice League Powerhouse',
+        ), array('id' => $hot_id));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'source_title' => 'The studio introduced a new camera',
+        ), array('id' => $decoy_id));
+        $this->assertGreaterThan($hot_id, $decoy_id);
+        $this->assertSame($hot_id, $this->invoke_private('next_pipeline_item_id'));
+        $this->assertTrue($this->invoke_private('item_matches_hot_topic', array($this->invoke_private('get_item', array($hot_id)))));
+        $this->assertFalse($this->invoke_private('item_matches_hot_topic', array(array(
+            'source_title' => 'The studio introduced a new camera',
+            'source_body' => 'A note about the camera.',
+        ), array('hot_topics' => 'DC'))));
+        $saved = $this->plugin->sanitize_settings(array('hot_topics' => "Marvel\n\nDC"));
+        $this->assertSame("Marvel\nDC", $saved['hot_topics']);
+        update_option(TechnoRapper_AI_Wire::OPTION, $previous, false);
+    }
+
     public function test_process_item_does_not_chain_review_in_one_step() {
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
         $id = $this->create_queue_item('new');
@@ -7927,6 +8004,36 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('tr_ai_wire_pack_reel_kit', $html);
     }
 
+    public function test_social_queue_offers_reel_zip_download_when_the_kit_exists() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Reel zip button',
+        ));
+        $kit = $this->create_reel_asset('reel-kit.zip', 'application/zip', str_repeat('z', 128));
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_reel_kit_id', $kit['id']);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Fal blocked fal-ai/ffmpeg-api.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Download reel zip', $html);
+        $this->assertStringContainsString('action=tr_ai_wire_download_kit', $html);
+        $this->assertStringNotContainsString('action=tr_ai_wire_download_reel&', $html);
+    }
+
     public function test_fal_ffmpeg_access_denied_is_endpoint_block_not_bad_key() {
         $err = $this->invoke_private('social_fal_endpoint_denied_error', array(
             'fal-ai/ffmpeg-api/images-to-video',
@@ -11462,11 +11569,61 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'reason' => 'No named change.',
         );
         $reasons = $this->invoke_private('review_draft_blockers', array($thin, $settings));
-        $this->assertNotEmpty($reasons);
-        $this->assertStringContainsString('too thin', implode(' ', $reasons));
+        $this->assertSame(array(), $reasons);
+        $below = $thin;
+        $below['score'] = 40;
+        $below_settings = $settings;
+        $below_settings['draft_min_score'] = 70;
+        $below_reasons = $this->invoke_private('review_draft_blockers', array($below, $below_settings));
+        $this->assertStringContainsString('too thin', implode(' ', $below_reasons));
+        $this->assertStringContainsString('score 40 < 70', implode(' ', $below_reasons));
         $older = $passing;
         unset($older['story_value']);
         $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($older, $settings)));
+    }
+
+    public function test_ordinary_review_note_does_not_block_a_90_lift() {
+        $review = $this->invoke_private('normalize_review_score', array(
+            $this->passing_review_for_score(86, array(
+                'issues' => array('Strong sourcing on the named launch.'),
+            )),
+            $this->complete_rewrite_for_score(),
+            array('source_title' => 'Apple announced the M5 chip'),
+        ));
+        $this->assertSame(90, (int) $review['score']);
+        $this->assertFalse($this->invoke_private('review_has_social_blocking_defect', array(
+            array('issues' => array('Clear attribution and a named product change.')),
+            $this->complete_rewrite_for_score(),
+            array('source_title' => 'Apple announced the M5 chip'),
+        )));
+    }
+
+    public function test_pre_publish_gate_ignores_soft_mentions_of_policy_and_headline() {
+        $gate = $this->invoke_private('evaluate_pre_publish_gate', array(
+            $this->complete_rewrite_for_score(),
+            $this->passing_review_for_score(90, array(
+                'gate_status' => 'HOLD',
+                'blocking_issues' => array(
+                    'No policy issues.',
+                    'The title differs from the source headline.',
+                    'Unsupported as a style preference only.',
+                ),
+            )),
+            array('source_title' => 'Apple announced the M5 chip'),
+            TechnoRapper_AI_Wire::defaults(),
+        ));
+        $this->assertNotSame('HOLD', $gate['status']);
+        $this->assertEmpty($gate['blocking_issues']);
+        $hard = $this->invoke_private('evaluate_pre_publish_gate', array(
+            $this->complete_rewrite_for_score(),
+            $this->passing_review_for_score(90, array(
+                'gate_status' => 'HOLD',
+                'blocking_issues' => array('This invents a quote from the CEO.'),
+            )),
+            array('source_title' => 'Completely different source headline about routers'),
+            TechnoRapper_AI_Wire::defaults(),
+        ));
+        $this->assertSame('HOLD', $hard['status']);
     }
 
     public function test_audience_demand_posts_website_story_under_score_and_seo_floors() {
@@ -11661,6 +11818,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'source_body' => 'Apple announced the M5 on March 4 for $999.',
         )));
         $this->assertSame('', $reason);
+        $named = $this->invoke_private('story_value_local_reason', array(array(
+            'source_title' => 'Pixel camera processing changes',
+            'source_body' => 'Google updated the Pixel camera pipeline.',
+        )));
+        $this->assertSame('', $named);
     }
 
     public function test_background_job_is_claimed_once_and_does_not_call_openai() {
