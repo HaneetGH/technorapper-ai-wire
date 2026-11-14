@@ -12171,6 +12171,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('social_quota', $this->invoke_private('error_kind', array('social', 'needs_review', 'Instagram publishing quota reached.')));
         $this->assertSame('social_reel', $this->invoke_private('error_kind', array('social', 'needs_review', 'Fal answered HTTP 502.')));
         $this->assertSame('social_token', $this->invoke_private('error_kind', array('social', 'needs_review', 'X rejected the token.')));
+        $this->assertSame('social_x_credits', $this->invoke_private('error_kind', array('social', 'needs_review', 'Your enrolled account does not have any credits to fulfill this request.')));
+        $this->assertSame('social_credits', $this->invoke_private('error_kind', array('social', 'needs_review', 'Social image generation is paused because its monthly image budget is exhausted.')));
 
         global $wpdb;
         $now = current_time('mysql', true);
