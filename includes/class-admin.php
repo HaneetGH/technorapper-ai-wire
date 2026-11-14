@@ -763,7 +763,7 @@ trait TechnoRapper_AI_Wire_Admin {
                     <?php if ($this->fal_api_key() === '' && ((int) ($s['social_reel_daily_limit'] ?? 0) > 0 || $this->social_ffmpeg_path() === '')) : ?>
                     <div class="notice notice-warning inline"><p>Reels need a Fal.ai API key to generate motion<?php echo $this->social_ffmpeg_path() === '' ? ' and to assemble the spoken MP4 (this host has no ffmpeg)' : ''; ?>. Until it is saved, Instagram Reel jobs will be held. The plugin will not Ken Burns the posters instead.</p></div>
                     <?php elseif ($this->social_ffmpeg_path() === '' && $this->fal_api_key() !== '') : ?>
-                    <div class="notice notice-info inline"><p>This WordPress host has no <code>ffmpeg</code>. That is expected: Fal generates the motion clip and assembles the spoken MP4. Click <strong>Generate Reel now</strong>, wait for Download video, then Post. A laptop kit appears only if Fal assembly fails.</p></div>
+                    <div class="notice notice-info inline"><p>This WordPress host has no <code>ffmpeg</code>. Fal usually assembles the spoken MP4. If Fal <code>ffmpeg-api</code> is blocked, use <strong>Prepare laptop kit</strong> / <strong>Download laptop kit (.zip)</strong> on the Social queue row, finish on your computer, then Upload Reel MP4.</p></div>
                     <?php endif; ?>
                     <p class="description">A Reel uses the current Writer model for the spoken script, GPT-4o Mini TTS for the voice, and the Fal models you selected. If this host has no ffmpeg, Fal also muxes the edit. One article only. Mini TTS about $0.004. Avatar Pro and face enhance are optional upsells on the video budget.</p>
                     </div>

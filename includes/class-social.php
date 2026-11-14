@@ -5097,6 +5097,46 @@ trait TechnoRapper_AI_Wire_Social {
         exit;
     }
 
+    public function pack_social_reel_kit() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to prepare a Reel kit.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_POST['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_pack_reel_kit_' . $id);
+        global $wpdb;
+        $row = $id > 0 ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A) : null;
+        $post_id = (int) ($row['post_id'] ?? 0);
+        $post = $post_id > 0 ? get_post($post_id) : null;
+        if (!$row || !$post instanceof WP_Post || !$this->social_row_holds_reel_for_review($row)) {
+            wp_die(esc_html__('That Reel row is not available for a laptop kit.', 'technorapper-ai-wire'));
+        }
+        $settings = $this->social_reel_effective_settings($this->settings());
+        $copy = json_decode((string) get_post_meta($post_id, '_tr_ai_wire_social_copy', true), true);
+        $copy = is_array($copy) ? $copy : array();
+        $script = (string) ($copy['reel_script'] ?? '');
+        $plan = $this->social_reel_plan($settings);
+        $broll_id = $this->social_broll_id($post_id);
+        $broll_path = $broll_id > 0 ? (string) get_attached_file($broll_id) : '';
+        if ($broll_path === '' || !file_exists($broll_path)) {
+            wp_die(esc_html__('A B-roll still is required before packing the laptop kit. Click Resume once first.', 'technorapper-ai-wire'));
+        }
+        $parts = $this->social_reel_gather($post, $settings, $copy, $broll_path, $plan, $script);
+        if (is_wp_error($parts)) {
+            wp_die(esc_html($parts->get_error_message()));
+        }
+        $photo = file_get_contents($broll_path);
+        if (!is_string($photo) || $photo === '') {
+            wp_die(esc_html__('The B-roll still could not be read for the laptop kit.', 'technorapper-ai-wire'));
+        }
+        $end_caption = (string) ($copy['cta'] ?? ('Full story on ' . self::site_brand_name()));
+        $kit = $this->social_reel_pack_laptop_kit_fallback($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
+        if (is_wp_error($kit)) {
+            wp_die(esc_html($kit->get_error_message()));
+        }
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&reel_kit=1'));
+        exit;
+    }
+
     public function upload_social_reel() {
         if (!current_user_can('manage_options')) {
             wp_die(esc_html__('You are not allowed to upload a Reel.', 'technorapper-ai-wire'));
@@ -5237,11 +5277,16 @@ trait TechnoRapper_AI_Wire_Social {
         if ($this->social_reel_preview_id($post->ID) > 0) {
             return;
         }
+        $kit_id = (int) $this->social_reel_kit_id($post->ID);
+        $kit_url = $kit_id > 0 ? wp_get_attachment_url($kit_id) : '';
+        if ($kit_url) {
+            echo '<p style="margin:10px 0;"><a class="button button-primary" href="' . esc_url($kit_url) . '" download>Download laptop kit (.zip)</a></p>';
+            echo '<p class="description">Unzip on your computer, run <code>make-reel.bat</code> (Windows) or <code>bash make-reel.sh</code> (Mac), then upload <code>reel.mp4</code> below.</p>';
+        }
         $parts = array(
             'talking host clip' => $this->social_host_id($post->ID),
             'B-roll accent (silent)' => $this->social_motion_id($post->ID),
             'voice MP3' => $this->social_voice_id($post->ID),
-            'kit zip' => $this->social_reel_kit_id($post->ID),
         );
         $links = array();
         foreach ($parts as $label => $attachment_id) {
@@ -5252,6 +5297,24 @@ trait TechnoRapper_AI_Wire_Social {
         }
         if ($links) {
             echo '<p class="description">Saved pieces: ' . implode(' · ', $links) . '</p>';
+        }
+        $id = (int) ($row['id'] ?? 0);
+        $status = sanitize_key((string) ($row['status'] ?? ''));
+        if (
+            !$kit_url
+            && $id > 0
+            && $this->social_voice_id($post->ID) > 0
+            && in_array($status, array('queued', 'processing', 'needs_review'), true)
+            && $this->social_row_holds_reel_for_review($row)
+            && !$this->social_reel_row_is_live($row)
+        ) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin:8px 0;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_pack_reel_kit">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+            wp_nonce_field('tr_ai_wire_pack_reel_kit_' . $id);
+            echo '<button class="button button-secondary">Prepare laptop kit (.zip)</button>';
+            echo '<p class="description">Packs voice + lesson-card stills so you can finish the Reel on your computer when Fal ffmpeg-api is blocked.</p>';
+            echo '</form>';
         }
     }
 
@@ -6072,6 +6135,7 @@ trait TechnoRapper_AI_Wire_Social {
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. ' . $this->instagram_still_spacing_copy()); ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['job_stopped'])) : ?><div class="notice notice-warning is-dismissible"><p>Background job stopped and the stuck Reel/social rows were removed from the queue. WordPress posts stay. Open <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-now')); ?>">Now in queue</a> or Generate Reel now.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
+            <?php if (!empty($_GET['reel_kit'])) : ?><div class="notice notice-success is-dismissible"><p>Laptop kit packed. Click <strong>Download laptop kit (.zip)</strong> on the Reel row, run make-reel on your computer, then Upload Reel MP4.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_deleted'])) : ?><div class="notice notice-warning is-dismissible"><p>That Reel was removed from the social queue. The WordPress article stays. Generate Reel now if you want a new one.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_script_regen'])) : ?><div class="notice notice-info is-dismissible"><p>Generating a new teach script. Older Reel video/voice files for that row were deleted. This page updates itself while it rebuilds.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use no talking face + Veo Lite 4s hooks. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>

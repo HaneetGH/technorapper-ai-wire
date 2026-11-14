@@ -7777,6 +7777,46 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('pre_http_request');
     }
 
+    public function test_social_queue_shows_prepare_laptop_kit_when_kit_missing() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Laptop kit button',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        $voice = wp_upload_bits('technorapper-voice-' . wp_generate_uuid4() . '.mp3', null, str_repeat('a', 2048));
+        if (!empty($voice['error'])) {
+            $this->markTestSkipped('Uploads are required for the laptop kit button.');
+        }
+        $voice_id = wp_insert_attachment(array(
+            'post_mime_type' => 'audio/mpeg',
+            'post_title' => 'Voice',
+            'post_status' => 'inherit',
+        ), $voice['file'], $post_id, true);
+        if (is_wp_error($voice_id) || (int) $voice_id < 1) {
+            $this->markTestSkipped('Uploads are required for the laptop kit button.');
+        }
+        update_post_meta($post_id, '_tr_ai_wire_social_voice_id', (int) $voice_id);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Fal blocked fal-ai/ffmpeg-api.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Prepare laptop kit (.zip)', $html);
+        $this->assertStringContainsString('tr_ai_wire_pack_reel_kit', $html);
+    }
+
     public function test_fal_ffmpeg_access_denied_is_endpoint_block_not_bad_key() {
         $err = $this->invoke_private('social_fal_endpoint_denied_error', array(
             'fal-ai/ffmpeg-api/images-to-video',

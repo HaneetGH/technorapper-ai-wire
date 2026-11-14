@@ -3084,7 +3084,18 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'payload' => $payload,
             'store' => $store,
         ));
-        if (!is_wp_error($result) || $result->get_error_code() !== 'tr_ai_wire_reel_video_failed') {
+        if (!is_wp_error($result)) {
+            return $result;
+        }
+        $code = $result->get_error_code();
+        if ($code === 'tr_ai_wire_reel_fal_endpoint') {
+            $this->store_social_reel_laptop_kit($post, $this->social_reel_kit_files($teach), $audio_seconds, $copy, $this->social_reel_kit_slots($teach));
+            return new WP_Error(
+                'tr_ai_wire_reel_fal_endpoint',
+                $result->get_error_message() . ' A laptop kit zip is ready on this row — download it, run make-reel on your computer, then Upload Reel MP4.'
+            );
+        }
+        if ($code !== 'tr_ai_wire_reel_video_failed') {
             return $result;
         }
         if ($teach['use_sting']) {
@@ -3094,7 +3105,57 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $this->store_social_reel_laptop_kit($post, $this->social_reel_kit_files($teach), $audio_seconds, $copy, $this->social_reel_kit_slots($teach));
         return new WP_Error(
             'tr_ai_wire_reel_mux',
-            $result->get_error_message() . ' Your voiceover, lesson cards, and clips are saved on this row, so Resume only retries the assembly and does not pay for them again.'
+            $result->get_error_message() . ' A laptop kit zip is ready on this row — download it, run make-reel on your computer, then Upload Reel MP4. Resume only retries Fal assembly.'
+        );
+    }
+
+    /**
+     * Pack a laptop kit from still cards + voice (no Fal ffmpeg bake). Used when
+     * fal-ai/ffmpeg-api is blocked so shared hosts can finish the Reel offline.
+     */
+    private function social_reel_pack_laptop_kit_fallback($post, $settings, $copy, $script, $plan, $parts, $photo_bytes, $end_caption) {
+        unset($script);
+        $teach = $this->social_reel_teach_cut($post, $settings, $copy, $plan, $parts, $photo_bytes, $end_caption, false);
+        if (is_wp_error($teach)) {
+            return $teach;
+        }
+        $stored = $this->store_social_reel_laptop_kit(
+            $post,
+            $this->social_reel_kit_files($teach),
+            (float) ($teach['audio'] ?? 0),
+            $copy,
+            $this->social_reel_kit_slots($teach)
+        );
+        if (is_wp_error($stored)) {
+            return $stored;
+        }
+        return (int) $this->social_reel_kit_id($post->ID);
+    }
+
+    private function social_reel_note_fal_endpoint_with_kit($error, $post, $settings, $copy, $script, $plan, $parts, $photo_bytes, $end_caption) {
+        if (!is_wp_error($error) || $error->get_error_code() !== 'tr_ai_wire_reel_fal_endpoint') {
+            return $error;
+        }
+        $msg = $error->get_error_message();
+        if ($this->social_reel_kit_id($post->ID) > 0) {
+            if (stripos($msg, 'laptop kit') !== false) {
+                return $error;
+            }
+            return new WP_Error(
+                'tr_ai_wire_reel_fal_endpoint',
+                $msg . ' Download the laptop kit (.zip) on this row, run make-reel on your computer, then Upload Reel MP4.'
+            );
+        }
+        $kit = $this->social_reel_pack_laptop_kit_fallback($post, $settings, $copy, $script, $plan, $parts, $photo_bytes, $end_caption);
+        if (is_wp_error($kit) || (int) $kit < 1) {
+            return new WP_Error(
+                'tr_ai_wire_reel_fal_endpoint',
+                $msg . ' Could not pack a laptop kit yet — click Prepare laptop kit on this row once voiceover is ready.'
+            );
+        }
+        return new WP_Error(
+            'tr_ai_wire_reel_fal_endpoint',
+            $msg . ' Download the laptop kit (.zip) on this row, run make-reel on your computer, then Upload Reel MP4.'
         );
     }
 
@@ -3424,7 +3485,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $end_caption = (string) ($copy['cta'] ?? ('Full story on ' . self::site_brand_name()));
         if (!$plan['local']) {
             $this->social_reel_progress_note($post->ID, 'Assembling a lesson-card Reel at Fal: cards first, short B-roll accents only.');
-            return $this->social_reel_assemble_with_fal($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
+            $assembled = $this->social_reel_assemble_with_fal($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
+            return $this->social_reel_note_fal_endpoint_with_kit($assembled, $post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
         }
         return $this->social_reel_assemble_locally($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
     }
@@ -3530,7 +3592,8 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $note = 'Assembling a story Reel at Fal: cold-open lesson card, short host hook, then lesson cards.';
         }
         $this->social_reel_progress_note($post->ID, $note);
-        return $this->social_reel_assemble_with_fal($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
+        $assembled = $this->social_reel_assemble_with_fal($post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
+        return $this->social_reel_note_fal_endpoint_with_kit($assembled, $post, $settings, $copy, $script, $plan, $parts, $photo, $end_caption);
     }
 
     private function generate_social_reel_host($post, $settings, $copy, $voice, $submit_only = false) {

@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.10
+Stable tag: 0.3.11
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.11 =
+* When Fal blocks ffmpeg-api, Social queue packs a laptop kit and shows Download laptop kit (.zip) / Prepare laptop kit so Reels can finish on a computer without a VPS.
 
 = 0.3.10 =
 * Fal ffmpeg-api "Access denied" is called out as an account entitlement block (a new API key will not fix it) with a local-ffmpeg workaround.
@@ -286,6 +289,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.11 =
+Stuck Reels get a clear Download laptop kit (.zip) button when Fal ffmpeg-api is blocked.
 
 = 0.3.10 =
 Clearer error when Fal blocks ffmpeg-api on the account; install local ffmpeg or ask Fal to enable it.
