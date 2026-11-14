@@ -3046,6 +3046,26 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         }
         $costume = $this->invoke_private('policy_guard_text', array("Wolverine's sexy costume is the goriest thing on screen", 'article', null, $comics));
         $this->assertTrue($costume);
+        $tech = array(
+            'feed_name' => 'TechCrunch',
+            'source_title' => 'A chip startup raises a new round',
+        );
+        $tech_blocked = array(
+            'Startup ships an AI porn model for phones',
+            'CES booth shows a robot sex toy with a new chip',
+            'The image lab released an NSFW AI generator',
+            'A gadget maker is selling an adult toy with Bluetooth',
+        );
+        foreach ($tech_blocked as $text) {
+            $held = $this->invoke_private('policy_guard_text', array($text, 'article', array('_admin_force_publish' => 1), $tech));
+            $this->assertInstanceOf('WP_Error', $held, $text);
+            $this->assertStringContainsString('sexual-content wall', $held->get_error_message(), $text);
+        }
+        $chip = $this->invoke_private('policy_guard_text', array('A chip vendor described a violent market selloff.', 'article', null, $tech));
+        $this->assertInstanceOf('WP_Error', $chip);
+        $this->assertStringContainsString('violence', $chip->get_error_message());
+        $film = $this->invoke_private('policy_guard_text', array('The second hour of the film is one long battle.', 'article', null, $tech));
+        $this->assertTrue($film);
 
         remove_all_filters('tr_ai_wire_moderation_result');
         add_filter('tr_ai_wire_moderation_result', function () {

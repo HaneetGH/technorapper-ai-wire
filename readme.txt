@@ -57,7 +57,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.3.26 =
-* Fictional violence in a comic, film, series, or game is entertainment coverage and is posted. Real-world violence, sexual content, hate, and self-harm still hold the article and the social caption. Pornography, AI porn, hentai, and sex products stay held on every desk, including Force publish.
+* Fictional violence in a comic, film, series, or game is entertainment coverage and is posted, whichever desk the story is on. Real-world violence, sexual content, hate, and self-harm still hold the article and the social caption. Pornography, AI porn, hentai, and sex products stay held on tech, comics, and every other feed, including Force publish.
 
 = 0.3.25 =
 * Force publish posts an article that OpenAI Moderation held, including a violence flag. The profanity/slur list still holds that article.

@@ -1306,10 +1306,10 @@ trait TechnoRapper_AI_Wire_AI {
     }
 
     /**
-     * Entertainment desks publish a fight, costume, or monster in a comic,
-     * film, series, or game. That is fictional violence. Real-world violence
-     * stays held. Pornography, sex products, and every sexual Moderation
-     * category stay held even when the desk is comics.
+     * A fight, costume, or monster in a comic, film, series, or game is
+     * fictional violence on any desk. Real-world violence stays held.
+     * Pornography, sex products, and every sexual Moderation category stay
+     * held on tech, comics, and every other feed.
      */
     private function policy_fictional_violence_allowed($text, $categories, $subject = null) {
         if (!$this->policy_categories_are_fictional_violence($categories)) {
@@ -1372,6 +1372,8 @@ trait TechnoRapper_AI_Wire_AI {
             '/\b(?:nudify|deepfake\s+nudes?|ai\s+nudes?)\b/',
             '/\bsex\s*toys?\b/',
             '/\bsex\s*(?:robots?|dolls?|bots?)\b/',
+            '/\badult\s+(?:toys?|robots?|dolls?)\b/',
+            '/\bnsfw\s+(?:ai|models?|generators?|images?|videos?)\b/',
             '/\bonly\s*fans\b/',
         );
         foreach ($blobs as $blob) {
