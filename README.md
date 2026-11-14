@@ -122,6 +122,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 | When to create a draft | Minimum review score, pass vs pass+revise, similarity cap, and grounded/useful/new/flag gates. A story marked as top pop-culture news, or as something everyone is searching for, still posts to the website under the review-score minimum |
 | After rewrite: SEO tests | Minimum SEO score, max readability errors, and required focus keyphrase / social markup. The plugin fills Rank Math, Yoast and AIOSEO fields on the draft. That same pop-culture or widespread-search layer also posts under the SEO-score minimum. A missing keyphrase or social title still holds |
 | Scores | Average review and SEO scores for drafts/published items, graphed by day, week, or month |
+| Errors | Open post-publish and social failures, graphed by type so the most common error is obvious |
 | Queue controls | Stop the current run, delete one item, clear unfinished items, or clean the whole board |
 
 The API-key section has its own save action so the secret is not included in the ordinary WordPress settings payload. The other configuration values are saved together with **Save settings**.
