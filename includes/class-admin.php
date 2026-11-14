@@ -25,6 +25,15 @@ trait TechnoRapper_AI_Wire_Admin {
         $job = is_array($job) ? $job : array();
         $job_status = (string) ($job['status'] ?? '');
         $job_busy = in_array($job_status, array('queued', 'running'), true);
+        // Finished job cards used to sit for hours with a stale "building" message.
+        if (!$job_busy && in_array($job_status, array('done', 'error'), true)) {
+            $finished_age = time() - (int) ($job['updated_at'] ?? ($job['created_at'] ?? 0));
+            if ($finished_age > 900) {
+                delete_option(self::JOB_OPTION);
+                $job = array();
+                $job_status = '';
+            }
+        }
         $website = $wpdb->get_results(
             "SELECT id, status, feed_name, source_title, source_url, error_text, updated_at
              FROM {$this->table}

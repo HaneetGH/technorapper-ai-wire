@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.6
+Stable tag: 0.3.7
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,10 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.7 =
+* Fal assemble no longer treats a failed COMPLETED job or a 403/404 result as an endless hiccup. The dead request is cleared so Resume only recharges the last step.
+* Held Reel rows stop auto-requeuing after 45 minutes without a finished MP4. Stale finished background-job cards age out of Now in queue.
 
 = 0.3.6 =
 * Stop and delete from queue removes only the Reel currently processing, not every Reel waiting in the social queue.
@@ -273,6 +277,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.7 =
+Fal result 403/404 and long stuck Reel builds now stop cleanly so Resume can finish the last step without grinding for hours.
 
 = 0.3.6 =
 Stop and delete from queue only drops the stuck processing Reel; other queued Reels stay.
