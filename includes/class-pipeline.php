@@ -400,7 +400,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $rewrite = $this->prepare_rewrite_seo($rewrite);
-        $guard = $this->policy_guard_rewrite($rewrite);
+        $guard = $this->policy_guard_rewrite($rewrite, $s, $item);
         if (is_wp_error($guard)) {
             if ($guard->get_error_code() === 'tr_ai_wire_policy_unavailable') {
                 $this->handle_stage_error($id, $guard);
@@ -444,12 +444,20 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $rewrite = $this->prepare_rewrite_seo($rewrite);
-        if ($this->review_draft_blockers($review, $s) || $this->rewrite_seo_blockers($rewrite, $s, $review)) {
+        if ($this->review_draft_blockers($review, $s)) {
             return;
         }
-        $gate = $this->evaluate_pre_publish_gate($rewrite, $review, $item, $s);
-        if ($this->pre_publish_gate_holds($gate) && $this->mapped_post_status($s) === 'publish') {
+        // A stored OpenAI violence hold is rechecked. Fictional comic, film,
+        // and game violence can now publish instead of keeping the old message.
+        $violence_hold = (bool) preg_match('/openai moderation \([^)]*\bviolence/i', (string) ($item['error_text'] ?? ''));
+        if (!$violence_hold && $this->rewrite_seo_blockers($rewrite, $s, $review)) {
             return;
+        }
+        if (!$violence_hold) {
+            $gate = $this->evaluate_pre_publish_gate($rewrite, $review, $item, $s);
+            if ($this->pre_publish_gate_holds($gate) && $this->mapped_post_status($s) === 'publish') {
+                return;
+            }
         }
         $this->pipeline_publish($id, $item, $s);
     }

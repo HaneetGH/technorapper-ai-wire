@@ -2936,6 +2936,151 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
     }
 
+    public function test_fictional_comic_violence_is_posted_and_real_world_violence_holds() {
+        remove_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10);
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('violence' => true, 'violence/graphic' => true));
+        });
+        $captain = 'Captain America Makes Doctor Doom More Dangerous Than Ever Before Avengers: Doomsday';
+        $wolverine = "X-Men: Wolverine's Zombified Costume Is The Goriest Thing You'll See Today";
+        $godzilla = 'Godzilla Finally Has a New Rival Who Could Destroy the King of the Monsters';
+        $this->assertTrue($this->invoke_private('policy_guard_text', array($captain, 'article')));
+        $this->assertTrue($this->invoke_private('policy_guard_text', array($wolverine, 'article')));
+        $this->assertTrue($this->invoke_private('policy_guard_text', array($godzilla, 'article')));
+        $comics = array('feed_name' => 'SuperHeroHype Comics');
+        $this->assertTrue($this->invoke_private('policy_guard_text', array('The rival is more dangerous than before.', 'article', null, $comics)));
+        $real = $this->invoke_private('policy_guard_text', array('Police said the suspect was shot and killed outside the comics shop.', 'article', null, $comics));
+        $this->assertInstanceOf('WP_Error', $real);
+        $this->assertStringContainsString('violence', $real->get_error_message());
+        $tech = $this->invoke_private('policy_guard_text', array('A chip vendor described a violent market selloff.', 'article'));
+        $this->assertInstanceOf('WP_Error', $tech);
+        $swearing = $this->invoke_private('policy_guard_text', array("Wolverine's costume is bullshit", 'article'));
+        $this->assertInstanceOf('WP_Error', $swearing);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => $wolverine,
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_desk_lane', 'comics');
+        $social = $this->invoke_private('policy_guard_social_copy', array(array(
+            'x' => "Wolverine's zombified costume is the goriest thing on screen",
+            'instagram' => 'A Marvel costume reveal',
+        ), get_post($post_id)));
+        $this->assertTrue($social);
+
+        remove_all_filters('tr_ai_wire_moderation_result');
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('hate' => true, 'violence' => true));
+        });
+        $hate = $this->invoke_private('policy_guard_text', array($captain, 'article', null, $comics));
+        $this->assertInstanceOf('WP_Error', $hate);
+        $this->assertStringContainsString('hate', $hate->get_error_message());
+        remove_all_filters('tr_ai_wire_moderation_result');
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('sexual/minors' => true));
+        });
+        $minors = $this->invoke_private('policy_guard_text', array($captain, 'article', null, $comics));
+        $this->assertInstanceOf('WP_Error', $minors);
+
+        remove_all_filters('tr_ai_wire_moderation_result');
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('violence' => true, 'violence/graphic' => true));
+        });
+        $id = $this->create_queue_item('quarantined');
+        global $wpdb;
+        $rewrite = array(
+            'title' => 'Doctor Doom raises the stakes before the next Avengers film',
+            'lede' => 'Marvel is positioning Doctor Doom as a bigger on-screen threat.',
+            'body_html' => '<p>Marvel is positioning Doctor Doom as a bigger on-screen threat in the film, and the costume footage is part of that fictional fight.</p>',
+            'meta_description' => 'Marvel is positioning Doctor Doom as a bigger on-screen threat ahead of the next Avengers film, and the footage stays inside the story.',
+            'slug' => 'doctor-doom-avengers-film-stakes',
+            'focus_keyphrase' => 'Doctor Doom',
+            'social_title' => 'Doctor Doom before the next Avengers film',
+            'social_description' => 'A fictional Marvel fight gets a bigger villain ahead of the next Avengers film.',
+        );
+        $review = array(
+            'verdict' => 'pass',
+            'score' => 90,
+            'policy_flags' => array(),
+            'fact_flags' => array(),
+            'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low', 'is_useful' => true, 'is_new' => true),
+        );
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'feed_name' => 'SuperHeroHype Comics',
+            'source_title' => $captain,
+            'error_text' => 'Held: article failed OpenAI Moderation (violence, violence/graphic). Nothing was posted. Edit or regenerate, then retry.',
+            'rewrite_json' => wp_json_encode($rewrite),
+            'review_json' => wp_json_encode($review),
+        ), array('id' => $id));
+        $item = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['seo_min_score'] = 0;
+        $settings['seo_require_keyphrase'] = 0;
+        $settings['seo_require_social'] = 0;
+        $this->invoke_private('pipeline_republish_if_clear', array($id, $item, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status'], (string) $row['error_text']);
+        $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
+    }
+
+    public function test_sexual_content_wall_holds_porn_and_sex_products_on_the_comics_desk() {
+        remove_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10);
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('violence' => true));
+        });
+        $comics = array(
+            'feed_name' => 'SuperHeroHype Comics',
+            'source_title' => 'Avengers: Doomsday',
+        );
+        $blocked = array(
+            'A new AI porn model is making the rounds',
+            'This robot sex toy ships next month',
+            'Hentai app adds a new fight scene',
+            'The film shows a sex doll in the comic shop',
+            'A site is selling p.o.r.n of a comic character',
+        );
+        foreach ($blocked as $text) {
+            $held = $this->invoke_private('policy_guard_text', array($text, 'article', array('_admin_force_publish' => 1), $comics));
+            $this->assertInstanceOf('WP_Error', $held, $text);
+            $this->assertStringContainsString('sexual-content wall', $held->get_error_message(), $text);
+        }
+        $costume = $this->invoke_private('policy_guard_text', array("Wolverine's sexy costume is the goriest thing on screen", 'article', null, $comics));
+        $this->assertTrue($costume);
+        $tech = array(
+            'feed_name' => 'TechCrunch',
+            'source_title' => 'A chip startup raises a new round',
+        );
+        $tech_blocked = array(
+            'Startup ships an AI porn model for phones',
+            'CES booth shows a robot sex toy with a new chip',
+            'The image lab released an NSFW AI generator',
+            'A gadget maker is selling an adult toy with Bluetooth',
+        );
+        foreach ($tech_blocked as $text) {
+            $held = $this->invoke_private('policy_guard_text', array($text, 'article', array('_admin_force_publish' => 1), $tech));
+            $this->assertInstanceOf('WP_Error', $held, $text);
+            $this->assertStringContainsString('sexual-content wall', $held->get_error_message(), $text);
+        }
+        $chip = $this->invoke_private('policy_guard_text', array('A chip vendor described a violent market selloff.', 'article', null, $tech));
+        $this->assertInstanceOf('WP_Error', $chip);
+        $this->assertStringContainsString('violence', $chip->get_error_message());
+        $film = $this->invoke_private('policy_guard_text', array('The second hour of the film is one long battle.', 'article', null, $tech));
+        $this->assertTrue($film);
+
+        remove_all_filters('tr_ai_wire_moderation_result');
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('sexual' => true));
+        });
+        $flagged = $this->invoke_private('policy_guard_text', array(
+            'Captain America Makes Doctor Doom More Dangerous Than Ever Before Avengers: Doomsday',
+            'article',
+            array('_admin_force_publish' => 1),
+            $comics,
+        ));
+        $this->assertInstanceOf('WP_Error', $flagged);
+        $this->assertStringContainsString('sexual', $flagged->get_error_message());
+    }
+
     public function test_admin_force_publish_without_a_rewrite_stays_held() {
         $id = $this->create_queue_item();
         global $wpdb;

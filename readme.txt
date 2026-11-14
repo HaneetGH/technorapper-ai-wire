@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.25
+Stable tag: 0.3.26
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.26 =
+* Fictional violence in a comic, film, series, or game is entertainment coverage and is posted, whichever desk the story is on. Real-world violence, sexual content, hate, and self-harm still hold the article and the social caption. Pornography, AI porn, hentai, and sex products stay held on tech, comics, and every other feed, including Force publish.
 
 = 0.3.25 =
 * Force publish posts an article that OpenAI Moderation held, including a violence flag. The profanity/slur list still holds that article.
@@ -337,6 +340,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.26 =
+Comic, film, and game fights are no longer held as real-world violence. Pornography and sex products still hold.
 
 = 0.3.25 =
 Force publish posts an article held by OpenAI Moderation. A profanity/slur hit still holds it.
