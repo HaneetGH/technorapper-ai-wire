@@ -9393,8 +9393,62 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->social_distribution_page();
         $html = ob_get_clean();
         $this->assertStringContainsString('Resume building this Reel', $html);
+        $this->assertStringContainsString('Delete from queue', $html);
+        $this->assertStringContainsString('tr_ai_wire_delete_social_reel', $html);
         $this->assertStringNotContainsString('name="confirmed_not_published" value="1" required', $html);
         $this->assertStringNotContainsString('>Post to Instagram</button>', $html);
+    }
+
+    public function test_delete_stopped_reel_from_queue_keeps_wordpress_post() {
+        $this->onboard_social(array('instagram', 'youtube'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Delete me from queue',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($post_id, '_tr_ai_wire_social_force_pack', 'reel');
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Reel build ran over 45 minutes without a finished MP4.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $id = (int) $wpdb->insert_id;
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'youtube',
+            'status' => 'needs_review',
+            'error_text' => 'Reel build ran over 45 minutes without a finished MP4.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $other = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Keep me'));
+        update_post_meta($other, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($other, '_tr_ai_wire_social_hold_reel', '1');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $other,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $this->assertTrue($this->invoke_private('delete_social_reel_queue_item', array($id)));
+        $this->assertSame(0, (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d",
+            $post_id
+        )));
+        $this->assertSame('publish', get_post_status($post_id));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
+        $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        $this->assertSame(1, (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d",
+            $other
+        )));
     }
 
     public function test_resume_keeps_the_hold_and_requeues_the_row() {
