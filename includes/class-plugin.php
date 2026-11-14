@@ -16,15 +16,17 @@ final class TechnoRapper_AI_Wire {
     use TechnoRapper_AI_Wire_Publisher;
     use TechnoRapper_AI_Wire_Scores;
     use TechnoRapper_AI_Wire_Errors;
+    use TechnoRapper_AI_Wire_Metrics;
     use TechnoRapper_AI_Wire_Social;
     use TechnoRapper_AI_Wire_Social_Reel;
     use TechnoRapper_AI_Wire_Social_YouTube;
     use TechnoRapper_AI_Wire_Jobs;
 
-    const VERSION = '0.3.16';
+    const VERSION = '0.3.17';
     const API_TIMEOUT = 75;
     const DAILY_POST_CAP = 350;
     const LAST_RUN_OPTION = 'tr_ai_wire_last_run';
+    const RUN_LOG_OPTION = 'tr_ai_wire_run_log';
     const OPTION = 'tr_ai_wire_settings';
     const API_KEY_OPTION = 'tr_ai_wire_openai_api_key';
     const GEMINI_API_KEY_OPTION = 'tr_ai_wire_gemini_api_key';
