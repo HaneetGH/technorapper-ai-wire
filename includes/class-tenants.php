@@ -10,6 +10,7 @@ trait TechnoRapper_AI_Wire_Tenants {
             'url' => '',
             'name' => '',
             'enabled' => 1,
+            'desk_lane' => 'tech',
             'pin_to_homepage' => 1,
             'map_post_type' => 'post',
             'map_taxonomy' => 'category',
@@ -20,6 +21,43 @@ trait TechnoRapper_AI_Wire_Tenants {
             'map_date' => 'now',
             'map_content' => 'rewrite',
         );
+    }
+
+    private function normalize_desk_lane($lane) {
+        $lane = sanitize_key((string) $lane);
+        return $lane === 'comics' ? 'comics' : 'tech';
+    }
+
+    private function tenant_maps_to_comics_category($tenant) {
+        $tenant = is_array($tenant) ? $tenant : array();
+        if (($tenant['map_taxonomy'] ?? 'category') !== 'category') {
+            return false;
+        }
+        foreach ((array) ($tenant['map_terms'] ?? array()) as $term_id) {
+            $term_id = absint($term_id);
+            if ($term_id < 1) {
+                continue;
+            }
+            $term = get_term($term_id, 'category');
+            if ($term && !is_wp_error($term) && sanitize_title($term->slug) === 'comics') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function tenant_desk_lane($tenant) {
+        $tenant = is_array($tenant) ? $tenant : array();
+        if (isset($tenant['desk_lane']) && (string) $tenant['desk_lane'] !== '') {
+            return $this->normalize_desk_lane($tenant['desk_lane']);
+        }
+        return $this->tenant_maps_to_comics_category($tenant) ? 'comics' : 'tech';
+    }
+
+    private function item_desk_lane($item, $s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $tenant = $this->tenant_for_feed(is_array($item) ? ($item['feed_url'] ?? '') : '', $s);
+        return $tenant ? $this->tenant_desk_lane($tenant) : 'tech';
     }
 
     private function tenant_id_for_url($url) {
@@ -45,6 +83,7 @@ trait TechnoRapper_AI_Wire_Tenants {
                 'url' => $url,
                 'name' => $name,
                 'enabled' => 1,
+                'desk_lane' => 'tech',
                 'pin_to_homepage' => $s['pin_to_homepage'] ?? 1,
                 'map_post_type' => $s['map_post_type'] ?? 'post',
                 'map_taxonomy' => $s['map_taxonomy'] ?? 'category',
@@ -97,7 +136,7 @@ trait TechnoRapper_AI_Wire_Tenants {
             }
         }
         $statuses = array('auto', 'publish', 'draft', 'pending');
-        return array(
+        $tenant = array(
             'id' => $this->tenant_id_for_url($url),
             'url' => $url,
             'name' => $name,
@@ -112,6 +151,12 @@ trait TechnoRapper_AI_Wire_Tenants {
             'map_date' => (($input['map_date'] ?? '') === 'source') ? 'source' : 'now',
             'map_content' => (($input['map_content'] ?? '') === 'source') ? 'source' : 'rewrite',
         );
+        if (array_key_exists('desk_lane', $input) && (string) $input['desk_lane'] !== '') {
+            $tenant['desk_lane'] = $this->normalize_desk_lane($input['desk_lane']);
+        } else {
+            $tenant['desk_lane'] = $this->tenant_maps_to_comics_category($tenant) ? 'comics' : 'tech';
+        }
+        return $tenant;
     }
 
     private function sanitize_tenants($rows, $new_tenant = array()) {
@@ -171,7 +216,7 @@ trait TechnoRapper_AI_Wire_Tenants {
         if (!$tenant) {
             return $s;
         }
-        foreach (array('pin_to_homepage', 'map_post_type', 'map_taxonomy', 'map_terms', 'map_auto_desk', 'map_post_status', 'map_title', 'map_date', 'map_content') as $key) {
+        foreach (array('desk_lane', 'pin_to_homepage', 'map_post_type', 'map_taxonomy', 'map_terms', 'map_auto_desk', 'map_post_status', 'map_title', 'map_date', 'map_content') as $key) {
             if (array_key_exists($key, $tenant)) {
                 $s[$key] = $tenant[$key];
             }
@@ -199,6 +244,11 @@ trait TechnoRapper_AI_Wire_Tenants {
             <label><input type="radio" name="<?php echo esc_attr($base); ?>[pin_to_homepage]" value="1" <?php checked(!empty($tenant['pin_to_homepage'])); ?>> On</label>
             &nbsp;
             <label><input type="radio" name="<?php echo esc_attr($base); ?>[pin_to_homepage]" value="0" <?php checked(empty($tenant['pin_to_homepage'])); ?>> Off</label></p>
+            <p><strong>Desk lane</strong><br>
+            <label><input type="radio" name="<?php echo esc_attr($base); ?>[desk_lane]" value="tech" <?php checked($this->tenant_desk_lane($tenant), 'tech'); ?>> Tech</label>
+            &nbsp;
+            <label><input type="radio" name="<?php echo esc_attr($base); ?>[desk_lane]" value="comics" <?php checked($this->tenant_desk_lane($tenant), 'comics'); ?>> Comics</label>
+            <span class="description" style="display:block;margin-top:4px;">Comics-lane posts count toward Comics desk posts per day. Tech is the default newsroom mix.</span></p>
             <details>
                 <summary>Map content for this tenant</summary>
                 <p><label>Post type <select name="<?php echo esc_attr($base); ?>[map_post_type]"><?php foreach ($this->mappable_post_types() as $type => $label) : ?><option value="<?php echo esc_attr($type); ?>" <?php selected($tenant['map_post_type'], $type); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label></p>

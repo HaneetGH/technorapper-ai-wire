@@ -58,12 +58,14 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 = 0.3.11 =
 * When Fal blocks ffmpeg-api, Social queue packs a laptop kit and shows Download laptop kit (.zip) / Prepare laptop kit so Reels can finish on a computer without a VPS.
+* Fal ffmpeg-api "Access denied" is called out as an account entitlement block (a new API key will not fix it) with a local-ffmpeg workaround.
+* Each Reel build and background job keeps a detail debug log (Fal endpoint, request id, HTTP/errors). Download as .txt from Social queue or Now in queue.
 
 = 0.3.10 =
-* Fal ffmpeg-api "Access denied" is called out as an account entitlement block (a new API key will not fix it) with a local-ffmpeg workaround.
+* Desk mix: Comics desk posts per day sits inside Maximum posts per day (example: 5 max + 1 Comics → about 4 tech + 1 Comics). Feed tenants can be marked Tech or Comics. Unused Comics slots soft-fill with tech. Separate from Comic voice.
 
 = 0.3.9 =
-* Each Reel build and background job keeps a detail debug log (Fal endpoint, request id, HTTP/errors). Download as .txt from Social queue or Now in queue.
+* Website posts still go live when the reviewer marks a story as top pop-culture news, or as something people are searching for on the internet, even if the review score or the SEO score is under the minimum. Internet search means Google and other search engines, not search on this website. A searched topic is posted here, including a list or a thin item. Reject, policy, and the social score floor stay in place.
 
 = 0.3.8 =
 * Stopped Reels on Social queue (needs_review) get a Delete from queue button. The WordPress article stays; that Reel attempt is removed.
@@ -291,13 +293,13 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.3.11 =
-Stuck Reels get a clear Download laptop kit (.zip) button when Fal ffmpeg-api is blocked.
+Stuck Reels get a clear Download laptop kit (.zip) button when Fal ffmpeg-api is blocked. Reel and background jobs also keep a downloadable detail log.
 
 = 0.3.10 =
-Clearer error when Fal blocks ffmpeg-api on the account; install local ffmpeg or ask Fal to enable it.
+Set Comics desk posts per day inside your daily max (for example 1 Comics out of 5). Mark Marvel/DC feed tenants as the Comics desk lane.
 
 = 0.3.9 =
-Reel and background jobs now keep a downloadable detail log for Fal/HTTP debugging.
+Top pop-culture stories publish on the website under the review-score and SEO-score minimums. A story people are searching for on the internet is posted on this website. Social stills keep their score floor.
 
 = 0.3.8 =
 Stopped Reels on Social queue can be deleted from the queue without touching the WordPress article.

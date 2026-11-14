@@ -1070,6 +1070,18 @@ trait TechnoRapper_AI_Wire_Publisher {
     private function create_draft($id, $item, $rewrite, $review, $s = null) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
         $item = $this->item_with_source_body($id, $item);
+        if (!$this->lane_has_room_for_item($item, $s)) {
+            $lane = $this->item_desk_lane($item, $s);
+            $this->update_item((int) $id, array(
+                'status' => 'waiting_budget',
+                'error_text' => $lane === 'comics'
+                    ? 'Comics desk daily limit reached. Waiting for tomorrow’s Comics slot or a higher Comics desk posts-per-day setting.'
+                    : 'Tech desk share of today’s post cap is full while Comics slots are reserved. Waiting for an open tech slot.',
+                'rewrite_json' => wp_json_encode($rewrite),
+                'review_json' => wp_json_encode($review),
+            ));
+            return;
+        }
         $status = $this->mapped_post_status($s);
         $publish = ($status === 'publish');
         // Recover a post created just before a worker crash; never duplicate it.
@@ -1084,6 +1096,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         ));
         $rewrite = $this->prepare_rewrite_seo($rewrite);
         $guard = $this->policy_guard_rewrite($rewrite);
+        $audience_note = $this->audience_override_note($review, $rewrite, $s);
         if (is_wp_error($guard)) {
             if ($guard->get_error_code() === 'tr_ai_wire_policy_unavailable') {
                 $this->handle_stage_error($id, $guard);
@@ -1109,6 +1122,9 @@ trait TechnoRapper_AI_Wire_Publisher {
                 return;
             }
             $this->apply_seo_meta($existing_id, $rewrite);
+            if ($audience_note !== '') {
+                update_post_meta($existing_id, '_tr_ai_wire_audience_override', $audience_note);
+            }
             update_post_meta($existing_id, '_tr_ai_wire_voice', $this->item_is_comic($item) ? 'comic' : 'straight');
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->store_pre_publish_gate($existing_id, $rewrite, $review, $item, $s);
@@ -1156,6 +1172,9 @@ trait TechnoRapper_AI_Wire_Publisher {
                 '_tr_ai_wire_review' => wp_json_encode($review),
             ),
         );
+        if ($audience_note !== '') {
+            $insert['meta_input']['_tr_ai_wire_audience_override'] = $audience_note;
+        }
         if ($this->mapped_taxonomy($s) === 'category') {
             $insert['post_category'] = $this->resolve_mapped_term_ids($rewrite, $s, $item);
         }

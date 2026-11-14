@@ -38,7 +38,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
         return false;
     }
 
-    private function next_pipeline_item_id($exclude = array()) {
+    private function next_pipeline_item_id_raw($exclude = array()) {
         global $wpdb;
         $exclude_ids = array();
         foreach ((array) $exclude as $key => $value) {
@@ -66,6 +66,23 @@ trait TechnoRapper_AI_Wire_Pipeline {
              LIMIT 1",
             current_time('mysql', true)
         ));
+    }
+
+    private function next_pipeline_item_id($exclude = array()) {
+        $s = $this->settings();
+        $tried = is_array($exclude) ? $exclude : array();
+        for ($i = 0; $i < 40; $i++) {
+            $id = $this->next_pipeline_item_id_raw($tried);
+            if ($id < 1) {
+                return 0;
+            }
+            $item = $this->get_item($id);
+            if ($this->lane_has_room_for_item($item, $s, $tried)) {
+                return $id;
+            }
+            $tried[$id] = true;
+        }
+        return 0;
     }
 
     /** Unfinished work that can still fill today's post cap. Quarantine is not this. */
@@ -136,12 +153,21 @@ trait TechnoRapper_AI_Wire_Pipeline {
         if (in_array($status, array('draft', 'published', 'error'), true)) {
             return;
         }
+        $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
+        $review = is_array($review) ? $review : null;
         $value_hold = $this->story_value_local_reason($item);
-        if ($value_hold !== '') {
-            if ($status !== 'quarantined') {
-                $this->quarantine_item($id, $value_hold, $item);
+        // A list or deal with no review yet still goes to the writer so the
+        // reviewer can say whether people are searching it on the internet.
+        // Once that flag is true, this website posts it. A thin source with
+        // nothing to search is still held before a model call.
+        if ($value_hold !== '' && !$this->people_are_searching($review)) {
+            $awaiting_search_judgment = $review === null && $this->story_value_local_is_filler($item);
+            if (!$awaiting_search_judgment) {
+                if ($status !== 'quarantined') {
+                    $this->quarantine_item($id, $value_hold, $item);
+                }
+                return;
             }
-            return;
         }
         $s = $this->settings_for_item($item, $s);
         if ($status === 'quarantined') {
@@ -185,7 +211,9 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s);
-        if ($seo_blockers) {
+        // A low SEO score waits for review. Top pop-culture news and stories
+        // everyone is searching for still publish to the website under that score.
+        if ($seo_blockers && !$this->seo_blockers_are_score_only($seo_blockers)) {
             $this->quarantine_item($id, 'Held after rewrite SEO tests: ' . implode(', ', $seo_blockers), $item, array(
                 'rewrite_json' => wp_json_encode($rewrite),
             ));
@@ -227,6 +255,13 @@ trait TechnoRapper_AI_Wire_Pipeline {
                     'reader_demand' => 'low',
                     'adds_value' => false,
                     'reason' => 'The reviewer did not say this story is worth publishing.',
+                );
+            }
+            if (!is_array($review['audience'] ?? null)) {
+                $review['audience'] = array(
+                    'pop_culture_top' => false,
+                    'everyone_searching' => false,
+                    'reason' => 'The reviewer did not mark this as top pop-culture news or a story everyone is searching for.',
                 );
             }
         }
@@ -312,7 +347,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
             ));
             return;
         }
-        $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s);
+        $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s, $review);
         if ($seo_blockers) {
             $this->quarantine_item($id, 'Held after rewrite SEO tests: ' . implode(', ', $seo_blockers), $item, array(
                 'rewrite_json' => wp_json_encode($rewrite),
@@ -344,7 +379,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $rewrite = $this->prepare_rewrite_seo($rewrite);
-        if ($this->review_draft_blockers($review, $s) || $this->rewrite_seo_blockers($rewrite, $s)) {
+        if ($this->review_draft_blockers($review, $s) || $this->rewrite_seo_blockers($rewrite, $s, $review)) {
             return;
         }
         $gate = $this->evaluate_pre_publish_gate($rewrite, $review, $item, $s);
