@@ -38,7 +38,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
         return false;
     }
 
-    private function next_pipeline_item_id($exclude = array()) {
+    private function next_pipeline_item_id_raw($exclude = array()) {
         global $wpdb;
         $exclude_ids = array();
         foreach ((array) $exclude as $key => $value) {
@@ -66,6 +66,23 @@ trait TechnoRapper_AI_Wire_Pipeline {
              LIMIT 1",
             current_time('mysql', true)
         ));
+    }
+
+    private function next_pipeline_item_id($exclude = array()) {
+        $s = $this->settings();
+        $tried = is_array($exclude) ? $exclude : array();
+        for ($i = 0; $i < 40; $i++) {
+            $id = $this->next_pipeline_item_id_raw($tried);
+            if ($id < 1) {
+                return 0;
+            }
+            $item = $this->get_item($id);
+            if ($this->lane_has_room_for_item($item, $s, $tried)) {
+                return $id;
+            }
+            $tried[$id] = true;
+        }
+        return 0;
     }
 
     /** Unfinished work that can still fill today's post cap. Quarantine is not this. */

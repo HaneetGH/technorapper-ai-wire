@@ -773,6 +773,99 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(100, (int) $this->plugin->sanitize_settings(array('comic_daily_limit' => 999))['comic_daily_limit']);
     }
 
+    public function test_comics_desk_daily_mix_inside_post_cap() {
+        $comics = self::factory()->category->create_and_get(array(
+            'name' => 'Comics',
+            'slug' => 'comics',
+        ));
+        $saved = $this->plugin->sanitize_settings(array(
+            'max_posts_per_day' => 5,
+            'comics_desk_daily_limit' => 1,
+            'tenants' => array(
+                array(
+                    'url' => 'https://tech.example.com/feed.xml',
+                    'name' => 'Tech Feed',
+                    'enabled' => 1,
+                    'desk_lane' => 'tech',
+                ),
+                array(
+                    'url' => 'https://comics.example.com/feed.xml',
+                    'name' => 'Comics Feed',
+                    'enabled' => 1,
+                    'desk_lane' => 'comics',
+                    'map_taxonomy' => 'category',
+                    'map_terms' => array((int) $comics->term_id),
+                ),
+            ),
+        ));
+        $this->assertSame(5, (int) $saved['max_posts_per_day']);
+        $this->assertSame(1, (int) $saved['comics_desk_daily_limit']);
+        $this->assertSame(5, (int) $this->plugin->sanitize_settings(array(
+            'max_posts_per_day' => 5,
+            'comics_desk_daily_limit' => 99,
+        ))['comics_desk_daily_limit']);
+
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), $saved);
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+
+        $comics_id = $this->invoke_private('insert_item', array(
+            hash('sha256', 'comics-' . wp_generate_uuid4()),
+            'test-experiment',
+            'A',
+            'https://comics.example.com/feed.xml',
+            'Comics Feed',
+            'guid-comics-' . wp_generate_uuid4(),
+            'https://comics.example.com/story-' . wp_generate_uuid4(),
+            'MCU story',
+            'Marvel story body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ));
+        $tech_id = $this->invoke_private('insert_item', array(
+            hash('sha256', 'tech-' . wp_generate_uuid4()),
+            'test-experiment',
+            'A',
+            'https://tech.example.com/feed.xml',
+            'Tech Feed',
+            'guid-tech-' . wp_generate_uuid4(),
+            'https://tech.example.com/story-' . wp_generate_uuid4(),
+            'Chip story',
+            'Apple chip body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ));
+        $comics_item = $this->invoke_private('get_item', array($comics_id));
+        $tech_item = $this->invoke_private('get_item', array($tech_id));
+        $this->assertSame('comics', $this->invoke_private('item_desk_lane', array($comics_item, $settings)));
+        $this->assertSame('tech', $this->invoke_private('item_desk_lane', array($tech_item, $settings)));
+        $this->assertTrue($this->invoke_private('lane_has_room_for_item', array($comics_item, $settings)));
+        $this->assertTrue($this->invoke_private('lane_has_room_for_item', array($tech_item, $settings)));
+
+        $post_id = self::factory()->post->create(array('post_status' => 'publish'));
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'published',
+            'wp_post_id' => $post_id,
+            'updated_at' => gmdate('Y-m-d H:i:s'),
+        ), array('id' => $comics_id));
+
+        $this->assertSame(1, $this->invoke_private('comics_desk_assigned_today', array($settings)));
+        $this->assertFalse($this->invoke_private('lane_has_room_for_item', array($this->invoke_private('get_item', array($comics_id)), $settings)));
+        $this->assertTrue($this->invoke_private('lane_has_room_for_item', array($tech_item, $settings)));
+
+        $next_comics = $this->invoke_private('insert_item', array(
+            hash('sha256', 'comics2-' . wp_generate_uuid4()),
+            'test-experiment',
+            'A',
+            'https://comics.example.com/feed.xml',
+            'Comics Feed',
+            'guid-comics2-' . wp_generate_uuid4(),
+            'https://comics.example.com/story2-' . wp_generate_uuid4(),
+            'DC story',
+            'DC story body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'reviewed'), array('id' => $next_comics));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'reviewed'), array('id' => $tech_id));
+        $picked = $this->invoke_private('next_pipeline_item_id', array(array($comics_id => true)));
+        $this->assertSame((int) $tech_id, (int) $picked);
+    }
+
     public function test_existing_rewrite_is_not_relabeled_comic() {
         $id = $this->create_queue_item();
         global $wpdb;
@@ -1020,6 +1113,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array(), $settings['social_post_times']);
         $this->assertSame(0, $settings['max_posts_per_day']);
         $this->assertSame(0, $settings['comic_daily_limit']);
+        $this->assertSame(0, $settings['comics_desk_daily_limit']);
         $this->assertSame(1, $settings['auto_publish']);
         $this->assertSame(1, $settings['pin_to_homepage']);
         $this->assertSame('post', $settings['map_post_type']);

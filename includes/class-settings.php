@@ -23,6 +23,8 @@ trait TechnoRapper_AI_Wire_Settings {
             'enable_experiment' => 1,
             'experiment_id' => 'editorial-v1',
             'comic_daily_limit' => 0,
+            // Comics desk (Marvel/DC category lane), not comic writing voice.
+            'comics_desk_daily_limit' => 0,
             'draft_min_score' => 50,
             'draft_allow_revise' => 1,
             'draft_require_grounded' => 1,
@@ -251,6 +253,8 @@ trait TechnoRapper_AI_Wire_Settings {
         } else {
             $out['comic_daily_limit'] = min(100, max(0, absint($input['comic_daily_limit'] ?? $defaults['comic_daily_limit'])));
         }
+        $comics_desk = min(2000, max(0, absint($input['comics_desk_daily_limit'] ?? $defaults['comics_desk_daily_limit'])));
+        $out['comics_desk_daily_limit'] = min($out['max_posts_per_day'], $comics_desk);
         $out['draft_min_score'] = min(100, max(0, absint($input['draft_min_score'] ?? $defaults['draft_min_score'])));
         $out['draft_allow_revise'] = empty($input['draft_allow_revise']) ? 0 : 1;
         $out['draft_require_grounded'] = empty($input['draft_require_grounded']) ? 0 : 1;
