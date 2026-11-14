@@ -79,6 +79,7 @@ trait TechnoRapper_AI_Wire_Metrics {
                 'manual' => 0,
                 'failed' => 0,
                 'failures' => array(),
+                'samples' => array(),
                 'runs' => null,
             );
             $cursor = $cursor->modify('-1 day');
@@ -109,6 +110,26 @@ trait TechnoRapper_AI_Wire_Metrics {
             return 'manual';
         }
         return 'auto';
+    }
+
+    private function metrics_note_failure(&$day, $kind, $reason) {
+        if (!isset($day['failures'][$kind])) {
+            $day['failures'][$kind] = 0;
+        }
+        $day['failures'][$kind]++;
+        $text = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags((string) $reason)));
+        if (function_exists('mb_substr')) {
+            $text = mb_substr($text, 0, 180);
+        } else {
+            $text = substr($text, 0, 180);
+        }
+        if ($text === '') {
+            return;
+        }
+        if (!isset($day['samples'][$kind][$text])) {
+            $day['samples'][$kind][$text] = 0;
+        }
+        $day['samples'][$kind][$text]++;
     }
 
     private function metrics_report($days_count = 14) {
@@ -151,11 +172,9 @@ trait TechnoRapper_AI_Wire_Metrics {
                 continue;
             }
             $days[$index]['failed']++;
-            $kind = $this->error_kind('publish', 'quarantined', (string) ($row['reason'] ?? ''));
-            if (!isset($days[$index]['failures'][$kind])) {
-                $days[$index]['failures'][$kind] = 0;
-            }
-            $days[$index]['failures'][$kind]++;
+            $reason = (string) ($row['reason'] ?? '');
+            $kind = $this->error_kind('publish', 'quarantined', $reason);
+            $this->metrics_note_failure($days[$index], $kind, $reason);
             $held_ids[$index . ':' . (int) ($row['queue_item_id'] ?? 0)] = true;
         }
         $errors = $wpdb->get_results($wpdb->prepare(
@@ -168,12 +187,10 @@ trait TechnoRapper_AI_Wire_Metrics {
             if ($index < 0 || isset($held_ids[$index . ':' . (int) ($row['id'] ?? 0)])) {
                 continue;
             }
+            $reason = (string) ($row['error_text'] ?? '');
             $days[$index]['failed']++;
-            $kind = $this->error_kind('publish', 'error', (string) ($row['error_text'] ?? ''));
-            if (!isset($days[$index]['failures'][$kind])) {
-                $days[$index]['failures'][$kind] = 0;
-            }
-            $days[$index]['failures'][$kind]++;
+            $kind = $this->error_kind('publish', 'error', $reason);
+            $this->metrics_note_failure($days[$index], $kind, $reason);
         }
         $labels = $this->error_kind_labels();
         $log = get_option(self::RUN_LOG_OPTION, array());
@@ -191,17 +208,36 @@ trait TechnoRapper_AI_Wire_Metrics {
             if ($logged_from !== '' && $day['end'] > $logged_from) {
                 $days[$index]['runs'] = 0;
             }
-            $top_key = '';
-            $top_count = 0;
+            $breakdown = array();
+            $order = 0;
             foreach ($day['failures'] as $key => $count) {
-                if ($count > $top_count) {
-                    $top_key = $key;
-                    $top_count = $count;
+                $sample = '';
+                $sample_count = 0;
+                foreach ((array) ($day['samples'][$key] ?? array()) as $text => $times) {
+                    if ($times > $sample_count) {
+                        $sample = (string) $text;
+                        $sample_count = $times;
+                    }
                 }
+                $breakdown[] = array(
+                    'label' => isset($labels[$key]) ? $labels[$key][1] : $key,
+                    'count' => (int) $count,
+                    'sample' => $sample,
+                    'order' => $order,
+                );
+                $order++;
             }
-            $days[$index]['top'] = $top_count > 0 && isset($labels[$top_key]) ? $labels[$top_key][1] : '';
-            $days[$index]['top_count'] = $top_count;
-            unset($days[$index]['failures']);
+            usort($breakdown, function ($left, $right) {
+                if ($left['count'] === $right['count']) {
+                    return $left['order'] <=> $right['order'];
+                }
+                return $right['count'] <=> $left['count'];
+            });
+            $days[$index]['breakdown'] = $breakdown;
+            $days[$index]['top'] = isset($breakdown[0]) ? $breakdown[0]['label'] : '';
+            $days[$index]['top_count'] = isset($breakdown[0]) ? $breakdown[0]['count'] : 0;
+            $days[$index]['sample'] = isset($breakdown[0]) ? $breakdown[0]['sample'] : '';
+            unset($days[$index]['failures'], $days[$index]['samples']);
         }
         if (is_array($log)) {
             foreach ($log as $row) {
@@ -266,6 +302,18 @@ trait TechnoRapper_AI_Wire_Metrics {
             </div>
             <?php if ($today['top'] !== '') : ?>
                 <p><strong>Top failure today:</strong> <?php echo esc_html($today['top'] . ' · ' . number_format_i18n((int) $today['top_count'])); ?></p>
+                <?php if (!empty($today['sample'])) : ?>
+                    <p class="description"><?php echo esc_html($today['sample']); ?></p>
+                <?php endif; ?>
+                <?php if (count($today['breakdown']) > 1) : ?>
+                    <p><?php
+                        $bits = array();
+                        foreach ($today['breakdown'] as $kind) {
+                            $bits[] = $kind['label'] . ' ' . number_format_i18n((int) $kind['count']);
+                        }
+                        echo esc_html('Failures today: ' . implode(' · ', $bits));
+                    ?></p>
+                <?php endif; ?>
             <?php endif; ?>
             <table class="widefat striped" style="max-width:980px;">
                 <thead><tr><th>Day</th><th>Published</th><th>Auto</th><th>Manual</th><th>Failed</th><th>Top failure</th><th>Job runs</th></tr></thead>
@@ -277,7 +325,19 @@ trait TechnoRapper_AI_Wire_Metrics {
                         <td><?php echo esc_html(number_format_i18n((int) $day['auto'])); ?></td>
                         <td><?php echo esc_html(number_format_i18n((int) $day['manual'])); ?></td>
                         <td><?php echo esc_html(number_format_i18n((int) $day['failed'])); ?></td>
-                        <td><?php echo esc_html($day['top'] !== '' ? $day['top'] . ' (' . number_format_i18n((int) $day['top_count']) . ')' : '—'); ?></td>
+                        <td><?php
+                            if (empty($day['breakdown'])) {
+                                echo '—';
+                            } else {
+                                foreach ($day['breakdown'] as $kind) {
+                                    echo esc_html($kind['label'] . ' (' . number_format_i18n((int) $kind['count']) . ')');
+                                    if ($kind['sample'] !== '') {
+                                        echo '<br><span class="description">' . esc_html($kind['sample']) . '</span>';
+                                    }
+                                    echo '<br>';
+                                }
+                            }
+                        ?></td>
                         <td><?php echo esc_html($day['runs'] === null ? '—' : number_format_i18n((int) $day['runs'])); ?></td>
                     </tr>
                 <?php endforeach; ?>

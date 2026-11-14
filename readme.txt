@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.19
+Stable tag: 0.3.20
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.20 =
+* A grounded review pass at 70 or above auto-publishes. A score parked under the dashboard minimum no longer becomes a review hold, unless the reviewer marks the story thin or low-demand. Metrics lists every failure for the day, with the sentence that caused it.
 
 = 0.3.19 =
 * Release 0.3.19.
@@ -319,6 +322,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.20 =
+Grounded review passes at 70 or above auto-publish. The metrics page lists every failure for today and yesterday.
 
 = 0.3.19 =
 Update to 0.3.19.
