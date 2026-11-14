@@ -909,6 +909,125 @@ trait TechnoRapper_AI_Wire_AI {
         return max(0, $limit - $count);
     }
 
+    private function comics_desk_daily_limit($s) {
+        $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
+        $total = max(0, (int) ($s['max_posts_per_day'] ?? 0));
+        return min($total, max(0, (int) ($s['comics_desk_daily_limit'] ?? 0)));
+    }
+
+    private function comics_desk_feed_urls($s) {
+        $urls = array();
+        foreach ($this->enabled_tenants($s) as $tenant) {
+            if ($this->tenant_desk_lane($tenant) !== 'comics') {
+                continue;
+            }
+            $url = esc_url_raw($tenant['url'] ?? '', array('http', 'https'));
+            if ($url) {
+                $urls[] = $url;
+            }
+        }
+        return array_values(array_unique($urls));
+    }
+
+    private function comics_desk_assigned_today($s = null) {
+        global $wpdb;
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $urls = $this->comics_desk_feed_urls($s);
+        if (!$urls) {
+            return 0;
+        }
+        $start = gmdate('Y-m-d 00:00:00');
+        $end = gmdate('Y-m-d 23:59:59');
+        $placeholders = implode(',', array_fill(0, count($urls), '%s'));
+        $params = array_merge($urls, array($start, $end));
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->table}
+             WHERE status IN ('draft', 'published') AND wp_post_id IS NOT NULL
+               AND feed_url IN ({$placeholders})
+               AND updated_at BETWEEN %s AND %s",
+            $params
+        ));
+    }
+
+    private function posts_created_today_count($s = null) {
+        global $wpdb;
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $limit = (int) ($s['max_posts_per_day'] ?? 0);
+        if ($limit <= 0) {
+            return 0;
+        }
+        $start = gmdate('Y-m-d 00:00:00');
+        $end = gmdate('Y-m-d 23:59:59');
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->table}
+             WHERE status IN ('draft', 'published') AND wp_post_id IS NOT NULL
+               AND updated_at BETWEEN %s AND %s",
+            $start,
+            $end
+        ));
+    }
+
+    private function comics_desk_waiting($exclude = array(), $s = null) {
+        global $wpdb;
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $urls = $this->comics_desk_feed_urls($s);
+        if (!$urls) {
+            return false;
+        }
+        $exclude_ids = array();
+        foreach ((array) $exclude as $key => $value) {
+            $id = is_int($key) && $key > 0 ? $key : (int) $value;
+            if ($id > 0) {
+                $exclude_ids[] = $id;
+            }
+        }
+        $exclude_ids = array_values(array_unique($exclude_ids));
+        $not_in = $exclude_ids ? ' AND id NOT IN (' . implode(',', array_map('intval', $exclude_ids)) . ')' : '';
+        $placeholders = implode(',', array_fill(0, count($urls), '%s'));
+        $params = array_merge($urls, array(current_time('mysql', true)));
+        $id = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$this->table}
+             WHERE feed_url IN ({$placeholders})
+               AND (
+                (status IN ('pending', 'new', 'waiting_budget', 'generated', 'rewritten') AND (wp_post_id IS NULL OR wp_post_id = 0))
+                OR status = 'reviewed'
+                OR (status = 'retry_wait' AND (next_retry_at IS NULL OR next_retry_at <= %s))
+               ){$not_in}
+             LIMIT 1",
+            $params
+        ));
+        return $id > 0;
+    }
+
+    /**
+     * Desk mix inside Maximum posts per day.
+     * Example: max 5 + comics desk 1 → up to 1 Comics and about 4 tech.
+     * Unused Comics slots soft-fill with tech. Comics never exceeds its desk cap.
+     */
+    private function lane_has_room_for_item($item, $s, $exclude = array()) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        if ($this->remaining_posts_today($s) <= 0) {
+            return false;
+        }
+        $comics_cap = $this->comics_desk_daily_limit($s);
+        if ($comics_cap <= 0) {
+            return true;
+        }
+        $lane = $this->item_desk_lane($item, $s);
+        $comics_used = $this->comics_desk_assigned_today($s);
+        $total_used = $this->posts_created_today_count($s);
+        $tech_used = max(0, $total_used - $comics_used);
+        $tech_cap = max(0, (int) $s['max_posts_per_day'] - $comics_cap);
+        if ($lane === 'comics') {
+            return $comics_used < $comics_cap;
+        }
+        if ($tech_used < $tech_cap) {
+            return true;
+        }
+        // Soft-fill: tech may use leftover Comics slots when no Comics story is waiting.
+        return ($comics_used < $comics_cap) && !$this->comics_desk_waiting($exclude, $s);
+    }
+
     private function experiment_assignment($source_key, $settings) {
         $enabled = !empty($settings['enable_experiment']);
         $variant = $enabled && (hexdec(substr($source_key, 0, 2)) % 2 === 1) ? 'B' : 'A';

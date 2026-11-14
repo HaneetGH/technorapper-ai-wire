@@ -1070,6 +1070,18 @@ trait TechnoRapper_AI_Wire_Publisher {
     private function create_draft($id, $item, $rewrite, $review, $s = null) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
         $item = $this->item_with_source_body($id, $item);
+        if (!$this->lane_has_room_for_item($item, $s)) {
+            $lane = $this->item_desk_lane($item, $s);
+            $this->update_item((int) $id, array(
+                'status' => 'waiting_budget',
+                'error_text' => $lane === 'comics'
+                    ? 'Comics desk daily limit reached. Waiting for tomorrow’s Comics slot or a higher Comics desk posts-per-day setting.'
+                    : 'Tech desk share of today’s post cap is full while Comics slots are reserved. Waiting for an open tech slot.',
+                'rewrite_json' => wp_json_encode($rewrite),
+                'review_json' => wp_json_encode($review),
+            ));
+            return;
+        }
         $status = $this->mapped_post_status($s);
         $publish = ($status === 'publish');
         // Recover a post created just before a worker crash; never duplicate it.
