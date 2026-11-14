@@ -77,10 +77,13 @@ trait TechnoRapper_AI_Wire_AI {
     private function build_writer_input($item) {
         $input = "Feed: {$item['feed_name']}\nSource title: {$item['source_title']}\nSource URL: {$item['source_url']}\nSource text:\n{$item['source_body']}";
         $categories = $this->site_category_names();
+        if (is_array($item) && $this->item_desk_lane($item) === 'comics') {
+            $input .= "\n\nThis source is a Comics desk feed. Set category to Comics.";
+        }
         if ($categories) {
             $input .= "\n\nSite categories — pick exactly one that best fits this source document. Do not ask a human. Never pick News, Tech, Technology, or Uncategorized:\n- " . implode("\n- ", $categories);
         } else {
-            $input .= "\n\nSite categories — pick exactly one homepage desk: Android, Apple, AI, Auto, PC Hardware, Reviews, Guides, or Tech. Never pick News or Uncategorized.";
+            $input .= "\n\nSite categories — pick exactly one homepage desk: Android, Apple, AI, Auto, PC Hardware, Reviews, Comics, Guides, or Tech. Never pick News or Uncategorized.";
         }
         $tags = $this->site_tag_names();
         if ($tags) {

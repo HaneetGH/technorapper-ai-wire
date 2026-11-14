@@ -1573,6 +1573,70 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertContains('index', (array) get_post_meta((int) $posts[0]->ID, 'rank_math_robots', true));
     }
 
+    public function test_comics_desk_post_is_filed_in_the_comics_category() {
+        $comics = self::factory()->category->create_and_get(array(
+            'name' => 'Comics',
+            'slug' => 'comics',
+        ));
+        $android = self::factory()->category->create_and_get(array(
+            'name' => 'Android',
+            'slug' => 'android',
+        ));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['tenants'] = array(
+            array(
+                'url' => 'https://example.com/comics-feed.xml',
+                'name' => 'Comics Feed',
+                'enabled' => 1,
+                'desk_lane' => 'comics',
+                'map_auto_desk' => 1,
+                'map_terms' => array((int) $android->term_id),
+            ),
+        );
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'feed_url' => 'https://example.com/comics-feed.xml',
+            'feed_name' => 'Comics Feed',
+        ), array('id' => $id));
+        $this->invoke_private('create_draft', array($id, array(
+            'feed_url' => 'https://example.com/comics-feed.xml',
+            'feed_name' => 'Comics Feed',
+            'source_url' => 'https://example.com/batman',
+            'source_guid' => 'guid-comics-home',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_title' => 'Batman faces a new Gotham threat',
+            'source_body' => 'DC Comics details a new Batman story. Samsung Galaxy phones get a mention in a panel. <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ), array(
+            'title' => 'Gotham gets a new Batman story this fall',
+            'lede' => 'A new Batman story is on the way.',
+            'body_html' => '<p>Grounded comics article.</p>',
+            'category' => 'Android',
+            'tags' => array('Batman'),
+        ), array('verdict' => 'pass'), $settings));
+        $posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => array('publish', 'draft', 'pending'),
+            'posts_per_page' => 1,
+            'meta_key' => '_tr_ai_wire_queue_id',
+            'meta_value' => $id,
+        ));
+        $this->assertCount(1, $posts);
+        $this->assertSame('publish', get_post_status($posts[0]));
+        $cats = wp_get_post_categories((int) $posts[0]->ID);
+        $this->assertSame(array((int) $comics->term_id), $cats);
+        $prompt = $this->invoke_private('build_writer_input', array(array(
+            'feed_url' => 'https://example.com/comics-feed.xml',
+            'feed_name' => 'Comics Feed',
+            'source_title' => 'Batman',
+            'source_url' => 'https://example.com/batman',
+            'source_body' => 'A Batman story.',
+        )));
+        $this->assertStringContainsString('Set category to Comics', $prompt);
+    }
+
     public function test_reads_source_document_for_category_and_tags() {
         $android = self::factory()->category->create_and_get(array(
             'name' => 'Android',
