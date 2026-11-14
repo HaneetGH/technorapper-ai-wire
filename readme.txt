@@ -57,7 +57,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.3.20 =
-* A grounded review pass at 70 or above auto-publishes. A score parked under the dashboard minimum no longer becomes a review hold, unless the reviewer marks the story thin or low-demand. Metrics lists every failure for the day, with the sentence that caused it.
+* A grounded review pass at 70 or above clears the review-score hold. A score parked under the dashboard minimum no longer becomes a review hold, unless the reviewer marks the story thin or low-demand. The SEO score floor still applies. Metrics lists every failure for the day, with the sentence that caused it.
 
 = 0.3.19 =
 * Release 0.3.19.

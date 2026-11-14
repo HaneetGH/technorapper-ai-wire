@@ -401,7 +401,7 @@ trait TechnoRapper_AI_Wire_AI {
      * A grounded pass the reviewer scored at 70 or above. The dashboard
      * minimum (often 85) was turning these into review holds, so the day
      * auto-published nothing. Reject, revise, fact flags, and policy flags
-     * stay held. Social still uses its own 90 floor.
+     * stay held. The SEO score floor and the social 90 floor still apply.
      */
     private function review_is_website_pass($review, $s) {
         if (!is_array($review)) {

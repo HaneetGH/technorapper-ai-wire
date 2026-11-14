@@ -284,7 +284,7 @@ trait TechnoRapper_AI_Wire_SEO {
         $reasons = array();
         $score = (int) ($seo['seo_score'] ?? 0);
         $min_score = (int) $s['seo_min_score'];
-        if ($score < $min_score && !$this->audience_demand_overrides_score($review) && !$this->review_is_website_pass($review, $s)) {
+        if ($score < $min_score && !$this->audience_demand_overrides_score($review)) {
             $reasons[] = 'SEO score ' . $score . ' < ' . $min_score;
         }
         if (!empty($s['seo_require_keyphrase']) && empty($seo['has_keyphrase'])) {

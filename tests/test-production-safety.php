@@ -11870,7 +11870,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'body_html' => '<p>Nvidia said the chip ships in April.</p>',
             'seo' => array('seo_score' => 40, 'has_keyphrase' => true, 'has_social' => true),
         );
-        $this->assertSame(array(), $this->invoke_private('rewrite_seo_blockers', array($rewrite, $settings, $review)));
+        $seo_reasons = $this->invoke_private('rewrite_seo_blockers', array($rewrite, $settings, $review));
+        $this->assertStringContainsString('SEO score 40 < 90', implode(' ', $seo_reasons));
 
         $thin = $review;
         $thin['story_value'] = array(
