@@ -267,7 +267,17 @@ trait TechnoRapper_AI_Wire_Pipeline {
         }
         $rewrite = $this->prepare_rewrite_seo($rewrite);
         if (!$this->has_usable_rewrite($rewrite)) {
-            $this->quarantine_item($id, 'Writer returned an empty title or body. Held for manual review.', $item, array(
+            $note = trim(sanitize_text_field(is_array($rewrite) ? ($rewrite['novelty_notes'] ?? '') : ''));
+            if (function_exists('mb_substr')) {
+                $note = mb_substr($note, 0, 240);
+            } else {
+                $note = substr($note, 0, 240);
+            }
+            $reason = 'Writer returned an empty title or body. Held for manual review.';
+            if ($note !== '') {
+                $reason .= ' ' . $note;
+            }
+            $this->quarantine_item($id, $reason, $item, array(
                 'rewrite_json' => wp_json_encode($rewrite),
             ));
             return;

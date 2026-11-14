@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.16
+Stable tag: 0.3.18
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -56,8 +56,14 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Changelog ==
 
-= 0.3.16 =
+= 0.3.18 =
 * A carousel or collage is either tech or comics. The two desks are no longer mixed, and a comics pack uses a paper-and-ink cover, red rules, and a comic-shop photo instead of the tech roundup.
+
+= 0.3.17 =
+* AI Wire → Metrics shows each day: posts published, auto versus manual, failures, the top failure, and how many times the job ran.
+
+= 0.3.16 =
+* The error graph labels an X account with no posting credits as X API credits, and shows the actual error sentence under each bar. An empty rewrite now includes the writer's reason.
 
 = 0.3.15 =
 * AI Wire → Errors graphs open post-publish and social failures by type, so the most common error is the longest bar.
@@ -311,8 +317,14 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 
 == Upgrade Notice ==
 
-= 0.3.16 =
+= 0.3.18 =
 Carousels and collages stay on one desk: tech stories and comics stories are posted separately, with a different cover for comics.
+
+= 0.3.17 =
+AI Wire → Metrics lists published posts, failures, the top failure, and job runs for today, yesterday, and earlier days.
+
+= 0.3.16 =
+The error graph separates X posting credits from image spend and shows the error sentence under each bar.
 
 = 0.3.15 =
 AI Wire → Errors shows which post-publish and social errors are happening most.

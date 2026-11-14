@@ -21,6 +21,7 @@ trait TechnoRapper_AI_Wire_Errors {
             'social_token' => array('Social', 'Account or token'),
             'social_policy' => array('Social', 'Policy hold'),
             'social_post' => array('Social', 'Platform publish'),
+            'social_x_credits' => array('Social', 'X API credits'),
             'social_credits' => array('Social', 'Image credits'),
             'social_review' => array('Social', 'Needs review'),
             'social_other' => array('Social', 'Other social error'),
@@ -43,10 +44,13 @@ trait TechnoRapper_AI_Wire_Errors {
             if (strpos($text, 'quota') !== false || strpos($text, 'content_publishing_limit') !== false || strpos($text, 'publishing limit') !== false) {
                 return 'social_quota';
             }
+            if (preg_match('/credits to fulfill|creditsdepleted|does not have any credits|x api credit/', $text)) {
+                return 'social_x_credits';
+            }
             if (strpos($text, 'token') !== false || strpos($text, 'oauth') !== false || strpos($text, 'unauthorized') !== false || strpos($text, 'permission') !== false) {
                 return 'social_token';
             }
-            if (strpos($text, 'credit') !== false) {
+            if (preg_match('/image budget|credits depleted|insufficient credits|out of credits/', $text)) {
                 return 'social_credits';
             }
             if (preg_match('/media id|post id|container|permalink|rejected the/', $text)) {
@@ -101,6 +105,7 @@ trait TechnoRapper_AI_Wire_Errors {
         $platforms = array();
         $series_counts = array();
         $recent = array();
+        $samples = array();
         $publish_where = "status IN ('error','quarantined','retry_wait','waiting_budget')";
         $params = array();
         if ($start !== '') {
@@ -111,7 +116,7 @@ trait TechnoRapper_AI_Wire_Errors {
         $publish_sql = "SELECT id, status, error_text, source_title, wp_post_id, updated_at FROM {$this->table} WHERE {$publish_where} ORDER BY updated_at DESC LIMIT 1500";
         $publish_rows = $params ? $wpdb->get_results($wpdb->prepare($publish_sql, $params), ARRAY_A) : $wpdb->get_results($publish_sql, ARRAY_A);
         foreach ((array) $publish_rows as $row) {
-            $this->error_tally_row('publish', $row, $counts, $platforms, $series_counts, $recent, $group);
+            $this->error_tally_row('publish', $row, $counts, $platforms, $series_counts, $recent, $samples, $group);
         }
         $social_where = "(status = 'needs_review' OR (status IN ('error','queued','processing') AND error_text IS NOT NULL AND error_text <> ''))";
         $social_params = array();
@@ -123,7 +128,7 @@ trait TechnoRapper_AI_Wire_Errors {
         $social_sql = "SELECT id, post_id, platform, status, error_text, updated_at FROM {$wpdb->prefix}tr_ai_wire_social WHERE {$social_where} ORDER BY updated_at DESC LIMIT 1500";
         $social_rows = $social_params ? $wpdb->get_results($wpdb->prepare($social_sql, $social_params), ARRAY_A) : $wpdb->get_results($social_sql, ARRAY_A);
         foreach ((array) $social_rows as $row) {
-            $this->error_tally_row('social', $row, $counts, $platforms, $series_counts, $recent, $group);
+            $this->error_tally_row('social', $row, $counts, $platforms, $series_counts, $recent, $samples, $group);
         }
         $kinds = array();
         $publish_total = 0;
@@ -135,11 +140,17 @@ trait TechnoRapper_AI_Wire_Errors {
             } else {
                 $social_total += $count;
             }
+            $sample = '';
+            if (!empty($samples[$key]) && is_array($samples[$key])) {
+                arsort($samples[$key]);
+                $sample = (string) array_key_first($samples[$key]);
+            }
             $kinds[] = array(
                 'key' => $key,
                 'area' => $label[0],
                 'label' => $label[1],
                 'count' => $count,
+                'sample' => $sample,
             );
         }
         usort($kinds, function ($left, $right) {
@@ -182,13 +193,28 @@ trait TechnoRapper_AI_Wire_Errors {
         );
     }
 
-    private function error_tally_row($area, $row, &$counts, &$platforms, &$series_counts, &$recent, $group) {
+    private function error_tally_row($area, $row, &$counts, &$platforms, &$series_counts, &$recent, &$samples, $group) {
         $message = trim((string) ($row['error_text'] ?? ''));
         $kind = $this->error_kind($area, $row['status'] ?? '', $message);
         if (!isset($counts[$kind])) {
             $kind = $area === 'social' ? 'social_other' : 'publish_other';
         }
         $counts[$kind]++;
+        $snippet = $message;
+        if (function_exists('mb_substr')) {
+            $snippet = mb_substr($snippet, 0, 180);
+        } else {
+            $snippet = substr($snippet, 0, 180);
+        }
+        if ($snippet !== '') {
+            if (!isset($samples[$kind]) || !is_array($samples[$kind])) {
+                $samples[$kind] = array();
+            }
+            if (!isset($samples[$kind][$snippet])) {
+                $samples[$kind][$snippet] = 0;
+            }
+            $samples[$kind][$snippet]++;
+        }
         $bucket = $this->score_bucket_key($row['updated_at'] ?? '', $group);
         if ($bucket !== '') {
             if (!isset($series_counts[$bucket])) {
@@ -239,6 +265,9 @@ trait TechnoRapper_AI_Wire_Errors {
             $html .= '<div style="background:#f0f0f1;border-radius:3px;height:18px;" title="' . esc_attr($kind['label'] . ': ' . (int) $kind['count']) . '"><div style="width:' . $width . '%;height:18px;background:' . esc_attr($color) . ';border-radius:3px;"></div></div>';
             $html .= '<div>' . esc_html(number_format_i18n((int) $kind['count'])) . '</div>';
             $html .= '</div>';
+            if (!empty($kind['sample'])) {
+                $html .= '<p class="description" style="margin:-4px 0 12px;">' . esc_html($kind['sample']) . '</p>';
+            }
         }
         if (!$shown) {
             $html = '<p>No publish or social errors in this range.</p>';
