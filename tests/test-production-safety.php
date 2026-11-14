@@ -8948,6 +8948,49 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array('instagram'), $platforms);
     }
 
+    public function test_x_off_does_not_run_the_x_job() {
+        $this->onboard_social(array('x', 'instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_x_enabled' => 0,
+            'social_instagram_enabled' => 1,
+            'social_distribution_enabled' => 1,
+        )), false);
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Held off X',
+        ));
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'x',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        wp_schedule_single_event(time() + 30, TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK);
+        $x_calls = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$x_calls) {
+            if (strpos((string) $url, 'api.x.com') !== false || strpos((string) $url, 'upload.twitter.com') !== false) {
+                $x_calls++;
+            }
+            return new WP_Error('blocked', 'X is off');
+        }, 10, 3);
+        $this->plugin->process_social_queue();
+        $this->invoke_private('kick_social_queue', array(5));
+        $status = $wpdb->get_var($wpdb->prepare("SELECT status FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'x'", $post_id));
+        $this->assertSame('queued', $status);
+        $this->assertSame(0, $x_calls);
+        $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
+        $blocked = $this->invoke_private('publish_social_item', array(
+            array('platform' => 'x', 'post_id' => $post_id),
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array()),
+            $this->invoke_private('settings'),
+        ));
+        $this->assertWPError($blocked);
+        $this->assertSame('tr_ai_wire_x_disabled', $blocked->get_error_code());
+    }
+
     public function test_queue_page_offers_saved_graphics_backfill_when_x_is_on() {
         $this->onboard_social(array('x', 'instagram'));
         $attachment_id = $this->create_social_jpeg_attachment();
