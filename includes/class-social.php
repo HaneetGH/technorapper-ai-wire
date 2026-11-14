@@ -5333,6 +5333,13 @@ trait TechnoRapper_AI_Wire_Social {
         }
         echo '</div>';
         if (!$live) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;display:inline-block;margin-right:8px;" onsubmit="return confirm(\'Remove this Reel from the social queue? The WordPress article stays. Saved Reel media for this attempt is deleted.\');">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_delete_social_reel">';
+            echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
+            wp_nonce_field('tr_ai_wire_delete_social_reel_' . $id);
+            echo '<p class="description">Remove this stopped Reel from the queue. Nothing was posted. The WordPress article stays.</p>';
+            echo '<button class="button button-link-delete">Delete from queue</button>';
+            echo '</form>';
             echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:8px;display:inline-block;margin-right:8px;">';
             echo '<input type="hidden" name="action" value="tr_ai_wire_regen_reel_script">';
             echo '<input type="hidden" name="item_id" value="' . esc_attr((string) $id) . '">';
@@ -5351,6 +5358,59 @@ trait TechnoRapper_AI_Wire_Social {
             echo '</form>';
             $this->render_social_reel_upload_form($row);
         }
+    }
+
+    /**
+     * Drop one stopped/held Reel from the social queue. WordPress posts stay.
+     * Sibling unfinished platform rows for the same post are removed too.
+     */
+    private function delete_social_reel_queue_item($id) {
+        $id = (int) $id;
+        global $wpdb;
+        $row = $id > 0 ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A) : null;
+        if (!$row || !$this->social_row_holds_reel_for_review($row)) {
+            return false;
+        }
+        $status = sanitize_key((string) ($row['status'] ?? ''));
+        if (!in_array($status, array('queued', 'processing', 'needs_review'), true)) {
+            return false;
+        }
+        if ($this->social_reel_preview_id((int) $row['post_id']) > 0 && $status === 'needs_review') {
+            // Ready-to-Post Reels stay until the admin posts or starts over.
+            return false;
+        }
+        $post_id = (int) ($row['post_id'] ?? 0);
+        $table = $wpdb->prefix . 'tr_ai_wire_social';
+        $ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT id FROM {$table} WHERE post_id = %d AND status IN ('queued', 'processing', 'needs_review')",
+            $post_id
+        ));
+        $deleted = 0;
+        foreach ((array) $ids as $row_id) {
+            if ($wpdb->delete($table, array('id' => (int) $row_id), array('%d'))) {
+                $deleted++;
+            }
+        }
+        if ($post_id > 0) {
+            delete_post_meta($post_id, '_tr_ai_wire_social_hold_reel');
+            delete_post_meta($post_id, '_tr_ai_wire_social_force_pack');
+            if ((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true) === 'reel') {
+                $this->purge_social_reel_assets($post_id, array('keep_broll' => false, 'regen_script' => true));
+                delete_post_meta($post_id, '_tr_ai_wire_social_mode');
+            }
+        }
+        return $deleted > 0;
+    }
+
+    public function delete_social_reel_from_queue() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to delete a Reel from the queue.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_POST['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_delete_social_reel_' . $id);
+        $this->delete_social_reel_queue_item($id);
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-social&reel_deleted=1'));
+        exit;
     }
 
     public function regenerate_social_reel_script() {
@@ -5937,6 +5997,7 @@ trait TechnoRapper_AI_Wire_Social {
             <?php if ($stuck_pack !== '') : ?><div class="notice notice-info"><p><?php echo esc_html('A ' . $stuck_pack . ' is queued and the graphics are not created yet. The worker is generating them and posting it now. Stay on this page so the progress bar can finish. ' . $this->instagram_still_spacing_copy()); ?></p></div><?php endif; ?>
             <?php if (!empty($_GET['job_stopped'])) : ?><div class="notice notice-warning is-dismissible"><p>Background job stopped and the stuck Reel/social rows were removed from the queue. WordPress posts stay. Open <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-now')); ?>">Now in queue</a> or Generate Reel now.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_resumed'])) : ?><div class="notice notice-info is-dismissible"><p>Resuming the Reel build. Finished steps are kept, so nothing already rendered is paid for again. This page updates itself.</p></div><?php endif; ?>
+            <?php if (!empty($_GET['reel_deleted'])) : ?><div class="notice notice-warning is-dismissible"><p>That Reel was removed from the social queue. The WordPress article stays. Generate Reel now if you want a new one.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_script_regen'])) : ?><div class="notice notice-info is-dismissible"><p>Generating a new teach script. Older Reel video/voice files for that row were deleted. This page updates itself while it rebuilds.</p></div><?php endif; ?>
             <?php if (!empty($_GET['reel_dev_cheap'])) : ?><div class="notice notice-warning is-dismissible"><p><?php echo ((string) $_GET['reel_dev_cheap'] === '1') ? esc_html('Dev cheap test is ON. New Reels use no talking face + Veo Lite 4s hooks. Your production model picks stay saved.') : esc_html('Dev cheap test is OFF. New Reels use your production model picks again.'); ?></p></div><?php endif; ?>
             <?php if ($this->social_reel_dev_cheap_on($settings)) : ?><div class="notice notice-warning"><p><strong>Dev cheap test is on.</strong> <?php echo esc_html($this->social_reel_dev_cheap_summary($settings)); ?> Turn it off before real publishing spend.</p></div><?php endif; ?>
