@@ -1165,6 +1165,77 @@ trait TechnoRapper_AI_Wire_Admin {
         exit;
     }
 
+    public function raise_daily_cap() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to run this task.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_raise_daily_cap');
+        $result = $this->apply_daily_cap_raise(absint($_POST['max_posts_per_day'] ?? 0));
+        $args = array(
+            'page' => 'tr-ai-wire-queue',
+            'queue_notice' => !empty($result['raised']) ? 'cap_raised' : 'cap_not_raised',
+        );
+        if (!empty($result['raised'])) {
+            $args['daily_cap'] = (int) $result['cap'];
+            if (!empty($result['started'])) {
+                $args['cap_started'] = '1';
+            }
+        }
+        wp_safe_redirect(add_query_arg($args, admin_url('admin.php')));
+        exit;
+    }
+
+    private function suggested_daily_cap($current, $waiting) {
+        $current = max(0, (int) $current);
+        $waiting = max(0, (int) $waiting);
+        $room = $waiting > 0 ? $waiting : 10;
+        $suggested = min(2000, max($current + 10, min(350, $current + $room)));
+        if ($suggested <= $current) {
+            $suggested = min(2000, $current + 10);
+        }
+        return (int) $suggested;
+    }
+
+    /**
+     * Raise only Maximum posts per day, then start a fetch when a story can run.
+     *
+     * @return array{raised:bool,cap:int,started:bool,message:string}
+     */
+    private function apply_daily_cap_raise($requested) {
+        $current = (int) $this->settings()['max_posts_per_day'];
+        $requested = min(2000, max(0, (int) $requested));
+        if ($requested <= $current) {
+            return array(
+                'raised' => false,
+                'cap' => $current,
+                'started' => false,
+                'message' => 'Enter a daily cap higher than ' . $current . '.',
+            );
+        }
+        $stored = get_option(self::OPTION, array());
+        if (!is_array($stored)) {
+            $stored = array();
+        }
+        $stored['max_posts_per_day'] = $requested;
+        update_option(self::OPTION, $stored, false);
+        $started = false;
+        $s = $this->settings();
+        if ($this->remaining_posts_today($s) > 0 && $this->next_pipeline_item_id() > 0) {
+            $this->enqueue_background_job('fetch');
+            $started = true;
+        }
+        $message = 'Daily cap is now ' . $requested . '.';
+        if ($started) {
+            $message .= ' The queue is running.';
+        }
+        return array(
+            'raised' => true,
+            'cap' => $requested,
+            'started' => $started,
+            'message' => $message,
+        );
+    }
+
     private function render_queue_stall_notice() {
         $stall = $this->editorial_queue_stall();
         if (!$stall) {
@@ -1180,6 +1251,19 @@ trait TechnoRapper_AI_Wire_Admin {
                     <?php wp_nonce_field('tr_ai_wire_run_priority'); ?>
                     <?php submit_button('Run highest priority', 'primary', 'submit', false); ?>
                 </form>
+            <?php elseif (($stall['reason'] ?? '') === 'cap') :
+                $cap_now = (int) $this->settings()['max_posts_per_day'];
+                $cap_next = $this->suggested_daily_cap($cap_now, (int) ($stall['count'] ?? 0));
+                if ($cap_next > $cap_now) : ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-left:8px;">
+                    <input type="hidden" name="action" value="tr_ai_wire_raise_daily_cap">
+                    <?php wp_nonce_field('tr_ai_wire_raise_daily_cap'); ?>
+                    <label for="tr-ai-wire-raise-cap">New daily cap
+                        <input id="tr-ai-wire-raise-cap" type="number" min="<?php echo esc_attr((string) ($cap_now + 1)); ?>" max="2000" name="max_posts_per_day" value="<?php echo esc_attr((string) $cap_next); ?>" style="width:5em;">
+                    </label>
+                    <?php submit_button('Raise cap and run', 'primary', 'submit', false); ?>
+                </form>
+                <?php endif; ?>
             <?php endif; ?>
         </p></div>
         <?php
@@ -1439,9 +1523,17 @@ trait TechnoRapper_AI_Wire_Admin {
             'cleaned' => 'The queue board is clean. WordPress posts were kept. The same feeds can be ingested again.',
             'repaired' => 'Existing AI Wire posts were reassigned to homepage desks and given featured images so they can appear on the home board.',
             'priority_blocked' => 'No waiting story can run. The daily cap is full, or the desk mix is holding every row.',
+            'cap_not_raised' => 'Enter a daily cap higher than the current one.',
         );
-        if (isset($notices[$notice])) :
-            ?><div class="notice notice-<?php echo $notice === 'priority_blocked' ? 'warning' : 'success'; ?> is-dismissible"><p><?php echo esc_html($notices[$notice]); ?></p></div><?php
+        if ($notice === 'cap_raised') :
+            $raised_cap = absint($_GET['daily_cap'] ?? 0);
+            $raised_text = $raised_cap > 0 ? ('Daily cap is now ' . $raised_cap . '.') : 'Daily cap raised.';
+            if (!empty($_GET['cap_started'])) {
+                $raised_text .= ' The queue is running.';
+            }
+            ?><div class="notice notice-success is-dismissible"><p><?php echo esc_html($raised_text); ?></p></div><?php
+        elseif (isset($notices[$notice])) :
+            ?><div class="notice notice-<?php echo in_array($notice, array('priority_blocked', 'cap_not_raised'), true) ? 'warning' : 'success'; ?> is-dismissible"><p><?php echo esc_html($notices[$notice]); ?></p></div><?php
         endif;
         $this->render_queue_stall_notice();
         $this->render_social_stall_notice();

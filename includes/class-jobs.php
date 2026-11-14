@@ -24,6 +24,25 @@ trait TechnoRapper_AI_Wire_Jobs {
             }
             wp_send_json_success($this->public_job($this->enqueue_background_job('priority', array('item_id' => $priority_id))));
         }
+        if ($job_action === 'tr_ai_wire_raise_daily_cap') {
+            check_ajax_referer('tr_ai_wire_raise_daily_cap');
+            $result = $this->apply_daily_cap_raise(absint($_POST['max_posts_per_day'] ?? 0));
+            if (empty($result['raised'])) {
+                wp_send_json_error(array('message' => (string) ($result['message'] ?? 'Enter a higher daily cap.')), 400);
+            }
+            if (!empty($result['started'])) {
+                $job = get_option(self::JOB_OPTION, array());
+                $public = $this->public_job(is_array($job) ? $job : array());
+                $public['message'] = (string) $result['message'];
+                wp_send_json_success($public);
+            }
+            wp_send_json_success(array(
+                'status' => 'done',
+                'percent' => 100,
+                'message' => (string) $result['message'],
+                'effect' => 'reload',
+            ));
+        }
         if ($job_action === 'tr_ai_wire_retry_item') {
             check_ajax_referer('tr_ai_wire_retry_item_' . $item_id);
             wp_send_json_success($this->public_job($this->enqueue_background_job('retry', array('item_id' => $item_id))));
@@ -163,6 +182,7 @@ trait TechnoRapper_AI_Wire_Jobs {
             'actions' => array(
                 'tr_ai_wire_run_now',
                 'tr_ai_wire_run_priority',
+                'tr_ai_wire_raise_daily_cap',
                 'tr_ai_wire_retry_item',
                 'tr_ai_wire_force_publish_item',
                 'tr_ai_wire_run_social_queue',

@@ -3460,6 +3460,41 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('tr_ai_wire_run_priority', $html);
     }
 
+    public function test_full_cap_notice_can_raise_the_daily_limit() {
+        $this->assertSame(329, $this->invoke_private('suggested_daily_cap', array(10, 319)));
+        $this->assertSame(350, $this->invoke_private('suggested_daily_cap', array(10, 500)));
+        $this->assertSame(20, $this->invoke_private('suggested_daily_cap', array(10, 1)));
+        update_option(TechnoRapper_AI_Wire::OPTION, array(
+            'max_posts_per_day' => 10,
+            'feeds' => "https://example.com/feed.xml | Example",
+        ), false);
+        $same = $this->invoke_private('apply_daily_cap_raise', array(10));
+        $this->assertFalse($same['raised']);
+        $raised = $this->invoke_private('apply_daily_cap_raise', array(25));
+        $this->assertTrue($raised['raised']);
+        $this->assertSame(25, (int) $raised['cap']);
+        $stored = get_option(TechnoRapper_AI_Wire::OPTION, array());
+        $this->assertSame(25, (int) $stored['max_posts_per_day']);
+        $this->assertSame("https://example.com/feed.xml | Example", $stored['feeds']);
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'max_posts_per_day' => 0,
+        )), false);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'pending'), array('id' => $id));
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::CRON_HOOK);
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        ob_start();
+        $this->plugin->queue_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('post cap is full', $html);
+        $this->assertStringContainsString('Raise cap and run', $html);
+        $this->assertStringContainsString('tr_ai_wire_raise_daily_cap', $html);
+        $this->assertStringContainsString('value="10"', $html);
+    }
+
     public function test_failed_stories_do_not_stop_the_run_before_a_publishable_one() {
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
         $settings = TechnoRapper_AI_Wire::defaults();
