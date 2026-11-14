@@ -4366,6 +4366,18 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 return new WP_Error('tr_ai_wire_reel_fal_hiccup', 'Fal answered HTTP ' . $code . ' while checking the ' . $what . ($detail !== '' ? (': ' . $detail) : '.'));
             }
             $state = strtoupper((string) ($payload['status'] ?? ''));
+            // Fal marks failed/cancelled jobs as COMPLETED too — check error first.
+            if (in_array($state, array('COMPLETED', 'SUCCESS', 'OK'), true)) {
+                $status_error = trim((string) ($payload['error'] ?? ''));
+                $status_type = trim((string) ($payload['error_type'] ?? ''));
+                if ($status_error !== '' || $status_type !== '') {
+                    $why = $status_error !== '' ? $status_error : $status_type;
+                    return new WP_Error(
+                        'tr_ai_wire_reel_video_failed',
+                        'Fal could not render the ' . $what . ': ' . sanitize_text_field($why)
+                    );
+                }
+            }
             $inline = $this->social_fal_result_file_url($payload);
             if ($inline !== '' && ($state === '' || in_array($state, array('COMPLETED', 'SUCCESS', 'OK'), true))) {
                 return $this->social_fal_download_media($inline);
@@ -4377,7 +4389,41 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                     return new WP_Error('tr_ai_wire_reel_fal_hiccup', 'Could not read the finished ' . $what . ' from Fal: ' . $result_response->get_error_message());
                 }
                 $result_code = (int) wp_remote_retrieve_response_code($result_response);
-                $result = json_decode((string) wp_remote_retrieve_body($result_response), true);
+                $result_body = (string) wp_remote_retrieve_body($result_response);
+                $result = json_decode($result_body, true);
+                if ($result_code === 400) {
+                    // Race: status said COMPLETED a moment before the result was ready.
+                    if (time() >= $deadline) {
+                        return new WP_Error(
+                            'tr_ai_wire_reel_video_wait',
+                            'Fal is still generating the ' . $what . '.',
+                            array('state' => $state, 'position' => null)
+                        );
+                    }
+                    sleep(3);
+                    continue;
+                }
+                if (in_array($result_code, array(401, 403, 404, 422, 499), true) || $result_code >= 500) {
+                    $detail = '';
+                    if (is_array($result)) {
+                        $raw = $result['detail'] ?? ($result['error'] ?? '');
+                        if (is_array($raw)) {
+                            $first = reset($raw);
+                            $raw = is_array($first) ? (string) ($first['msg'] ?? wp_json_encode($first)) : (string) $first;
+                        }
+                        $detail = trim(sanitize_text_field((string) $raw));
+                    }
+                    $hint = $result_code === 404
+                        ? ' The finished file expired at Fal before it was saved here.'
+                        : ' The MP4 was not saved on this site.';
+                    return new WP_Error(
+                        'tr_ai_wire_reel_video_failed',
+                        'Fal finished the ' . $what . ' but the result could not be read (HTTP ' . $result_code . ')'
+                            . ($detail !== '' ? (': ' . $detail) : '.')
+                            . $hint
+                            . ' Click Resume to run only this last step again.'
+                    );
+                }
                 if ($result_code < 200 || $result_code >= 300) {
                     return new WP_Error('tr_ai_wire_reel_fal_hiccup', 'Fal result HTTP ' . $result_code . ' for the ' . $what . '.');
                 }
@@ -4519,7 +4565,16 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $this->social_fal_pending_save($owner, $meta, $pending);
             $message = $this->social_fal_wait_message($pending, $label, $polled->get_error_data());
             $this->social_reel_progress_note($post_id, $message);
-            if ((time() - (int) ($pending['submitted_at'] ?? time())) > 1800) {
+            $age = time() - (int) ($pending['submitted_at'] ?? time());
+            // Hard stop so one Fal step cannot grind for hours across Resume clicks.
+            if ($age > 2700) {
+                $this->social_fal_pending_clear($owner, $meta);
+                return new WP_Error(
+                    'tr_ai_wire_reel_video_failed',
+                    ucfirst($label) . ' timed out after 45 minutes at Fal (request id ' . (string) $pending['request_id'] . '). That request was abandoned. Click Resume to start only this step again.'
+                );
+            }
+            if ($age > 1800) {
                 return new WP_Error(
                     'tr_ai_wire_reel_fal_slow',
                     ucfirst($label) . ' has been at Fal for over 30 minutes (request id ' . (string) $pending['request_id'] . '). It may still finish: click Resume to keep waiting, or check that request on the Fal dashboard.'

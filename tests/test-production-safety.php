@@ -3399,6 +3399,26 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertNotSame($job_id, $replacement['id']);
     }
 
+    public function test_now_queue_page_drops_stale_finished_background_jobs() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        update_option(TechnoRapper_AI_Wire::JOB_OPTION, array(
+            'id' => 'stale-job',
+            'status' => 'done',
+            'kind' => 'social_pack',
+            'pack_kind' => 'reel',
+            'percent' => 100,
+            'message' => 'Your Reel is building. B-roll motion rendering at Fal for 13s.',
+            'created_at' => time() - 26000,
+            'updated_at' => time() - 25000,
+        ), false);
+        ob_start();
+        $this->plugin->now_queue_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('No background job is stored right now.', $html);
+        $this->assertSame(array(), get_option(TechnoRapper_AI_Wire::JOB_OPTION, array()));
+    }
+
     public function test_now_queue_page_lists_live_website_and_social_rows() {
         $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
         wp_set_current_user($admin_id);
@@ -9433,6 +9453,135 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
         $this->assertNotSame('processing', (string) $row['status']);
         $this->assertStringNotContainsString('worker stopped before recording', (string) $row['error_text']);
+        remove_all_filters('pre_http_request');
+    }
+
+    public function test_worker_parks_hold_reels_that_ran_over_45_minutes() {
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Ancient reel'));
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        global $wpdb;
+        $old = gmdate('Y-m-d H:i:s', time() - 3600);
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'attempts' => 12,
+            'error_text' => 'Finished MP4 rendering at Fal for 40m.',
+            'created_at' => $old,
+            'updated_at' => gmdate('Y-m-d H:i:s', time() - 120),
+        ));
+        $id = (int) $wpdb->insert_id;
+        $this->plugin->process_social_queue();
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('needs_review', (string) $row['status']);
+        $this->assertStringContainsString('45 minutes', (string) $row['error_text']);
+    }
+
+    public function test_fal_completed_with_error_field_fails_without_keeping_the_request() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        $submits = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$submits) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, '/requests/') === false) {
+                $submits++;
+                return $this->mock_http_ok(array('request_id' => 'fal-req-failed-complete', 'status' => 'IN_QUEUE'));
+            }
+            if (strpos($url, '/status') !== false) {
+                return $this->mock_http_ok(array(
+                    'status' => 'COMPLETED',
+                    'error' => 'compose rejected the audio track',
+                    'error_type' => 'bad_request',
+                ));
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Failed complete'));
+        $args = array(
+            'owner_id' => $post_id,
+            'post_id' => $post_id,
+            'meta_key' => '_tr_ai_wire_fal_compose_request',
+            'endpoint' => 'fal-ai/ffmpeg-api/compose',
+            'label' => 'finished MP4',
+            'estimate' => 0.01,
+            'enforce_budget' => false,
+            'settings' => array(),
+            'payload' => function () {
+                return array('tracks' => array());
+            },
+            'store' => function () {
+                return array('id' => 1);
+            },
+        );
+        $result = $this->invoke_private('social_fal_step', array($args));
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_video_failed', $result->get_error_code());
+        $this->assertStringContainsString('compose rejected', $result->get_error_message());
+        $this->assertSame(1, $submits);
+        $this->assertSame(array(), $this->invoke_private('social_fal_pending_get', array($post_id, '_tr_ai_wire_fal_compose_request')));
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
+        remove_all_filters('pre_http_request');
+    }
+
+    public function test_fal_result_http_403_clears_pending_so_resume_can_resubmit() {
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal-test-key', false);
+        add_filter('tr_ai_wire_fal_poll_seconds', function () {
+            return 0;
+        });
+        $submits = 0;
+        add_filter('pre_http_request', function ($preempt, $args, $url) use (&$submits) {
+            $url = (string) $url;
+            if (strpos($url, 'queue.fal.run') !== false && strpos($url, '/requests/') === false) {
+                $submits++;
+                return $this->mock_http_ok(array(
+                    'request_id' => '01a1d682-9e06-7b10-b025-736904204bb2',
+                    'status' => 'IN_QUEUE',
+                    'response_url' => 'https://queue.fal.run/fal-ai/ffmpeg-api/requests/01a1d682-9e06-7b10-b025-736904204bb2',
+                ));
+            }
+            if (strpos($url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            if (strpos($url, 'queue.fal.run') !== false) {
+                return array(
+                    'headers' => array(),
+                    'body' => wp_json_encode(array('detail' => 'Forbidden')),
+                    'response' => array('code' => 403, 'message' => 'Forbidden'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return new WP_Error('blocked', 'Unexpected URL ' . $url);
+        }, 10, 3);
+        $post_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Result 403'));
+        $args = array(
+            'owner_id' => $post_id,
+            'post_id' => $post_id,
+            'meta_key' => '_tr_ai_wire_fal_compose_request',
+            'endpoint' => 'fal-ai/ffmpeg-api/compose',
+            'label' => 'finished MP4',
+            'estimate' => 0.01,
+            'enforce_budget' => false,
+            'settings' => array(),
+            'payload' => function () {
+                return array('tracks' => array());
+            },
+            'store' => function () {
+                return array('id' => 1);
+            },
+        );
+        $result = $this->invoke_private('social_fal_step', array($args));
+        $this->assertWPError($result);
+        $this->assertSame('tr_ai_wire_reel_video_failed', $result->get_error_code());
+        $this->assertStringContainsString('HTTP 403', $result->get_error_message());
+        $this->assertStringContainsString('Resume', $result->get_error_message());
+        $this->assertSame(1, $submits);
+        $this->assertSame(array(), $this->invoke_private('social_fal_pending_get', array($post_id, '_tr_ai_wire_fal_compose_request')));
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
         remove_all_filters('pre_http_request');
     }
 
