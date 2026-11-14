@@ -2232,6 +2232,90 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, (int) $summary['new_items']);
     }
 
+    public function test_scoped_fetch_runs_one_desk_or_one_feed() {
+        $settings = array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'max_posts_per_day' => 5,
+            'tenants' => array(
+                array(
+                    'id' => 'techfeed',
+                    'url' => 'https://example.com/tech-only.xml',
+                    'name' => 'Tech desk',
+                    'enabled' => 1,
+                    'desk_lane' => 'tech',
+                    'pin_to_homepage' => 1,
+                    'map_post_type' => 'post',
+                    'map_taxonomy' => 'category',
+                    'map_terms' => array(),
+                    'map_auto_desk' => 1,
+                    'map_post_status' => 'auto',
+                    'map_title' => 'rewrite',
+                    'map_date' => 'now',
+                    'map_content' => 'rewrite',
+                ),
+                array(
+                    'id' => 'comicsfeed',
+                    'url' => 'https://example.com/comics-only.xml',
+                    'name' => 'Comics desk',
+                    'enabled' => 1,
+                    'desk_lane' => 'comics',
+                    'pin_to_homepage' => 1,
+                    'map_post_type' => 'post',
+                    'map_taxonomy' => 'category',
+                    'map_terms' => array(),
+                    'map_auto_desk' => 1,
+                    'map_post_status' => 'auto',
+                    'map_title' => 'rewrite',
+                    'map_date' => 'now',
+                    'map_content' => 'rewrite',
+                ),
+            ),
+        ));
+        update_option(TechnoRapper_AI_Wire::OPTION, $settings, false);
+        $comics_id = $this->create_queue_item();
+        $tech_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'feed_url' => 'https://example.com/tech-only.xml',
+            'feed_name' => 'Tech desk',
+            'source_title' => 'A phone chip update',
+        ), array('id' => $tech_id));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'feed_url' => 'https://example.com/comics-only.xml',
+            'feed_name' => 'Comics desk',
+            'source_title' => 'A new Justice League story',
+        ), array('id' => $comics_id));
+        try {
+            $this->invoke_private('bind_editorial_fetch_scope', array(array('desk_lane' => 'comics')));
+            $this->assertSame($comics_id, $this->invoke_private('next_pipeline_item_id'));
+            $this->assertTrue($this->invoke_private('tenant_in_fetch_scope', array($settings['tenants'][1])));
+            $this->assertFalse($this->invoke_private('tenant_in_fetch_scope', array($settings['tenants'][0])));
+            $this->invoke_private('bind_editorial_fetch_scope', array(array('feed_url' => 'https://example.com/tech-only.xml')));
+            $this->assertSame($tech_id, $this->invoke_private('next_pipeline_item_id'));
+            $this->assertSame('Fetching Tech desk', $this->invoke_private('fetch_scope_label', array($settings)));
+        } finally {
+            $this->invoke_private('bind_editorial_fetch_scope', array(array()));
+        }
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        ob_start();
+        $this->invoke_private('render_scoped_fetch_controls', array($settings, true));
+        $controls = ob_get_clean();
+        $this->assertStringContainsString('Fetch tech', $controls);
+        $this->assertStringContainsString('Fetch comics', $controls);
+        $this->assertStringContainsString('name="desk_lane" value="tech"', $controls);
+        $this->assertStringContainsString('name="desk_lane" value="comics"', $controls);
+        $this->assertStringContainsString('Fetch Tech desk', $controls);
+        $this->assertStringContainsString('Fetch Comics desk', $controls);
+        $this->assertStringContainsString('https://example.com/tech-only.xml', $controls);
+        ob_start();
+        $this->invoke_private('render_tenant_fields', array('tenants][0', $settings['tenants'][0], false));
+        $card = ob_get_clean();
+        $this->assertStringContainsString('Fetch this feed', $card);
+        $this->assertStringContainsString('feed_url=', $card);
+    }
+
     public function test_writer_and_reviewer_prompts_include_google_ranking_steps() {
         $writer = $this->invoke_private('writer_prompt', array('A'));
         $reviewer = $this->invoke_private('reviewer_prompt', array(TechnoRapper_AI_Wire::defaults()));

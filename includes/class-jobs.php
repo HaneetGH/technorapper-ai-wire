@@ -14,7 +14,7 @@ trait TechnoRapper_AI_Wire_Jobs {
         $item_id = absint($_POST['item_id'] ?? $_GET['item_id'] ?? 0);
         if ($job_action === 'tr_ai_wire_run_now') {
             check_ajax_referer('tr_ai_wire_run_now');
-            wp_send_json_success($this->public_job($this->enqueue_background_job('fetch')));
+            wp_send_json_success($this->public_job($this->enqueue_background_job('fetch', $this->fetch_scope_from_request())));
         }
         if ($job_action === 'tr_ai_wire_retry_item') {
             check_ajax_referer('tr_ai_wire_retry_item_' . $item_id);
@@ -432,6 +432,8 @@ trait TechnoRapper_AI_Wire_Jobs {
                 body.set('action', 'tr_ai_wire_start_job');
                 body.set('job_action', action);
                 body.set('item_id', itemId);
+                body.set('feed_url', url.searchParams.get('feed_url') || '');
+                body.set('desk_lane', url.searchParams.get('desk_lane') || '');
                 body.set('_ajax_nonce', url.searchParams.get('_wpnonce') || '');
                 show({status: 'running', percent: 4, message: 'Starting…', item_id: itemId});
                 startFrom(body);
@@ -459,8 +461,14 @@ trait TechnoRapper_AI_Wire_Jobs {
                 if (function_exists('set_time_limit')) {
                     set_time_limit(900);
                 }
-                $this->note_background_progress(8, 'Fetching feeds');
-                $summary = $this->process_feeds(array('foreground' => true, 'reason' => 'manual'));
+                $fetch_scope = array(
+                    'desk_lane' => sanitize_key((string) ($job['fetch_lane'] ?? '')),
+                    'feed_url' => esc_url_raw((string) ($job['fetch_feed'] ?? ''), array('http', 'https')),
+                );
+                try {
+                $this->bind_editorial_fetch_scope($fetch_scope);
+                $this->note_background_progress(8, $this->fetch_scope_label());
+                $summary = $this->process_feeds(array_merge(array('foreground' => true, 'reason' => 'manual'), $fetch_scope));
                 $rounds = 0;
                 $idle_rounds = 0;
                 while ($rounds < 20 && is_array($summary) && empty($summary['skipped'])) {
@@ -471,6 +479,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                     if ($this->remaining_posts_today($s) <= 0) {
                         break;
                     }
+                    $this->bind_editorial_fetch_scope($fetch_scope);
                     $waiting = $this->next_pipeline_item_id();
                     $has_unfinished = false;
                     if ($waiting > 0) {
@@ -487,7 +496,7 @@ trait TechnoRapper_AI_Wire_Jobs {
                     }
                     $rounds++;
                     $this->note_background_progress(25 + min(60, $rounds * 3), 'Filling today\'s post cap');
-                    $more = $this->process_feeds(array('foreground' => true, 'reason' => 'continue'));
+                    $more = $this->process_feeds(array_merge(array('foreground' => true, 'reason' => 'continue'), $fetch_scope));
                     if (!is_array($more)) {
                         break;
                     }
@@ -506,6 +515,9 @@ trait TechnoRapper_AI_Wire_Jobs {
                 $message = $this->background_fetch_message($summary);
                 $failed = !empty($summary['skipped']);
                 $this->finish_background_job($message . ' Refresh the queue to see new rows.', $failed ? 'error' : 'done');
+                } finally {
+                    $this->bind_editorial_fetch_scope(array());
+                }
             } elseif ($job['kind'] === 'retry') {
                 $this->note_background_progress(15, 'Retrying item');
                 $this->retry_queue_item((int) $job['item_id']);
@@ -680,6 +692,21 @@ trait TechnoRapper_AI_Wire_Jobs {
         return trim($headline . ' ' . $error);
     }
 
+    private function fetch_scope_from_request() {
+        $lane = sanitize_key(wp_unslash($_POST['desk_lane'] ?? $_GET['desk_lane'] ?? ''));
+        if (!in_array($lane, array('tech', 'comics'), true)) {
+            $lane = '';
+        }
+        $feed = esc_url_raw(wp_unslash($_POST['feed_url'] ?? $_GET['feed_url'] ?? ''), array('http', 'https'));
+        if ($feed !== '' && !wp_http_validate_url($feed)) {
+            $feed = '';
+        }
+        return array(
+            'desk_lane' => $lane,
+            'feed_url' => $feed,
+        );
+    }
+
     private function enqueue_background_job($kind, $args = array(), $force = false) {
         $current = get_option(self::JOB_OPTION, array());
         if (is_array($current) && in_array($current['status'] ?? '', array('queued', 'running'), true)) {
@@ -700,6 +727,8 @@ trait TechnoRapper_AI_Wire_Jobs {
             'item_id' => absint($args['item_id'] ?? 0),
             'regenerate' => !empty($args['regenerate']),
             'pack_kind' => sanitize_key((string) ($args['pack_kind'] ?? '')),
+            'fetch_lane' => in_array(sanitize_key((string) ($args['desk_lane'] ?? '')), array('tech', 'comics'), true) ? sanitize_key((string) $args['desk_lane']) : '',
+            'fetch_feed' => esc_url_raw((string) ($args['feed_url'] ?? ''), array('http', 'https')),
             'status' => 'queued',
             'percent' => 0,
             'message' => 'Queued. The page stays put while a background worker runs this.',

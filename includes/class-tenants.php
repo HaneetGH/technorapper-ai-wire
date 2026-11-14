@@ -249,6 +249,9 @@ trait TechnoRapper_AI_Wire_Tenants {
             &nbsp;
             <label><input type="radio" name="<?php echo esc_attr($base); ?>[desk_lane]" value="comics" <?php checked($this->tenant_desk_lane($tenant), 'comics'); ?>> Comics</label>
             <span class="description" style="display:block;margin-top:4px;">Comics-lane posts count toward Comics desk posts per day. Tech is the default newsroom mix.</span></p>
+            <?php if (!$is_new && !empty($tenant['url']) && !empty($tenant['enabled'])) : ?>
+                <p><a class="button" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=tr_ai_wire_run_now&feed_url=' . rawurlencode($tenant['url'])), 'tr_ai_wire_run_now')); ?>">Fetch this feed</a> <span class="description">Pulls only this RSS feed and writes its new stories. Other feeds stay queued.</span></p>
+            <?php endif; ?>
             <details>
                 <summary>Map content for this tenant</summary>
                 <p><label>Post type <select name="<?php echo esc_attr($base); ?>[map_post_type]"><?php foreach ($this->mappable_post_types() as $type => $label) : ?><option value="<?php echo esc_attr($type); ?>" <?php selected($tenant['map_post_type'], $type); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label></p>
