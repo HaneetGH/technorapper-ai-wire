@@ -8982,7 +8982,11 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('queued', $status);
         $this->assertSame(0, $x_calls);
         $this->assertFalse(wp_next_scheduled(TechnoRapper_AI_Wire::SOCIAL_CRON_HOOK));
-        $blocked = $this->invoke_private('publish_x_post', array('Hello', '', get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array())));
+        $blocked = $this->invoke_private('publish_social_item', array(
+            array('platform' => 'x', 'post_id' => $post_id),
+            get_option(TechnoRapper_AI_Wire::SOCIAL_CREDENTIALS_OPTION, array()),
+            $this->invoke_private('settings'),
+        ));
         $this->assertWPError($blocked);
         $this->assertSame('tr_ai_wire_x_disabled', $blocked->get_error_code());
     }

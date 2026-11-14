@@ -1335,14 +1335,14 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function publish_social_item($row, $credentials, $settings) {
+        if (($row['platform'] ?? '') === 'x' && empty($settings['social_x_enabled'])) {
+            return new WP_Error('tr_ai_wire_x_disabled', 'X posting is off, so the X job did not run.');
+        }
         $prepared = $this->prepare_social_delivery($row, $settings);
         if (is_wp_error($prepared)) {
             return $prepared;
         }
         if ($row['platform'] === 'x') {
-            if (empty($settings['social_x_enabled'])) {
-                return new WP_Error('tr_ai_wire_x_disabled', 'X posting is off, so the X job did not run.');
-            }
             if (!self::x_credentials_ready($credentials)) {
                 return new WP_Error('tr_ai_wire_x_missing_token', 'X is not connected. Save API Key, API Key Secret, Access Token, and Access Token Secret from the X developer portal Keys and tokens page.');
             }
@@ -4649,9 +4649,6 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function publish_x_post($text, $image_path, $credentials) {
-        if (empty($this->settings()['social_x_enabled'])) {
-            return new WP_Error('tr_ai_wire_x_disabled', 'X posting is off, so the X job did not run.');
-        }
         if (is_string($credentials)) {
             $credentials = array_merge(self::social_credential_defaults(), array('x_user_access_token' => $credentials));
         }
