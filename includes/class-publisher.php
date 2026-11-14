@@ -1077,8 +1077,59 @@ trait TechnoRapper_AI_Wire_Publisher {
         if (function_exists('wp_cache_clear_cache')) {
             wp_cache_clear_cache();
         }
-        if (function_exists('litepeed_purge_url')) {
-            litepeed_purge_url(home_url('/'));
+        if (function_exists('litespeed_purge_url')) {
+            litespeed_purge_url(home_url('/'));
+        }
+        if (get_post_status($post_id) === 'publish') {
+            $this->purge_public_page_cache($post_id);
+        }
+    }
+
+    /**
+     * The host page cache (Endurance/nginx) does not register its purge hooks
+     * on a cron request, and a feed run publishes from cron. Without this, the
+     * homepage keeps the previous copy for the cache TTL (about two hours).
+     */
+    private function purge_public_page_cache($post_id) {
+        $post_id = (int) $post_id;
+        $urls = array(home_url('/'));
+        $permalink = $post_id > 0 ? get_permalink($post_id) : '';
+        if (is_string($permalink) && $permalink !== '') {
+            $urls[] = $permalink;
+        }
+        foreach (get_the_category($post_id) as $cat) {
+            $link = get_category_link($cat);
+            if (!is_wp_error($link) && is_string($link) && $link !== '') {
+                $urls[] = $link;
+            }
+        }
+        do_action('epc_purge');
+        foreach ($urls as $url) {
+            do_action('epc_purge_request', $url);
+        }
+        $host = wp_parse_url(home_url(), PHP_URL_HOST);
+        if (is_string($host) && $host !== '') {
+            $args = array(
+                'method' => 'PURGE',
+                'timeout' => 2,
+                'blocking' => false,
+                'sslverify' => false,
+                'redirection' => 0,
+                'headers' => array('host' => $host),
+                'user-agent' => 'WordPress/' . get_bloginfo('version') . '; ' . home_url() . '; AI-Wire',
+            );
+            foreach ($urls as $url) {
+                $path = wp_parse_url($url, PHP_URL_PATH);
+                if (!is_string($path) || $path === '') {
+                    $path = '/';
+                }
+                wp_remote_request('http://127.0.0.1:8080' . $path, $args);
+                wp_remote_request('https://127.0.0.1:8443' . $path, $args);
+            }
+        }
+        $index = WP_CONTENT_DIR . '/endurance-page-cache/_index.html';
+        if (is_file($index)) {
+            unlink($index);
         }
     }
 

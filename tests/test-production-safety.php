@@ -2097,6 +2097,42 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertEmpty($query->get('meta_query'));
     }
 
+    public function test_publishing_purges_the_host_homepage_cache() {
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Cache purge story',
+        ));
+        $seen = array();
+        $callback = function ($pre, $args, $url) use (&$seen) {
+            if (isset($args['method']) && $args['method'] === 'PURGE') {
+                $seen[] = $url;
+                return array(
+                    'headers' => array(),
+                    'body' => '',
+                    'response' => array('code' => 200, 'message' => 'OK'),
+                    'cookies' => array(),
+                    'filename' => null,
+                );
+            }
+            return $pre;
+        };
+        add_filter('pre_http_request', $callback, 10, 3);
+        $this->invoke_private('refresh_front_page', array($post_id));
+        remove_filter('pre_http_request', $callback, 10);
+        $joined = implode(' ', $seen);
+        $this->assertStringContainsString('http://127.0.0.1:8080/', $joined);
+        $this->assertStringContainsString('https://127.0.0.1:8443/', $joined);
+        $draft_id = $this->factory()->post->create(array(
+            'post_status' => 'draft',
+            'post_title' => 'Draft stays cached',
+        ));
+        $seen = array();
+        add_filter('pre_http_request', $callback, 10, 3);
+        $this->invoke_private('refresh_front_page', array($draft_id));
+        remove_filter('pre_http_request', $callback, 10);
+        $this->assertSame(array(), $seen);
+    }
+
     public function test_homepage_exclusion_does_not_add_a_meta_query() {
         $query = new WP_Query();
         $query->is_home = true;
