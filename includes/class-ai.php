@@ -1267,15 +1267,15 @@ trait TechnoRapper_AI_Wire_AI {
         return $item;
     }
 
-    private function policy_guard_rewrite($rewrite) {
-        return $this->policy_guard_text($this->policy_flatten_rewrite($rewrite), 'article');
+    private function policy_guard_rewrite($rewrite, $s = null) {
+        return $this->policy_guard_text($this->policy_flatten_rewrite($rewrite), 'article', $s);
     }
 
     private function policy_guard_social_copy($copy) {
         return $this->policy_guard_text($this->policy_flatten_social_copy($copy), 'social');
     }
 
-    private function policy_guard_text($text, $context = 'content') {
+    private function policy_guard_text($text, $context = 'content', $s = null) {
         $text = trim(wp_strip_all_tags((string) $text));
         if ($text === '') {
             return true;
@@ -1283,6 +1283,9 @@ trait TechnoRapper_AI_Wire_AI {
         $local = $this->policy_local_hits($text);
         if ($local) {
             return new WP_Error('tr_ai_wire_policy', $this->policy_hold_message($context, true, array()));
+        }
+        if (is_array($s) && !empty($s['_admin_force_publish'])) {
+            return true;
         }
         $moderation = $this->openai_moderation($text);
         if (is_wp_error($moderation)) {

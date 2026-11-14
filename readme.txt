@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.24
+Stable tag: 0.3.25
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.25 =
+* Force publish posts an article that OpenAI Moderation held, including a violence flag. The profanity/slur list still holds that article.
 
 = 0.3.24 =
 * A post published by the feed job clears the host homepage cache. That cache was keeping the home page on the previous copy.
@@ -334,6 +337,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.25 =
+Force publish posts an article held by OpenAI Moderation. A profanity/slur hit still holds it.
 
 = 0.3.24 =
 New posts clear the homepage cache when the feed job publishes them.
