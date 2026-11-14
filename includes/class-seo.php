@@ -277,6 +277,9 @@ trait TechnoRapper_AI_Wire_SEO {
 
     private function rewrite_seo_blockers($rewrite, $s, $review = null) {
         $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
+        if ($this->people_are_searching($review)) {
+            return array();
+        }
         $seo = is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : $this->analyze_rewrite_seo($rewrite);
         $reasons = array();
         $score = (int) ($seo['seo_score'] ?? 0);

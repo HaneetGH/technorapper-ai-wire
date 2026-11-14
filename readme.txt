@@ -57,7 +57,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Changelog ==
 
 = 0.3.9 =
-* Website posts still go live when the reviewer marks a story as top pop-culture news, or as something everyone is searching for, even if the review score or the SEO score is under the minimum. Reject, policy, thin lists, and the social score floor stay in place.
+* Website posts still go live when the reviewer marks a story as top pop-culture news, or as something people are searching for on the internet, even if the review score or the SEO score is under the minimum. Internet search means Google and other search engines, not search on this website. A searched topic is posted here, including a list or a thin item. Reject, policy, and the social score floor stay in place.
 
 = 0.3.8 =
 * Stopped Reels on Social queue (needs_review) get a Delete from queue button. The WordPress article stays; that Reel attempt is removed.
@@ -285,7 +285,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.3.9 =
-Top pop-culture stories and stories everyone is searching for now publish on the website under the review-score and SEO-score minimums. Social stills keep their score floor.
+Top pop-culture stories publish on the website under the review-score and SEO-score minimums. A story people are searching for on the internet is posted on this website. Social stills keep their score floor.
 
 = 0.3.8 =
 Stopped Reels on Social queue can be deleted from the queue without touching the WordPress article.

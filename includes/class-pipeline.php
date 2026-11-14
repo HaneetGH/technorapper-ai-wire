@@ -136,12 +136,21 @@ trait TechnoRapper_AI_Wire_Pipeline {
         if (in_array($status, array('draft', 'published', 'error'), true)) {
             return;
         }
+        $review = !empty($item['review_json']) ? json_decode($item['review_json'], true) : null;
+        $review = is_array($review) ? $review : null;
         $value_hold = $this->story_value_local_reason($item);
-        if ($value_hold !== '') {
-            if ($status !== 'quarantined') {
-                $this->quarantine_item($id, $value_hold, $item);
+        // A list or deal with no review yet still goes to the writer so the
+        // reviewer can say whether people are searching it on the internet.
+        // Once that flag is true, this website posts it. A thin source with
+        // nothing to search is still held before a model call.
+        if ($value_hold !== '' && !$this->people_are_searching($review)) {
+            $awaiting_search_judgment = $review === null && $this->story_value_local_is_filler($item);
+            if (!$awaiting_search_judgment) {
+                if ($status !== 'quarantined') {
+                    $this->quarantine_item($id, $value_hold, $item);
+                }
+                return;
             }
-            return;
         }
         $s = $this->settings_for_item($item, $s);
         if ($status === 'quarantined') {

@@ -2194,6 +2194,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Never raise the SEO score', $reviewer);
         $this->assertStringContainsString('pop_culture_top', $reviewer);
         $this->assertStringContainsString('everyone_searching', $reviewer);
+        $this->assertStringContainsString('public internet', $reviewer);
+        $this->assertStringContainsString('does not mean search on this website', $reviewer);
+        $this->assertStringContainsString('publish the article on this website', $reviewer);
         $this->assertStringContainsString('does not change the 0-100 score', $reviewer);
     }
 
@@ -2213,7 +2216,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('fact_flags as []', $input);
         $this->assertStringContainsString('If a human editor would publish this, score 85', $input);
         $this->assertStringContainsString('If the 90 checklist is met, score 90 or higher', $input);
-        $this->assertStringContainsString('pop_culture_top or everyone_searching', $input);
+        $this->assertStringContainsString('people searching on the public internet, not search on this website', $input);
+        $this->assertStringContainsString('If people are searching for this on the internet, set everyone_searching true', $input);
         $this->assertStringContainsString('Social still needs 90', $input);
         $this->assertStringNotContainsString('_tr_score_polish', $input);
     }
@@ -3108,11 +3112,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 return $preempt;
             }
             $calls++;
-            $output = $calls === 1 ? array(
-                'title' => 'Apple announces the M5 chip',
-                'lede' => 'A concise summary.',
-                'body_html' => '<p>Grounded article body about the M5 launch.</p>',
-            ) : array(
+            $raw = isset($args['body']) ? (string) $args['body'] : '';
+            $is_review = strpos($raw, 'PROPOSED ARTICLE') !== false;
+            $output = $is_review ? array(
                 'verdict' => 'pass',
                 'score' => 92,
                 'policy_flags' => array(),
@@ -3125,6 +3127,15 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                     'adds_value' => true,
                     'reason' => 'Named chip launch readers will search.',
                 ),
+                'audience' => array(
+                    'pop_culture_top' => false,
+                    'everyone_searching' => false,
+                    'reason' => 'People are not searching this on the internet.',
+                ),
+            ) : array(
+                'title' => 'Apple announces the M5 chip',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body about the M5 launch.</p>',
             );
             return array(
                 'headers' => array(),
@@ -11240,7 +11251,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array(), $this->invoke_private('rewrite_seo_blockers', array($rewrite, $settings, $review)));
         $missing_keyphrase = $rewrite;
         $missing_keyphrase['seo']['has_keyphrase'] = false;
-        $this->assertStringContainsString('no focus keyphrase', implode(' ', $this->invoke_private('rewrite_seo_blockers', array($missing_keyphrase, $settings, $review))));
+        $this->assertSame(array(), $this->invoke_private('rewrite_seo_blockers', array($missing_keyphrase, $settings, $review)));
         $cold = $review;
         $cold['audience'] = array('pop_culture_top' => false, 'everyone_searching' => false, 'reason' => 'Ordinary note.');
         $cold_reasons = $this->invoke_private('review_draft_blockers', array($cold, $settings));
@@ -11262,7 +11273,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('published', $row['status']);
         $post_id = (int) $row['wp_post_id'];
         $this->assertGreaterThan(0, $post_id);
-        $this->assertStringContainsString('people are searching for it', (string) get_post_meta($post_id, '_tr_ai_wire_audience_override', true));
+        $this->assertStringContainsString('people are searching for it on the internet', (string) get_post_meta($post_id, '_tr_ai_wire_audience_override', true));
         $this->assertFalse($this->invoke_private('social_article_clears_quality_gate', array($post_id, $settings)));
     }
 
@@ -11305,7 +11316,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('top pop-culture news', (string) get_post_meta((int) $row['wp_post_id'], '_tr_ai_wire_audience_override', true));
     }
 
-    public function test_audience_demand_does_not_bypass_reject_policy_or_thin_lists() {
+    public function test_internet_search_posts_a_list_while_reject_and_policy_still_hold() {
         $settings = TechnoRapper_AI_Wire::defaults();
         $hot = array(
             'pop_culture_top' => true,
@@ -11341,7 +11352,7 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'adds_value' => false,
             'reason' => 'No named change.',
         );
-        $this->assertStringContainsString('too thin', implode(' ', $this->invoke_private('review_draft_blockers', array($thin, $settings))));
+        $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($thin, $settings)));
         $ungrounded = $base;
         $ungrounded['verdict'] = 'pass';
         $ungrounded['score'] = 40;
@@ -11357,13 +11368,16 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
                 'title' => 'A useful technology update',
                 'body_html' => '<p>Grounded article body.</p>',
             )),
-            'review_json' => wp_json_encode(array_merge($base, array('verdict' => 'pass'))),
+            'review_json' => wp_json_encode(array_merge($base, array(
+                'verdict' => 'pass',
+                'score' => 40,
+            ))),
         ), array('id' => $id));
         $this->invoke_private('process_item', array($id, $settings));
         $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
-        $this->assertSame('quarantined', $row['status']);
-        $this->assertStringContainsString('best-of list', $row['error_text']);
-        $this->assertEmpty($row['wp_post_id']);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertStringContainsString('on the internet', (string) get_post_meta((int) $row['wp_post_id'], '_tr_ai_wire_audience_override', true));
     }
 
     public function test_low_seo_score_waits_for_review_instead_of_holding_first() {
