@@ -2894,6 +2894,48 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
     }
 
+    public function test_admin_force_publish_overrides_openai_moderation_violence() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held: article failed OpenAI Moderation (violence). Nothing was posted. Edit or regenerate, then retry.',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body about a reported incident.</p>',
+            )),
+            'review_json' => wp_json_encode(array(
+                'verdict' => 'pass',
+                'score' => 88,
+                'policy_flags' => array(),
+                'fact_flags' => array(),
+                'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            )),
+        ), array('id' => $id));
+        remove_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10);
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('violence' => true));
+        });
+        $rewrite = array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body about a reported incident.</p>',
+        );
+        $held = $this->invoke_private('policy_guard_rewrite', array($rewrite));
+        $this->assertInstanceOf('WP_Error', $held);
+        $this->assertStringContainsString('violence', $held->get_error_message());
+        $profanity = $this->invoke_private('policy_guard_text', array('this is bullshit', 'article', array('_admin_force_publish' => 1)));
+        $this->assertInstanceOf('WP_Error', $profanity);
+        $this->assertStringContainsString('profanity', $profanity->get_error_message());
+        $this->invoke_private('admin_force_publish_queue_item', array($id));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertGreaterThan(0, (int) $row['wp_post_id']);
+        $this->assertSame('', (string) $row['error_text']);
+        $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
+    }
+
     public function test_admin_force_publish_without_a_rewrite_stays_held() {
         $id = $this->create_queue_item();
         global $wpdb;

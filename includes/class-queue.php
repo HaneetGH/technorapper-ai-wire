@@ -63,8 +63,9 @@ trait TechnoRapper_AI_Wire_Queue {
     }
 
     /**
-     * Administrator override for a held story. Skips score, story-value, and
-     * pre-publish HOLD. Profanity and OpenAI Moderation still run.
+     * Administrator override for a held story. Skips score, story-value,
+     * pre-publish HOLD, and an OpenAI Moderation flag. The local
+     * profanity/slur list still holds the article.
      */
     private function admin_force_publish_queue_item($id) {
         $item = $this->get_item($id);
