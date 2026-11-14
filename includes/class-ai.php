@@ -1006,12 +1006,13 @@ trait TechnoRapper_AI_Wire_AI {
      */
     private function lane_has_room_for_item($item, $s, $exclude = array()) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
-        if ($this->remaining_posts_today($s) <= 0) {
-            return false;
-        }
         $comics_cap = $this->comics_desk_daily_limit($s);
+        // Desk mix off: overall daily cap stays in the feed/job loop, not create_draft.
         if ($comics_cap <= 0) {
             return true;
+        }
+        if ($this->remaining_posts_today($s) <= 0) {
+            return false;
         }
         $lane = $this->item_desk_lane($item, $s);
         $comics_used = $this->comics_desk_assigned_today($s);
