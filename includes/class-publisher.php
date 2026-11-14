@@ -1141,6 +1141,7 @@ trait TechnoRapper_AI_Wire_Publisher {
                 update_post_meta($existing_id, '_tr_ai_wire_audience_override', $audience_note);
             }
             update_post_meta($existing_id, '_tr_ai_wire_voice', $this->item_is_comic($item) ? 'comic' : 'straight');
+            update_post_meta($existing_id, '_tr_ai_wire_desk_lane', $this->item_desk_lane($item, $s) === 'comics' ? 'comics' : 'tech');
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->store_pre_publish_gate($existing_id, $rewrite, $review, $item, $s);
             $this->maybe_promote_post_status($existing_id, $s);
@@ -1181,6 +1182,7 @@ trait TechnoRapper_AI_Wire_Publisher {
                 '_tr_ai_wire_experiment_id' => sanitize_key($item['experiment_id'] ?? 'editorial-v1'),
                 '_tr_ai_wire_variant' => in_array(($item['variant'] ?? 'A'), array('A', 'B'), true) ? $item['variant'] : 'A',
                 '_tr_ai_wire_voice' => $this->item_is_comic($item) ? 'comic' : 'straight',
+                '_tr_ai_wire_desk_lane' => $this->item_desk_lane($item, $s) === 'comics' ? 'comics' : 'tech',
                 '_tr_ai_wire_source_guid' => sanitize_text_field($item['source_guid']),
                 '_tr_ai_wire_queue_id' => (int) $id,
                 '_tr_ai_wire_created_gmt' => current_time('mysql', true),

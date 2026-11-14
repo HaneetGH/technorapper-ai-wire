@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.15
+Stable tag: 0.3.16
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.16 =
+* A carousel or collage is either tech or comics. The two desks are no longer mixed, and a comics pack uses a paper-and-ink cover, red rules, and a comic-shop photo instead of the tech roundup.
 
 = 0.3.15 =
 * AI Wire → Errors graphs open post-publish and social failures by type, so the most common error is the longest bar.
@@ -307,6 +310,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.16 =
+Carousels and collages stay on one desk: tech stories and comics stories are posted separately, with a different cover for comics.
 
 = 0.3.15 =
 AI Wire → Errors shows which post-publish and social errors are happening most.
