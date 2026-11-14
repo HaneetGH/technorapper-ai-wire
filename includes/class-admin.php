@@ -390,7 +390,7 @@ trait TechnoRapper_AI_Wire_Admin {
         $x_ready = TechnoRapper_AI_Wire::x_oauth1_ready($social_credentials);
         $ig_ready = TechnoRapper_AI_Wire::instagram_credentials_ready($social_credentials);
         $yt_ready = TechnoRapper_AI_Wire::youtube_credentials_ready($social_credentials);
-        $x_on = !empty($s['social_x_enabled']) || !$x_ready;
+        $x_on = !empty($s['social_x_enabled']);
         $ig_on = !empty($s['social_instagram_enabled']) || !$ig_ready;
         $yt_on = !empty($s['social_youtube_enabled']) || !$yt_ready;
         $reel_on = !empty($s['social_reel_enabled']) || (int) ($s['social_reel_daily_limit'] ?? 0) > 0;
@@ -401,7 +401,7 @@ trait TechnoRapper_AI_Wire_Admin {
         <div class="wrap tr-ai-wire-wrap">
             <h1>Social settings</h1>
             <div class="tr-ai-wire-status">
-                <span class="tr-ai-wire-pill <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'is-on' : 'is-off'; ?>">X <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'posting' : ($x_ready ? 'connected' : 'off'); ?></span>
+                <span class="tr-ai-wire-pill <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'is-on' : 'is-off'; ?>">X <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'posting' : 'off'; ?></span>
                 <span class="tr-ai-wire-pill <?php echo !empty($s['social_instagram_enabled']) && $ig_ready ? 'is-on' : 'is-off'; ?>">Instagram <?php echo !empty($s['social_instagram_enabled']) && $ig_ready ? 'posting' : ($ig_ready ? 'connected' : 'off'); ?></span>
                 <span class="tr-ai-wire-pill <?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'is-on' : 'is-off'; ?>">YouTube <?php echo !empty($s['social_youtube_enabled']) && $yt_ready ? 'posting' : ($yt_ready ? 'connected' : 'off'); ?></span>
                 <span class="tr-ai-wire-pill <?php echo $reel_on ? 'is-on' : 'is-off'; ?>">Reels <?php echo $reel_on ? 'on' : 'off'; ?></span>
@@ -424,7 +424,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <div class="card tr-ai-wire-card">
                     <div class="tr-ai-wire-card-head">
                         <h2>X</h2>
-                        <span class="tr-ai-wire-pill <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'is-on' : 'is-off'; ?>"><?php echo !empty($s['social_x_enabled']) && $x_ready ? 'posting on' : ($x_ready ? 'connected' : 'not connected'); ?></span>
+                        <span class="tr-ai-wire-pill <?php echo !empty($s['social_x_enabled']) && $x_ready ? 'is-on' : 'is-off'; ?>"><?php echo !empty($s['social_x_enabled']) && $x_ready ? 'posting on' : 'off'; ?></span>
                     </div>
                     <p>Status: <strong><?php echo esc_html(TechnoRapper_AI_Wire::x_status_text($social_credentials)); ?></strong> · posting is <strong><?php echo !empty($s['social_x_enabled']) && TechnoRapper_AI_Wire::x_credentials_ready($social_credentials) ? 'on' : 'off'; ?></strong></p>
                     <p><label><input id="tr-social-x-enabled" type="checkbox" name="<?php echo esc_attr($option); ?>[social_x_enabled]" value="1" <?php checked($x_on); ?>> <strong>Post to X</strong></label></p>

@@ -896,7 +896,8 @@ trait TechnoRapper_AI_Wire_Social {
         if ($this->social_published_today() >= $limit) {
             global $wpdb;
             $table = $this->social_table();
-            $pending_new = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social q WHERE q.status = 'queued' AND NOT EXISTS (SELECT 1 FROM {$wpdb->prefix}tr_ai_wire_social p WHERE p.post_id = q.post_id AND p.status = 'published' AND p.updated_at >= UTC_DATE())");
+            $pending_platform_sql = $this->social_active_platform_sql('q');
+            $pending_new = $pending_platform_sql === '' ? 0 : (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social q WHERE q.status = 'queued'{$pending_platform_sql} AND NOT EXISTS (SELECT 1 FROM {$wpdb->prefix}tr_ai_wire_social p WHERE p.post_id = q.post_id AND p.status = 'published' AND p.updated_at >= UTC_DATE())");
             if ($pending_new > 0) {
                 $tomorrow = strtotime('tomorrow 00:20:00 UTC');
                 wp_schedule_single_event($tomorrow, self::SOCIAL_CRON_HOOK);
@@ -919,6 +920,9 @@ trait TechnoRapper_AI_Wire_Social {
                 break;
             }
             if (!in_array((string) ($row['platform'] ?? ''), $active, true)) {
+                continue;
+            }
+            if ((string) ($row['platform'] ?? '') === 'x' && empty($settings['social_x_enabled'])) {
                 continue;
             }
             if (isset($released_posts[(int) ($row['post_id'] ?? 0)])) {
@@ -1029,7 +1033,7 @@ trait TechnoRapper_AI_Wire_Social {
             break;
         }
 
-        $remaining = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'");
+        $remaining = $this->social_active_queued_count();
         $finishable = $this->social_finishable_queued_count();
         if ($remaining > 0 && !$this->social_queue_waiting_for_pack_mate() && ($this->social_published_today() < $limit || $finishable > 0 || $this->social_queued_repost_count() > 0 || $this->social_queued_forced_pack_count() > 0)) {
             $delay = $finishable > 0 ? 5 : 60;
@@ -1239,11 +1243,25 @@ trait TechnoRapper_AI_Wire_Social {
         return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'");
     }
 
+    /**
+     * Queued rows for networks that are actually posting. An X row does not
+     * keep the social cron awake after X is turned off.
+     */
+    private function social_active_queued_count() {
+        global $wpdb;
+        $platform_sql = $this->social_active_platform_sql();
+        if ($platform_sql === '') {
+            return 0;
+        }
+        return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued'{$platform_sql}");
+    }
+
     private function kick_social_queue($delay = 5, $even_if_empty = false) {
         if (!$this->social_distribution_ready()) {
             return false;
         }
-        if (!$even_if_empty && $this->social_queued_count() < 1) {
+        if (!$even_if_empty && $this->social_active_queued_count() < 1) {
+            wp_clear_scheduled_hook(self::SOCIAL_CRON_HOOK);
             return false;
         }
         $delay = max(1, (int) $delay);
@@ -1322,6 +1340,9 @@ trait TechnoRapper_AI_Wire_Social {
             return $prepared;
         }
         if ($row['platform'] === 'x') {
+            if (empty($settings['social_x_enabled'])) {
+                return new WP_Error('tr_ai_wire_x_disabled', 'X posting is off, so the X job did not run.');
+            }
             if (!self::x_credentials_ready($credentials)) {
                 return new WP_Error('tr_ai_wire_x_missing_token', 'X is not connected. Save API Key, API Key Secret, Access Token, and Access Token Secret from the X developer portal Keys and tokens page.');
             }
@@ -1733,6 +1754,9 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function publish_x_pack($pack, $credentials, $settings) {
+        if (empty($settings['social_x_enabled'])) {
+            return new WP_Error('tr_ai_wire_x_disabled', 'X posting is off, so the X job did not run.');
+        }
         if (!self::x_credentials_ready($credentials)) {
             return new WP_Error('tr_ai_wire_x_missing_token', 'X is not connected. Save API Key, API Key Secret, Access Token, and Access Token Secret from the X developer portal Keys and tokens page.');
         }
@@ -4625,6 +4649,9 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function publish_x_post($text, $image_path, $credentials) {
+        if (empty($this->settings()['social_x_enabled'])) {
+            return new WP_Error('tr_ai_wire_x_disabled', 'X posting is off, so the X job did not run.');
+        }
         if (is_string($credentials)) {
             $credentials = array_merge(self::social_credential_defaults(), array('x_user_access_token' => $credentials));
         }
