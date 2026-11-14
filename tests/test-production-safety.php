@@ -7777,6 +7777,49 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         remove_all_filters('pre_http_request');
     }
 
+    public function test_fal_ffmpeg_access_denied_is_endpoint_block_not_bad_key() {
+        $err = $this->invoke_private('social_fal_endpoint_denied_error', array(
+            'fal-ai/ffmpeg-api/images-to-video',
+            'Access denied: You do not have permission to use this endpoint',
+        ));
+        $this->assertTrue(is_wp_error($err));
+        $this->assertSame('tr_ai_wire_reel_fal_endpoint', $err->get_error_code());
+        $this->assertStringContainsString('A new API key will not fix that', $err->get_error_message());
+        $this->assertStringContainsString('ffmpeg', $err->get_error_message());
+        $this->assertNull($this->invoke_private('social_fal_endpoint_denied_error', array(
+            'fal-ai/veo3.1/lite/image-to-video',
+            'Temporary rate limit',
+        )));
+        add_filter('tr_ai_wire_fal_poll_seconds', static function () {
+            return 1;
+        });
+        add_filter('pre_http_request', function ($preempt, $args, $url) {
+            unset($preempt, $args);
+            if (strpos((string) $url, '/status') !== false) {
+                return $this->mock_http_ok(array('status' => 'COMPLETED'));
+            }
+            return array(
+                'headers' => array(),
+                'body' => wp_json_encode(array('detail' => 'Access denied: You do not have permission to use this endpoint')),
+                'response' => array('code' => 403, 'message' => 'Forbidden'),
+                'cookies' => array(),
+                'filename' => null,
+            );
+        }, 10, 3);
+        update_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION, 'fal_test_key', false);
+        $result = $this->invoke_private('social_fal_await', array(
+            'fal-ai/ffmpeg-api/images-to-video',
+            'denied-req-1',
+            array(),
+            'lesson card 1',
+        ));
+        $this->assertTrue(is_wp_error($result));
+        $this->assertSame('tr_ai_wire_reel_fal_endpoint', $result->get_error_code());
+        $this->assertStringContainsString('A new API key will not fix that', $result->get_error_message());
+        remove_all_filters('tr_ai_wire_fal_poll_seconds');
+        remove_all_filters('pre_http_request');
+    }
+
     public function test_reel_mux_is_hard_cuts_with_voiceover() {
         $ffmpeg = $this->invoke_private('social_ffmpeg_path');
         if ($ffmpeg === '' || !function_exists('imagejpeg')) {

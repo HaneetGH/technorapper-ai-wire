@@ -4294,11 +4294,43 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                 $message = sanitize_text_field(wp_json_encode($data['detail']));
             }
             if ($status === 401 || $status === 403) {
+                $denied = $this->social_fal_endpoint_denied_error((string) $endpoint, $message);
+                if (is_wp_error($denied)) {
+                    return $denied;
+                }
                 return new WP_Error('tr_ai_wire_reel_fal_auth', 'Fal refused the API key (HTTP ' . $status . '). Check the Fal key on Social settings and that it can use the queue API.');
             }
             return new WP_Error('tr_ai_wire_reel_video', $message !== '' ? $message : 'Fal did not accept the video job.');
         }
         return $data;
+    }
+
+    /**
+     * Fal "Access denied: You do not have permission to use this endpoint" is an
+     * account/model entitlement block — a new Full-access key will not fix it.
+     */
+    private function social_fal_endpoint_denied_error($endpoint_or_label, $detail) {
+        $detail = trim((string) $detail);
+        $hay = strtolower($detail . ' ' . (string) $endpoint_or_label);
+        if (
+            strpos($hay, 'access denied') === false
+            && strpos($hay, 'permission to use this endpoint') === false
+            && strpos($hay, 'resource_restricted') === false
+        ) {
+            return null;
+        }
+        $endpoint = (string) $endpoint_or_label;
+        $is_ffmpeg = (strpos($endpoint, 'ffmpeg-api') !== false) || (strpos($hay, 'ffmpeg') !== false);
+        $what = $is_ffmpeg ? 'fal-ai/ffmpeg-api (lesson-card hold / assemble)' : 'this Fal endpoint';
+        $local = $this->social_ffmpeg_path() !== ''
+            ? ' This host already has ffmpeg — Start over so the Reel assembles locally instead of calling Fal ffmpeg-api.'
+            : ' Install ffmpeg on this WordPress host (so Reels assemble locally), or ask Fal support to enable ' . $what . ' on this account.';
+        return new WP_Error(
+            'tr_ai_wire_reel_fal_endpoint',
+            'Fal blocked ' . $what . ': Access denied on this account. A new API key will not fix that.' . $local
+                . ' Voiceover and B-roll that already finished are kept.'
+                . ($detail !== '' ? (' Fal said: ' . sanitize_text_field(mb_substr($detail, 0, 200))) : '')
+        );
     }
 
     private function social_fal_failure_message($payload, $response_url, $headers) {
@@ -4359,6 +4391,11 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             $payload = json_decode((string) wp_remote_retrieve_body($status_response), true);
             $payload = is_array($payload) ? $payload : array();
             if ($code === 401 || $code === 403) {
+                $status_detail = is_string($payload['detail'] ?? null) ? (string) $payload['detail'] : '';
+                $denied = $this->social_fal_endpoint_denied_error((string) $endpoint . ' ' . $what, $status_detail);
+                if (is_wp_error($denied)) {
+                    return $denied;
+                }
                 return new WP_Error('tr_ai_wire_reel_fal_auth', 'Fal refused the API key (HTTP ' . $code . ') while checking the ' . $what . '. Check the Fal key on Social settings and that it can use the queue API.');
             }
             if ($code < 200 || $code >= 300) {
@@ -4412,6 +4449,10 @@ trait TechnoRapper_AI_Wire_Social_Reel {
                             $raw = is_array($first) ? (string) ($first['msg'] ?? wp_json_encode($first)) : (string) $first;
                         }
                         $detail = trim(sanitize_text_field((string) $raw));
+                    }
+                    $denied = $this->social_fal_endpoint_denied_error((string) $endpoint . ' ' . $what, $detail);
+                    if (is_wp_error($denied)) {
+                        return $denied;
                     }
                     $hint = $result_code === 404
                         ? ' The finished file expired at Fal before it was saved here.'
@@ -4635,7 +4676,7 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             }
             return new WP_Error('tr_ai_wire_reel_video_wait', $message);
         }
-        if ($code === 'tr_ai_wire_reel_video_failed') {
+        if ($code === 'tr_ai_wire_reel_video_failed' || $code === 'tr_ai_wire_reel_fal_endpoint') {
             $this->social_fal_pending_clear($owner, $meta);
             return $polled;
         }
