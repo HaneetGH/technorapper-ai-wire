@@ -3639,6 +3639,7 @@ trait TechnoRapper_AI_Wire_Social {
             '_tr_ai_wire_reel_no_sting',
             '_tr_ai_wire_reel_progress',
             '_tr_ai_wire_reel_ledger',
+            '_tr_ai_wire_reel_debug_log',
             '_tr_ai_wire_reel_auto_retries',
             '_tr_ai_wire_reel_lesson',
             '_tr_ai_wire_reel_audio_seconds',
@@ -5008,7 +5009,7 @@ trait TechnoRapper_AI_Wire_Social {
         global $wpdb;
         $id = (int) $id;
         $table = $this->social_table();
-        $row = $wpdb->get_row($wpdb->prepare("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $row = $wpdb->get_row($wpdb->prepare("SELECT post_id, platform FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
         $wpdb->update($table, array(
             'status' => sanitize_key($status),
             'remote_id' => sanitize_text_field($remote_id),
@@ -5016,8 +5017,15 @@ trait TechnoRapper_AI_Wire_Social {
             'error_text' => $error !== '' ? sanitize_text_field($error) : null,
             'updated_at' => current_time('mysql', true),
         ), array('id' => $id));
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if ($post_id > 0 && ((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true) === 'reel' || (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true) === '1')) {
+            $this->social_debug_log($post_id, 'Social row finished as ' . sanitize_key($status) . ($error !== '' ? (': ' . $error) : '.'), array(
+                'row_id' => (string) $id,
+                'platform' => (string) ($row['platform'] ?? ''),
+                'status' => sanitize_key($status),
+            ));
+        }
         if ($status === 'published' && $row) {
-            $post_id = (int) $row['post_id'];
             delete_post_meta($post_id, '_tr_ai_wire_social_repost_' . $id);
             $open = (int) $wpdb->get_var($wpdb->prepare(
                 "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND status IN ('queued', 'processing')",
@@ -5307,6 +5315,7 @@ trait TechnoRapper_AI_Wire_Social {
         if ($spent > 0) {
             echo '<p class="description">Fal usage started for this Reel so far: about $' . esc_html(number_format_i18n($spent, 2)) . '. Resuming never pays again for a step that already finished.</p>';
         }
+        $this->render_social_reel_debug_log($row, $post);
         echo '<div class="tr-ai-wire-reel-build-actions">';
         if ($live) {
             echo '<button type="button" class="button tr-ai-wire-reel-check">Check now</button> ';
@@ -5358,6 +5367,64 @@ trait TechnoRapper_AI_Wire_Social {
             echo '</form>';
             $this->render_social_reel_upload_form($row);
         }
+    }
+
+    private function render_social_reel_debug_log($row, $post) {
+        if (!$post instanceof WP_Post) {
+            return;
+        }
+        $entries = $this->social_debug_log_entries($post->ID);
+        $count = count($entries);
+        echo '<details class="tr-ai-wire-reel-debug" style="margin:10px 0;">';
+        echo '<summary><strong>Debug log</strong>';
+        if ($count > 0) {
+            echo ' <span class="description">(' . esc_html((string) $count) . ' line' . ($count === 1 ? '' : 's') . ')</span>';
+        }
+        echo '</summary>';
+        if ($count < 1) {
+            echo '<p class="description">No detailed lines yet. Resume or rebuild to capture Fal steps, HTTP codes, and request ids.</p>';
+        } else {
+            echo '<pre class="tr-ai-wire-reel-debug-pre" style="max-height:220px;overflow:auto;white-space:pre-wrap;background:#f6f7f7;border:1px solid #dcdcde;padding:8px;font-size:12px;">';
+            $tail = array_slice($entries, -40);
+            foreach ($tail as $entry) {
+                $at = (int) ($entry['at'] ?? 0);
+                $stamp = $at > 0 ? gmdate('H:i:s', $at) : '--:--:--';
+                echo esc_html('[' . $stamp . ' UTC] ' . (string) ($entry['msg'] ?? '')) . "\n";
+                foreach ((array) ($entry['ctx'] ?? array()) as $key => $value) {
+                    echo esc_html('  ' . (string) $key . '=' . (string) $value) . "\n";
+                }
+            }
+            echo '</pre>';
+        }
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:6px;">';
+        echo '<input type="hidden" name="action" value="tr_ai_wire_download_reel_log">';
+        echo '<input type="hidden" name="item_id" value="' . esc_attr((string) (int) ($row['id'] ?? 0)) . '">';
+        wp_nonce_field('tr_ai_wire_download_reel_log_' . (int) ($row['id'] ?? 0));
+        echo '<button class="button button-secondary">Download detail log (.txt)</button>';
+        echo '</form>';
+        echo '</details>';
+    }
+
+    public function download_social_reel_log() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to download this log.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_POST['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_download_reel_log_' . $id);
+        global $wpdb;
+        $row = $id > 0 ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A) : null;
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if ($post_id < 1) {
+            wp_die(esc_html__('That social row was not found.', 'technorapper-ai-wire'));
+        }
+        $text = $this->social_debug_log_text($post_id, $row);
+        $name = 'tr-ai-wire-reel-' . $post_id . '-' . $id . '.txt';
+        nocache_headers();
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $name . '"');
+        header('Content-Length: ' . (string) strlen($text));
+        echo $text;
+        exit;
     }
 
     /**
@@ -5925,6 +5992,14 @@ trait TechnoRapper_AI_Wire_Social {
         echo '</div><div class="tr-ai-wire-social-copy">';
         $this->render_social_reel_post_form($row);
         $this->render_social_reel_build_panel($row, $post);
+        // Ready-for-review Reels skip the build panel; still expose the detail log.
+        if ($post instanceof WP_Post
+            && $this->social_row_holds_reel_for_review($row)
+            && $this->social_reel_preview_id($post->ID) > 0
+            && in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true)
+        ) {
+            $this->render_social_reel_debug_log($row, $post);
+        }
         $this->render_social_reel_downloads($row, $post);
         if (!empty($copy['on_image_headline'])) {
             echo '<p class="tr-ai-wire-social-headline"><strong>' . esc_html($copy['on_image_headline']) . '</strong></p>';

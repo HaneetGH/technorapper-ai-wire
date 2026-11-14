@@ -9399,6 +9399,83 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('>Post to Instagram</button>', $html);
     }
 
+    public function test_reel_debug_log_records_fal_steps_and_downloads_as_text() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $this->onboard_social(array('instagram'));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Debug log reel',
+        ));
+        update_post_meta($post_id, '_tr_ai_wire_social_mode', 'reel');
+        update_post_meta($post_id, '_tr_ai_wire_social_hold_reel', '1');
+        $this->invoke_private('social_debug_log', array($post_id, 'Submitted lesson card 1 to Fal.', array(
+            'endpoint' => 'fal-ai/ffmpeg-api/images-to-video',
+            'request_id' => '01a1d999-test',
+            'api_key' => 'should-not-appear',
+        )));
+        $this->invoke_private('social_debug_log', array($post_id, 'Fal poll for lesson card 1: HTTP 403', array(
+            'code' => 'tr_ai_wire_reel_video_failed',
+            'http' => '403',
+        )));
+        $entries = $this->invoke_private('social_debug_log_entries', array($post_id));
+        $this->assertCount(2, $entries);
+        $text = $this->invoke_private('social_debug_log_text', array($post_id, array(
+            'id' => 9,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Access denied',
+        )));
+        $this->assertStringContainsString('Reel debug log', $text);
+        $this->assertStringContainsString('01a1d999-test', $text);
+        $this->assertStringContainsString('HTTP 403', $text);
+        $this->assertStringNotContainsString('should-not-appear', $text);
+        global $wpdb;
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Fal finished the lesson card 1 but the result could not be read (HTTP 403).',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        ob_start();
+        $this->plugin->social_distribution_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Debug log', $html);
+        $this->assertStringContainsString('Download detail log (.txt)', $html);
+        $this->assertStringContainsString('tr_ai_wire_download_reel_log', $html);
+    }
+
+    public function test_background_job_debug_log_is_downloadable() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        update_option(TechnoRapper_AI_Wire::JOB_OPTION, array(
+            'id' => 'job-debug-1',
+            'status' => 'done',
+            'kind' => 'social_pack',
+            'pack_kind' => 'reel',
+            'percent' => 100,
+            'message' => 'Finished',
+            'created_at' => time() - 60,
+            'updated_at' => time() - 10,
+            'debug_log' => array(
+                array('at' => time() - 50, 'msg' => 'Job queued.', 'ctx' => array('kind' => 'social_pack')),
+                array('at' => time() - 20, 'msg' => 'Starting the Reel build', 'ctx' => array('percent' => '55')),
+            ),
+        ), false);
+        $text = $this->invoke_private('background_job_debug_text', array(get_option(TechnoRapper_AI_Wire::JOB_OPTION, array())));
+        $this->assertStringContainsString('background job debug log', $text);
+        $this->assertStringContainsString('Starting the Reel build', $text);
+        ob_start();
+        $this->plugin->now_queue_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Download detail log (.txt)', $html);
+        $this->assertStringContainsString('tr_ai_wire_download_job_log', $html);
+        $this->assertStringContainsString('Recent job log', $html);
+    }
+
     public function test_delete_stopped_reel_from_queue_keeps_wordpress_post() {
         $this->onboard_social(array('instagram', 'youtube'));
         $post_id = $this->factory()->post->create(array(

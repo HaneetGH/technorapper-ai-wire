@@ -4536,30 +4536,81 @@ trait TechnoRapper_AI_Wire_Social_Reel {
         $input_key = (string) ($args['input_key'] ?? '');
         $pending = $this->social_fal_pending_get($owner, $meta);
         if ($pending && $input_key !== '' && isset($pending['input_key']) && (string) $pending['input_key'] !== $input_key) {
+            $this->social_debug_log($post_id, 'Cleared stale Fal pending for ' . $label . ' (input changed).', array(
+                'endpoint' => (string) ($pending['endpoint'] ?? ''),
+                'request_id' => (string) ($pending['request_id'] ?? ''),
+                'meta' => $meta,
+            ));
             $this->social_fal_pending_clear($owner, $meta);
             $pending = array();
         }
         if (!$pending) {
             $pending = $this->social_fal_submit_locked($args);
             if (is_wp_error($pending)) {
+                $this->social_debug_log($post_id, 'Fal submit failed for ' . $label . ': ' . $pending->get_error_message(), array(
+                    'code' => $pending->get_error_code(),
+                    'endpoint' => (string) ($args['endpoint'] ?? ''),
+                    'meta' => $meta,
+                ));
                 return $pending;
             }
+            $this->social_debug_log($post_id, 'Submitted ' . $label . ' to Fal.', array(
+                'endpoint' => (string) ($pending['endpoint'] ?? ''),
+                'request_id' => (string) ($pending['request_id'] ?? ''),
+                'estimate_usd' => (string) ($pending['estimated_usd'] ?? ''),
+                'meta' => $meta,
+            ));
         }
         if (!empty($args['submit_only'])) {
             return new WP_Error('tr_ai_wire_reel_video_wait', $this->social_fal_wait_message($pending, $label));
         }
+        $this->social_debug_log($post_id, 'Checking Fal status for ' . $label . '.', array(
+            'endpoint' => (string) ($pending['endpoint'] ?? ''),
+            'request_id' => (string) ($pending['request_id'] ?? ''),
+            'checks' => (string) ((int) ($pending['checks'] ?? 0) + 1),
+        ));
         $polled = $this->social_fal_await((string) $pending['endpoint'], (string) $pending['request_id'], $pending, $label);
         if (!is_wp_error($polled)) {
             $stored = call_user_func($args['store'], $polled);
             if (is_wp_error($stored)) {
+                $this->social_debug_log($post_id, 'Fal file for ' . $label . ' could not be saved: ' . $stored->get_error_message(), array(
+                    'code' => $stored->get_error_code(),
+                    'request_id' => (string) ($pending['request_id'] ?? ''),
+                    'bytes' => is_string($polled) ? (string) strlen($polled) : '0',
+                ));
                 return $stored;
             }
             $this->social_fal_pending_clear($owner, $meta);
+            $this->social_debug_log($post_id, 'Saved finished ' . $label . ' from Fal.', array(
+                'request_id' => (string) ($pending['request_id'] ?? ''),
+                'bytes' => is_string($polled) ? (string) strlen($polled) : '0',
+            ));
             return $stored;
         }
         $code = $polled->get_error_code();
         $pending['checks'] = (int) ($pending['checks'] ?? 0) + 1;
         $pending['last_checked'] = time();
+        $poll_msg = $polled->get_error_message();
+        $poll_ctx = array(
+            'code' => $code,
+            'endpoint' => (string) ($pending['endpoint'] ?? ''),
+            'request_id' => (string) ($pending['request_id'] ?? ''),
+            'checks' => (string) (int) $pending['checks'],
+            'errors' => (string) (int) ($pending['errors'] ?? 0),
+        );
+        if (preg_match('/HTTP\s+(\d{3})/i', $poll_msg, $http_m)) {
+            $poll_ctx['http'] = $http_m[1];
+        }
+        $err_data = $polled->get_error_data();
+        if (is_array($err_data)) {
+            if (isset($err_data['state'])) {
+                $poll_ctx['fal_state'] = (string) $err_data['state'];
+            }
+            if (array_key_exists('position', $err_data) && $err_data['position'] !== null) {
+                $poll_ctx['queue_position'] = (string) (int) $err_data['position'];
+            }
+        }
+        $this->social_debug_log($post_id, 'Fal poll for ' . $label . ': ' . $poll_msg, $poll_ctx);
         if ($code === 'tr_ai_wire_reel_video_wait') {
             $pending['errors'] = 0;
             $this->social_fal_pending_save($owner, $meta, $pending);
@@ -4569,10 +4620,12 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             // Hard stop so one Fal step cannot grind for hours across Resume clicks.
             if ($age > 2700) {
                 $this->social_fal_pending_clear($owner, $meta);
-                return new WP_Error(
+                $fail = new WP_Error(
                     'tr_ai_wire_reel_video_failed',
                     ucfirst($label) . ' timed out after 45 minutes at Fal (request id ' . (string) $pending['request_id'] . '). That request was abandoned. Click Resume to start only this step again.'
                 );
+                $this->social_debug_log($post_id, $fail->get_error_message(), array('age_s' => (string) $age));
+                return $fail;
             }
             if ($age > 1800) {
                 return new WP_Error(
@@ -4614,12 +4667,101 @@ trait TechnoRapper_AI_Wire_Social_Reel {
             'detail' => sanitize_text_field((string) $detail),
             'at' => time(),
         )));
+        $this->social_debug_log($post_id, (string) $detail);
         $this->social_heartbeat();
     }
 
     private function social_reel_progress($post_id) {
         $data = json_decode((string) get_post_meta((int) $post_id, '_tr_ai_wire_reel_progress', true), true);
         return is_array($data) ? $data : array();
+    }
+
+    /**
+     * Append a debug line for a Reel post. Never stores API keys or raw payloads.
+     *
+     * @param array $context Scalar context only (endpoint, request_id, http, etc.).
+     */
+    private function social_debug_log($post_id, $message, $context = array()) {
+        $post_id = (int) $post_id;
+        $message = trim((string) $message);
+        if ($post_id < 1 || $message === '') {
+            return;
+        }
+        $entry = array(
+            'at' => time(),
+            'msg' => sanitize_text_field(mb_substr($message, 0, 500)),
+        );
+        $ctx = array();
+        foreach ((array) $context as $key => $value) {
+            $key = sanitize_key((string) $key);
+            if ($key === '' || in_array($key, array('key', 'api_key', 'authorization', 'token', 'payload', 'body'), true)) {
+                continue;
+            }
+            if (is_bool($value)) {
+                $ctx[$key] = $value ? '1' : '0';
+            } elseif (is_int($value) || is_float($value)) {
+                $ctx[$key] = (string) $value;
+            } elseif (is_string($value)) {
+                $ctx[$key] = sanitize_text_field(mb_substr($value, 0, 300));
+            }
+        }
+        if ($ctx) {
+            $entry['ctx'] = $ctx;
+        }
+        $lines = $this->social_debug_log_entries($post_id);
+        $lines[] = $entry;
+        update_post_meta($post_id, '_tr_ai_wire_reel_debug_log', wp_json_encode(array_slice($lines, -250)));
+        $this->background_job_debug_log($entry['msg'], $ctx);
+    }
+
+    private function social_debug_log_entries($post_id) {
+        $data = json_decode((string) get_post_meta((int) $post_id, '_tr_ai_wire_reel_debug_log', true), true);
+        return is_array($data) ? array_values($data) : array();
+    }
+
+    private function social_debug_log_clear($post_id) {
+        delete_post_meta((int) $post_id, '_tr_ai_wire_reel_debug_log');
+    }
+
+    private function social_debug_log_text($post_id, $row = null) {
+        $post_id = (int) $post_id;
+        $post = get_post($post_id);
+        $lines = array(
+            'TechnoRapper AI Wire — Reel debug log',
+            'Generated (UTC): ' . gmdate('Y-m-d H:i:s'),
+            'Plugin: ' . self::VERSION,
+            'Post ID: ' . (string) $post_id,
+            'Title: ' . ($post instanceof WP_Post ? $post->post_title : ''),
+        );
+        if (is_array($row)) {
+            $lines[] = 'Social row: #' . (string) (int) ($row['id'] ?? 0)
+                . ' platform=' . (string) ($row['platform'] ?? '')
+                . ' status=' . (string) ($row['status'] ?? '');
+            $err = trim((string) ($row['error_text'] ?? ''));
+            if ($err !== '') {
+                $lines[] = 'Row error: ' . $err;
+            }
+        }
+        $progress = $this->social_reel_progress($post_id);
+        if (!empty($progress['detail'])) {
+            $lines[] = 'Latest progress: ' . (string) $progress['detail'];
+        }
+        $lines[] = 'Fal spent (est.): $' . number_format((float) $this->social_reel_spent_usd($post_id), 4);
+        $lines[] = str_repeat('-', 72);
+        $entries = $this->social_debug_log_entries($post_id);
+        if (!$entries) {
+            $lines[] = '(no debug lines recorded yet)';
+        }
+        foreach ($entries as $entry) {
+            $at = (int) ($entry['at'] ?? 0);
+            $stamp = $at > 0 ? gmdate('Y-m-d H:i:s', $at) . ' UTC' : 'unknown time';
+            $lines[] = '[' . $stamp . '] ' . (string) ($entry['msg'] ?? '');
+            foreach ((array) ($entry['ctx'] ?? array()) as $key => $value) {
+                $lines[] = '  ' . (string) $key . '=' . (string) $value;
+            }
+        }
+        $lines[] = '';
+        return implode("\n", $lines);
     }
 
     private function social_reel_ledger_add($post_id, $label, $usd, $request_id) {

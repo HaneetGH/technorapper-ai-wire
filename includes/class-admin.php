@@ -96,8 +96,34 @@ trait TechnoRapper_AI_Wire_Admin {
                         <tr><th scope="row">Progress</th><td><?php echo esc_html((string) (int) ($job['percent'] ?? 0)); ?>%</td></tr>
                         <tr><th scope="row">Message</th><td><?php echo esc_html((string) ($job['message'] ?? '')); ?></td></tr>
                         <tr><th scope="row">Age</th><td><?php echo $age !== '' ? esc_html($age) : '—'; ?></td></tr>
+                        <tr><th scope="row">Debug</th><td>
+                            <?php
+                            $job_log_n = is_array($job['debug_log'] ?? null) ? count($job['debug_log']) : 0;
+                            echo esc_html((string) $job_log_n) . ' line' . ($job_log_n === 1 ? '' : 's');
+                            ?>
+                            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-left:8px;">
+                                <input type="hidden" name="action" value="tr_ai_wire_download_job_log">
+                                <?php wp_nonce_field('tr_ai_wire_download_job_log'); ?>
+                                <?php submit_button('Download detail log (.txt)', 'secondary', 'submit', false); ?>
+                            </form>
+                        </td></tr>
                     </tbody>
                 </table>
+                <?php if (!empty($job['debug_log']) && is_array($job['debug_log'])) : ?>
+                    <details style="margin-top:10px;max-width:960px;">
+                        <summary>Recent job log</summary>
+                        <pre style="max-height:220px;overflow:auto;white-space:pre-wrap;background:#f6f7f7;border:1px solid #dcdcde;padding:8px;font-size:12px;"><?php
+                        foreach (array_slice($job['debug_log'], -40) as $entry) {
+                            $at = (int) ($entry['at'] ?? 0);
+                            $stamp = $at > 0 ? gmdate('H:i:s', $at) : '--:--:--';
+                            echo esc_html('[' . $stamp . ' UTC] ' . (string) ($entry['msg'] ?? '')) . "\n";
+                            foreach ((array) ($entry['ctx'] ?? array()) as $key => $value) {
+                                echo esc_html('  ' . (string) $key . '=' . (string) $value) . "\n";
+                            }
+                        }
+                        ?></pre>
+                    </details>
+                <?php endif; ?>
             <?php endif; ?>
 
             <h2 style="margin-top:28px;">Website stories waiting (<?php echo esc_html((string) count($website)); ?>)</h2>

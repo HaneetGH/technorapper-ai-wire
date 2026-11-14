@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.8
+Stable tag: 0.3.9
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.9 =
+* Each Reel build and background job keeps a detail debug log (Fal endpoint, request id, HTTP/errors). Download as .txt from Social queue or Now in queue.
 
 = 0.3.8 =
 * Stopped Reels on Social queue (needs_review) get a Delete from queue button. The WordPress article stays; that Reel attempt is removed.
@@ -280,6 +283,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.9 =
+Reel and background jobs now keep a downloadable detail log for Fal/HTTP debugging.
 
 = 0.3.8 =
 Stopped Reels on Social queue can be deleted from the queue without touching the WordPress article.

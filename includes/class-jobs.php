@@ -706,6 +706,13 @@ trait TechnoRapper_AI_Wire_Jobs {
             'created_at' => time(),
             'updated_at' => time(),
             'cancelled' => 0,
+            'debug_log' => array(
+                array(
+                    'at' => time(),
+                    'msg' => 'Job queued.',
+                    'ctx' => array('kind' => sanitize_key($kind)),
+                ),
+            ),
         );
         if (in_array($job['kind'], array('retry', 'force_publish', 'social_retry'), true) && $job['item_id'] > 0) {
             $this->clear_retry_error($job['kind'], $job['item_id']);
@@ -891,8 +898,106 @@ trait TechnoRapper_AI_Wire_Jobs {
         $job['percent'] = max(1, min(99, (int) $percent));
         $job['message'] = sanitize_text_field($message);
         $job['updated_at'] = time();
+        $job['debug_log'] = $this->background_job_debug_append(
+            is_array($job['debug_log'] ?? null) ? $job['debug_log'] : array(),
+            (string) $message,
+            array('percent' => (string) (int) $job['percent'])
+        );
         update_option(self::JOB_OPTION, $job, false);
         return true;
+    }
+
+    private function background_job_debug_log($message, $context = array()) {
+        $job = get_option(self::JOB_OPTION, array());
+        if (!is_array($job) || !$this->background_job_matches($job)) {
+            return;
+        }
+        if (!in_array((string) ($job['status'] ?? ''), array('queued', 'running', 'done', 'error'), true)) {
+            return;
+        }
+        $job['debug_log'] = $this->background_job_debug_append(
+            is_array($job['debug_log'] ?? null) ? $job['debug_log'] : array(),
+            (string) $message,
+            $context
+        );
+        $job['updated_at'] = time();
+        update_option(self::JOB_OPTION, $job, false);
+    }
+
+    private function background_job_debug_append($lines, $message, $context = array()) {
+        $message = trim(sanitize_text_field(mb_substr((string) $message, 0, 500)));
+        if ($message === '') {
+            return is_array($lines) ? $lines : array();
+        }
+        $entry = array(
+            'at' => time(),
+            'msg' => $message,
+        );
+        $ctx = array();
+        foreach ((array) $context as $key => $value) {
+            $key = sanitize_key((string) $key);
+            if ($key === '' || in_array($key, array('key', 'api_key', 'authorization', 'token', 'payload', 'body'), true)) {
+                continue;
+            }
+            if (is_bool($value)) {
+                $ctx[$key] = $value ? '1' : '0';
+            } elseif (is_int($value) || is_float($value)) {
+                $ctx[$key] = (string) $value;
+            } elseif (is_string($value) && $value !== '') {
+                $ctx[$key] = sanitize_text_field(mb_substr($value, 0, 300));
+            }
+        }
+        if ($ctx) {
+            $entry['ctx'] = $ctx;
+        }
+        $lines = is_array($lines) ? $lines : array();
+        $lines[] = $entry;
+        return array_slice($lines, -250);
+    }
+
+    private function background_job_debug_text($job) {
+        $job = is_array($job) ? $job : array();
+        $lines = array(
+            'TechnoRapper AI Wire — background job debug log',
+            'Generated (UTC): ' . gmdate('Y-m-d H:i:s'),
+            'Plugin: ' . self::VERSION,
+            'Job ID: ' . (string) ($job['id'] ?? ''),
+            'Kind: ' . (string) ($job['kind'] ?? '') . (!empty($job['pack_kind']) ? (' / ' . (string) $job['pack_kind']) : ''),
+            'Status: ' . (string) ($job['status'] ?? ''),
+            'Progress: ' . (string) (int) ($job['percent'] ?? 0) . '%',
+            'Message: ' . (string) ($job['message'] ?? ''),
+            str_repeat('-', 72),
+        );
+        $entries = is_array($job['debug_log'] ?? null) ? $job['debug_log'] : array();
+        if (!$entries) {
+            $lines[] = '(no debug lines recorded yet)';
+        }
+        foreach ($entries as $entry) {
+            $at = (int) ($entry['at'] ?? 0);
+            $stamp = $at > 0 ? gmdate('Y-m-d H:i:s', $at) . ' UTC' : 'unknown time';
+            $lines[] = '[' . $stamp . '] ' . (string) ($entry['msg'] ?? '');
+            foreach ((array) ($entry['ctx'] ?? array()) as $key => $value) {
+                $lines[] = '  ' . (string) $key . '=' . (string) $value;
+            }
+        }
+        $lines[] = '';
+        return implode("\n", $lines);
+    }
+
+    public function download_background_job_log() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to download this log.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_download_job_log');
+        $job = get_option(self::JOB_OPTION, array());
+        $text = $this->background_job_debug_text(is_array($job) ? $job : array());
+        $name = 'tr-ai-wire-job-' . sanitize_file_name((string) ($job['id'] ?? 'log')) . '.txt';
+        nocache_headers();
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $name . '"');
+        header('Content-Length: ' . (string) strlen($text));
+        echo $text;
+        exit;
     }
 
     private function finish_background_job($message, $status, $extra = array()) {
@@ -912,6 +1017,11 @@ trait TechnoRapper_AI_Wire_Jobs {
         $job['message'] = sanitize_text_field($message);
         $job['updated_at'] = time();
         $job['cancelled'] = 0;
+        $job['debug_log'] = $this->background_job_debug_append(
+            is_array($job['debug_log'] ?? null) ? $job['debug_log'] : array(),
+            (string) $message,
+            array('status' => (string) $job['status'])
+        );
         foreach ($extra as $key => $value) {
             $job[$key] = is_string($value) ? sanitize_text_field($value) : $value;
         }
