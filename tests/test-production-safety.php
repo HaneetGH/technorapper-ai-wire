@@ -12164,4 +12164,65 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringNotContainsString('Not generated. Nothing was posted', $html);
         $this->assertStringNotContainsString('Reel was not finished', $html);
     }
+
+    public function test_error_graph_ranks_publish_and_social_failures() {
+        $this->assertSame('publish_review', $this->invoke_private('error_kind', array('publish', 'quarantined', 'Held for editorial review: score too low')));
+        $this->assertSame('publish_image', $this->invoke_private('error_kind', array('publish', 'error', 'No source image; skipped.')));
+        $this->assertSame('social_quota', $this->invoke_private('error_kind', array('social', 'needs_review', 'Instagram publishing quota reached.')));
+        $this->assertSame('social_reel', $this->invoke_private('error_kind', array('social', 'needs_review', 'Fal answered HTTP 502.')));
+        $this->assertSame('social_token', $this->invoke_private('error_kind', array('social', 'needs_review', 'X rejected the token.')));
+
+        global $wpdb;
+        $now = current_time('mysql', true);
+        $first = $this->create_queue_item();
+        $second = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held for editorial review: score too low',
+            'updated_at' => $now,
+        ), array('id' => $first));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held for editorial review: another score hold',
+            'updated_at' => $now,
+        ), array('id' => $second));
+        $post_id = $this->factory()->post->create(array(
+            'post_status' => 'publish',
+            'post_title' => 'Quota miss',
+        ));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $post_id,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'error_text' => 'Instagram publishing quota reached.',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        $report = $this->invoke_private('error_report', array('30d'));
+        $this->assertSame(2, $report['publish_total']);
+        $this->assertSame(1, $report['social_total']);
+        $this->assertSame('Review hold', $report['top']['label']);
+        $this->assertSame('Post publish', $report['top']['area']);
+        $quota = 0;
+        foreach ($report['kinds'] as $kind) {
+            if ($kind['key'] === 'social_quota') {
+                $quota = $kind['count'];
+            }
+        }
+        $this->assertSame(1, $quota);
+        $this->assertSame(1, $report['platforms']['Instagram']);
+
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $_GET['range'] = '30d';
+        ob_start();
+        $this->plugin->errors_page();
+        $html = ob_get_clean();
+        unset($_GET['range']);
+        $this->assertStringContainsString('Which error happens most', $html);
+        $this->assertStringContainsString('Post publish', $html);
+        $this->assertStringContainsString('Review hold', $html);
+        $this->assertStringContainsString('Platform quota', $html);
+        $this->assertStringContainsString('Instagram', $html);
+    }
 }
