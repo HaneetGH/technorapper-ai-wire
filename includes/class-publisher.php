@@ -1144,6 +1144,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->store_pre_publish_gate($existing_id, $rewrite, $review, $item, $s);
             $this->maybe_promote_post_status($existing_id, $s);
+            $this->remember_publish_path($existing_id, $s);
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->update_item($id, array('status' => $this->queue_status_for_post($existing_id, $publish), 'wp_post_id' => $existing_id, 'error_text' => null, 'rewrite_json' => wp_json_encode($rewrite)));
             return;
@@ -1213,6 +1214,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         }
         $this->store_pre_publish_gate((int) $post_id, $rewrite, $review, $item, $s);
         $this->maybe_promote_post_status((int) $post_id, $s);
+        $this->remember_publish_path((int) $post_id, $s);
         $this->prepare_homepage_visibility((int) $post_id, $item, $rewrite, $s);
         $this->update_item($id, array(
             'status' => $this->queue_status_for_post((int) $post_id, $publish),

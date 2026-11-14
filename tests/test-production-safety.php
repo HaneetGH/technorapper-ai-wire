@@ -12227,4 +12227,90 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('Platform quota', $html);
         $this->assertStringContainsString('Instagram', $html);
     }
+
+    public function test_metrics_counts_published_auto_manual_failures_and_job_runs_by_day() {
+        global $wpdb;
+        delete_option('tr_ai_wire_run_log');
+        $days = $this->invoke_private('metrics_days', array(7));
+        $today_at = $days[0]['start'];
+        $yesterday_at = $days[1]['start'];
+
+        $auto_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Pipeline published this'));
+        $manual_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Editor published this'));
+        $inferred_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Hand published draft'));
+        $old_id = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Yesterday story'));
+        foreach (array($auto_id => $today_at, $manual_id => $today_at, $inferred_id => $today_at, $old_id => $yesterday_at) as $post_id => $created) {
+            update_post_meta($post_id, '_tr_ai_wire_created_gmt', $created);
+        }
+        update_post_meta($auto_id, '_tr_ai_wire_publish_path', 'auto');
+        update_post_meta($manual_id, '_tr_ai_wire_publish_path', 'manual');
+
+        $auto_item = $this->create_queue_item();
+        $manual_item = $this->create_queue_item();
+        $inferred_item = $this->create_queue_item();
+        $old_item = $this->create_queue_item();
+        $held = $this->create_queue_item();
+        $errored = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'published', 'wp_post_id' => $auto_id, 'updated_at' => $today_at), array('id' => $auto_item));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'published', 'wp_post_id' => $manual_id, 'review_json' => wp_json_encode(array('admin_force_publish' => 1)), 'updated_at' => $today_at), array('id' => $manual_item));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'draft', 'wp_post_id' => $inferred_id, 'updated_at' => $today_at), array('id' => $inferred_item));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'published', 'wp_post_id' => $old_id, 'updated_at' => $yesterday_at), array('id' => $old_item));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'error', 'error_text' => 'Writer returned an empty title or body.', 'updated_at' => $today_at), array('id' => $errored));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'quarantined', 'error_text' => 'Held for editorial review: score too low', 'updated_at' => $today_at), array('id' => $held));
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_quarantine', array(
+            'queue_item_id' => $held,
+            'reason' => 'Held for editorial review: score too low',
+            'source_url' => 'https://example.com/held',
+            'source_title' => 'Held story',
+            'rewrite_json' => '',
+            'review_json' => '',
+            'created_at' => $today_at,
+        ));
+
+        $this->invoke_private('store_last_run', array(array(
+            'at' => time(),
+            'reason' => 'scheduled',
+            'processed' => 4,
+            'published' => 1,
+            'drafts' => 1,
+            'quarantined' => 1,
+            'skipped' => '',
+        )));
+        $this->invoke_private('store_last_run', array(array(
+            'at' => time(),
+            'reason' => 'continue',
+            'processed' => 1,
+            'published' => 0,
+            'drafts' => 0,
+            'quarantined' => 0,
+            'skipped' => '',
+        )));
+
+        $report = $this->invoke_private('metrics_report', array(7));
+        $today = $report['days'][0];
+        $yesterday = $report['days'][1];
+        $this->assertSame('Today', $today['label']);
+        $this->assertSame('Yesterday', $yesterday['label']);
+        $this->assertSame(3, $today['published']);
+        $this->assertSame(1, $today['auto']);
+        $this->assertSame(2, $today['manual']);
+        $this->assertSame(2, $today['failed']);
+        $this->assertSame('Review hold', $today['top']);
+        $this->assertSame(2, $today['runs']);
+        $this->assertSame(1, $yesterday['published']);
+        $this->assertSame(0, $yesterday['failed']);
+        $this->assertNull($yesterday['runs']);
+
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        $_GET['days'] = '7';
+        ob_start();
+        $this->plugin->metrics_page();
+        $html = ob_get_clean();
+        unset($_GET['days']);
+        $this->assertStringContainsString('Today', $html);
+        $this->assertStringContainsString('Yesterday', $html);
+        $this->assertStringContainsString('Review hold', $html);
+        $this->assertStringContainsString('Job runs', $html);
+    }
 }

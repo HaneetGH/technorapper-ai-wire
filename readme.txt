@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.16
+Stable tag: 0.3.17
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.17 =
+* AI Wire → Metrics shows each day: posts published, auto versus manual, failures, the top failure, and how many times the job ran.
 
 = 0.3.16 =
 * The error graph labels an X account with no posting credits as X API credits, and shows the actual error sentence under each bar. An empty rewrite now includes the writer's reason.
@@ -310,6 +313,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.17 =
+AI Wire → Metrics lists published posts, failures, the top failure, and job runs for today, yesterday, and earlier days.
 
 = 0.3.16 =
 The error graph separates X posting credits from image spend and shows the error sentence under each bar.

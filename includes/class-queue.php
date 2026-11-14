@@ -260,6 +260,7 @@ trait TechnoRapper_AI_Wire_Queue {
 
     private function store_last_run($summary) {
         update_option(self::LAST_RUN_OPTION, $summary, false);
+        $this->append_run_log($summary);
     }
 
     private function refresh_processing_lock($token) {
