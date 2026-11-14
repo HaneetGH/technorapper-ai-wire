@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.21
+Stable tag: 0.3.22
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,9 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.22 =
+* A run that stops after its post limit keeps going, including a single-feed fetch. If stories are still waiting and nothing is running, the queue says so and offers Run highest priority.
 
 = 0.3.21 =
 * When X posting is off, the social job does not call X and a queued X row does not keep that job scheduled. Instagram and YouTube keep running.
@@ -325,6 +328,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.22 =
+Waiting stories no longer sit silently after a run stops. The queue shows that and can run the highest-priority story.
 
 = 0.3.21 =
 X posting off means the X job does not run. Instagram and YouTube are unchanged.

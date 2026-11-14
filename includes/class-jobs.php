@@ -16,6 +16,14 @@ trait TechnoRapper_AI_Wire_Jobs {
             check_ajax_referer('tr_ai_wire_run_now');
             wp_send_json_success($this->public_job($this->enqueue_background_job('fetch', $this->fetch_scope_from_request())));
         }
+        if ($job_action === 'tr_ai_wire_run_priority') {
+            check_ajax_referer('tr_ai_wire_run_priority');
+            $priority_id = $this->next_pipeline_item_id();
+            if ($priority_id < 1 || $this->remaining_posts_today($this->settings()) <= 0) {
+                wp_send_json_error(array('message' => 'No waiting story can run. The daily cap is full, or the desk mix is holding every row.'), 400);
+            }
+            wp_send_json_success($this->public_job($this->enqueue_background_job('priority', array('item_id' => $priority_id))));
+        }
         if ($job_action === 'tr_ai_wire_retry_item') {
             check_ajax_referer('tr_ai_wire_retry_item_' . $item_id);
             wp_send_json_success($this->public_job($this->enqueue_background_job('retry', array('item_id' => $item_id))));
@@ -154,6 +162,7 @@ trait TechnoRapper_AI_Wire_Jobs {
             'job' => $job,
             'actions' => array(
                 'tr_ai_wire_run_now',
+                'tr_ai_wire_run_priority',
                 'tr_ai_wire_retry_item',
                 'tr_ai_wire_force_publish_item',
                 'tr_ai_wire_run_social_queue',
@@ -517,6 +526,36 @@ trait TechnoRapper_AI_Wire_Jobs {
                 $this->finish_background_job($message . ' Refresh the queue to see new rows.', $failed ? 'error' : 'done');
                 } finally {
                     $this->bind_editorial_fetch_scope(array());
+                }
+            } elseif ($job['kind'] === 'priority') {
+                if (function_exists('set_time_limit')) {
+                    set_time_limit(900);
+                }
+                $id = (int) ($job['item_id'] ?? 0);
+                if ($id < 1) {
+                    $id = $this->next_pipeline_item_id();
+                }
+                $s = $this->settings();
+                if ($id < 1 || $this->remaining_posts_today($s) <= 0) {
+                    $this->finish_background_job('No waiting story can run. The daily cap is full, or the desk mix is holding every row.', 'error');
+                } else {
+                    $row = $this->get_item($id);
+                    $title = is_array($row) ? trim((string) ($row['source_title'] ?? '')) : '';
+                    $this->note_background_progress(20, $title !== '' ? ('Running ' . $title) : 'Running the highest-priority story');
+                    $this->process_item($id, $s, true);
+                    $after = $this->get_item($id);
+                    $status = is_array($after) ? (string) ($after['status'] ?? '') : '';
+                    $error = $this->queue_item_failure_message($after);
+                    $this->finish_background_job(
+                        $error !== '' ? $error : ('Highest-priority story finished: ' . ($status !== '' ? $status : 'done') . '.'),
+                        $error !== '' ? 'error' : 'done',
+                        array(
+                            'item_id' => $id,
+                            'item_status' => $status,
+                            'item_error' => $error,
+                            'effect' => 'reload',
+                        )
+                    );
                 }
             } elseif ($job['kind'] === 'retry') {
                 $this->note_background_progress(15, 'Retrying item');

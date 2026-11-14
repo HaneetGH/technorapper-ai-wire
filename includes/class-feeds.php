@@ -44,6 +44,7 @@ trait TechnoRapper_AI_Wire_Feeds {
                 $summary['skipped'] = $foreground ? 'A run is already in progress. Wait a minute and try again.' : 'locked';
                 $this->store_last_run($summary);
                 $this->maybe_schedule_next_clock_cron($args);
+                $this->reschedule_continue_if_blocked($args);
                 return $summary;
             }
 
@@ -59,6 +60,7 @@ trait TechnoRapper_AI_Wire_Feeds {
                 $summary['skipped'] = 'Could not take over a previous run lock.';
                 $this->store_last_run($summary);
                 $this->maybe_schedule_next_clock_cron($args);
+                $this->reschedule_continue_if_blocked($args);
                 return $summary;
             }
             wp_cache_delete(self::PROCESSING_LOCK_OPTION, 'options');
@@ -67,6 +69,7 @@ trait TechnoRapper_AI_Wire_Feeds {
                 $summary['skipped'] = 'Could not start a run because another worker took the lock.';
                 $this->store_last_run($summary);
                 $this->maybe_schedule_next_clock_cron($args);
+                $this->reschedule_continue_if_blocked($args);
                 return $summary;
             }
         }
@@ -165,6 +168,7 @@ trait TechnoRapper_AI_Wire_Feeds {
                 return;
             }
             if ($filled_this_run >= max(1, $run_limit)) {
+                $summary['stopped'] = 'Stopped after ' . (int) $filled_this_run . ' posts this run. Stories are still waiting.';
                 $this->schedule_editorial_continue($touched);
                 return;
             }
@@ -279,10 +283,7 @@ trait TechnoRapper_AI_Wire_Feeds {
 
     /** Keep filling today's post cap after a time or item-limit stop. */
     private function schedule_editorial_continue($exclude = array()) {
-        $scope = $this->editorial_fetch_scope;
-        if (!empty($scope['feed_url']) || !empty($scope['desk_lane'])) {
-            return;
-        }
+        $scope = is_array($this->editorial_fetch_scope) ? $this->editorial_fetch_scope : array();
         $waiting_id = $this->next_pipeline_item_id($exclude);
         if ($waiting_id < 1) {
             return;
@@ -291,7 +292,38 @@ trait TechnoRapper_AI_Wire_Feeds {
         if (!$this->pipeline_item_is_unfinished($row)) {
             return;
         }
-        wp_schedule_single_event(time() + 15, self::CRON_HOOK, array('continue', wp_generate_uuid4()));
+        // A single-feed or desk fetch used to stop here, so the queue sat
+        // after the per-run limit (often 10) with stories still pending.
+        wp_schedule_single_event(time() + 15, self::CRON_HOOK, array(array(
+            'reason' => 'continue',
+            'desk_lane' => (string) ($scope['desk_lane'] ?? ''),
+            'feed_url' => (string) ($scope['feed_url'] ?? ''),
+        )));
+    }
+
+    /** A continue that hit a live lock must come back, or the queue stops at the per-run limit. */
+    private function reschedule_continue_if_blocked($args) {
+        if (sanitize_key($args['reason'] ?? '') !== 'continue') {
+            return;
+        }
+        $this->bind_editorial_fetch_scope($args);
+        $this->schedule_editorial_continue();
+        $this->bind_editorial_fetch_scope(array());
+    }
+
+    /** Next editorial cron, including a continue that carries a feed scope. */
+    private function next_editorial_cron_timestamp() {
+        $crons = function_exists('_get_cron_array') ? _get_cron_array() : array();
+        if (!is_array($crons)) {
+            $next = wp_next_scheduled(self::CRON_HOOK);
+            return $next ? (int) $next : 0;
+        }
+        foreach ($crons as $timestamp => $hooks) {
+            if (!empty($hooks[self::CRON_HOOK])) {
+                return (int) $timestamp;
+            }
+        }
+        return 0;
     }
 
     private function ingest_new_feed_items($s, &$summary) {
