@@ -3348,6 +3348,26 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
             'created_at' => $now,
             'updated_at' => $now,
         ), array('%d', '%s', '%s', '%s', '%s'));
+        $other_post = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Other queued Reel'));
+        update_post_meta($other_post, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($other_post, '_tr_ai_wire_social_mode', 'reel');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $other_post,
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s'));
+        $review_post = $this->factory()->post->create(array('post_status' => 'publish', 'post_title' => 'Reel waiting for Post'));
+        update_post_meta($review_post, '_tr_ai_wire_social_hold_reel', '1');
+        update_post_meta($review_post, '_tr_ai_wire_social_mode', 'reel');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $review_post,
+            'platform' => 'instagram',
+            'status' => 'needs_review',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ), array('%d', '%s', '%s', '%s', '%s'));
         $cancelled = $this->invoke_private('cancel_background_job', array(
             'Stopped the stuck Reel job.',
             array('delete_queue' => true),
@@ -3365,12 +3385,23 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $left);
         $this->assertSame('', (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true));
         $this->assertSame('publish', get_post_status($post_id));
+        $this->assertSame(1, (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND status = 'queued'",
+            $other_post
+        )));
+        $this->assertSame('1', (string) get_post_meta($other_post, '_tr_ai_wire_social_hold_reel', true));
+        $this->assertSame(1, (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND status = 'needs_review'",
+            $review_post
+        )));
         $replacement = $this->invoke_private('enqueue_background_job', array('social_pack', array('pack_kind' => 'reel'), true));
         $this->assertSame('queued', $replacement['status']);
         $this->assertNotSame($job_id, $replacement['id']);
     }
 
     public function test_now_queue_page_lists_live_website_and_social_rows() {
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
         $website_id = $this->create_queue_item();
         global $wpdb;
         $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array('status' => 'pending'), array('id' => $website_id));

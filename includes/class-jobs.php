@@ -55,7 +55,7 @@ trait TechnoRapper_AI_Wire_Jobs {
         if ($job_action === 'tr_ai_wire_stop_run') {
             check_ajax_referer('tr_ai_wire_stop_run');
             wp_send_json_success($this->public_job($this->cancel_background_job(
-                'Stopped. Active Reel/social rows were removed from the queue. WordPress posts stay.',
+                'Stopped. The Reel that was processing was removed from the queue. Other queued Reels stay. WordPress posts stay.',
                 array('delete_queue' => true)
             )));
         }
@@ -774,8 +774,9 @@ trait TechnoRapper_AI_Wire_Jobs {
     }
 
     /**
-     * Remove unfinished social/reel queue rows for a stopped job. Keeps published
-     * social posts and WordPress articles.
+     * Remove only the Reel/social rows currently being processed by the stuck
+     * job. Queued Reels waiting for review or later runs stay in the queue.
+     * Published social posts and WordPress articles stay.
      */
     private function delete_active_social_queue_rows() {
         global $wpdb;
@@ -783,25 +784,25 @@ trait TechnoRapper_AI_Wire_Jobs {
         if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
             return 0;
         }
+        // Only rows mid-flight. Do not touch queued / needs_review Reels.
         $rows = $wpdb->get_results(
-            "SELECT s.id, s.post_id, s.status
+            "SELECT s.id, s.post_id
              FROM {$table} s
-             WHERE s.status IN ('queued', 'processing')
-                OR (
-                    s.status = 'needs_review'
-                    AND EXISTS (
-                        SELECT 1 FROM {$wpdb->postmeta} h
-                        WHERE h.post_id = s.post_id
-                          AND h.meta_key = '_tr_ai_wire_social_hold_reel'
-                          AND h.meta_value = '1'
-                    )
-                    AND EXISTS (
+             WHERE s.status = 'processing'
+               AND (
+                    EXISTS (
                         SELECT 1 FROM {$wpdb->postmeta} m
                         WHERE m.post_id = s.post_id
                           AND m.meta_key = '_tr_ai_wire_social_mode'
                           AND m.meta_value = 'reel'
                     )
-                )",
+                    OR EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} h
+                        WHERE h.post_id = s.post_id
+                          AND h.meta_key = '_tr_ai_wire_social_hold_reel'
+                          AND h.meta_value = '1'
+                    )
+               )",
             ARRAY_A
         );
         $deleted = 0;
@@ -809,17 +810,8 @@ trait TechnoRapper_AI_Wire_Jobs {
         foreach ((array) $rows as $row) {
             $id = (int) ($row['id'] ?? 0);
             $post_id = (int) ($row['post_id'] ?? 0);
-            $status = sanitize_key((string) ($row['status'] ?? ''));
             if ($id < 1) {
                 continue;
-            }
-            // Keep ordinary queued stills; only purge active work + held Reel builds.
-            if ($status === 'queued') {
-                $hold = $post_id > 0 ? (string) get_post_meta($post_id, '_tr_ai_wire_social_hold_reel', true) : '';
-                $mode = $post_id > 0 ? (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true) : '';
-                if ($hold !== '1' && $mode !== 'reel') {
-                    continue;
-                }
             }
             if ($post_id > 0 && empty($seen_posts[$post_id])) {
                 $seen_posts[$post_id] = true;
@@ -828,6 +820,18 @@ trait TechnoRapper_AI_Wire_Jobs {
                 if ((string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true) === 'reel') {
                     $this->purge_social_reel_assets($post_id, array('keep_broll' => false, 'regen_script' => true));
                     delete_post_meta($post_id, '_tr_ai_wire_social_mode');
+                }
+                // Drop sibling platform rows for the same stuck Reel post only
+                // when they are also still processing.
+                $siblings = $wpdb->get_col($wpdb->prepare(
+                    "SELECT id FROM {$table} WHERE post_id = %d AND status = 'processing' AND id <> %d",
+                    $post_id,
+                    $id
+                ));
+                foreach ((array) $siblings as $sibling_id) {
+                    if ($wpdb->delete($table, array('id' => (int) $sibling_id), array('%d'))) {
+                        $deleted++;
+                    }
                 }
             }
             if ($wpdb->delete($table, array('id' => $id), array('%d'))) {

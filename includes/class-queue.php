@@ -167,7 +167,7 @@ trait TechnoRapper_AI_Wire_Queue {
         }
         check_admin_referer('tr_ai_wire_stop_run');
         $this->cancel_background_job(
-            'Stopped. Active Reel/social rows were removed from the queue. WordPress posts stay.',
+            'Stopped. The Reel that was processing was removed from the queue. Other queued Reels stay. WordPress posts stay.',
             array('delete_queue' => true)
         );
         $redirect = admin_url('admin.php?page=tr-ai-wire-now&job_stopped=1');
