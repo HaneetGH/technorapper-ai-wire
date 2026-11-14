@@ -161,8 +161,13 @@ trait TechnoRapper_AI_Wire_Pipeline {
         // Once that flag is true, this website posts it. A thin source with
         // nothing to search is still held before a model call.
         if ($value_hold !== '' && !$this->people_are_searching($review)) {
-            $awaiting_search_judgment = $review === null && $this->story_value_local_is_filler($item);
-            if (!$awaiting_search_judgment) {
+            $filler = $this->story_value_local_is_filler($item);
+            $awaiting_search_judgment = $review === null && $filler;
+            $stored_rewrite = !empty($item['rewrite_json']) ? json_decode($item['rewrite_json'], true) : null;
+            // The thin-source check only skips a model call. Once an article
+            // exists, a short RSS excerpt must not quarantine it again.
+            $past_thin_filter = !$filler && $this->has_usable_rewrite($stored_rewrite);
+            if (!$past_thin_filter && !$awaiting_search_judgment) {
                 if ($status !== 'quarantined') {
                     $this->quarantine_item($id, $value_hold, $item);
                 }
@@ -248,15 +253,8 @@ trait TechnoRapper_AI_Wire_Pipeline {
                 $this->handle_stage_error($id, $review);
                 return;
             }
-            if (!is_array($review['story_value'] ?? null)) {
-                $review['story_value'] = array(
-                    'publish' => false,
-                    'substance' => 'thin',
-                    'reader_demand' => 'low',
-                    'adds_value' => false,
-                    'reason' => 'The reviewer did not say this story is worth publishing.',
-                );
-            }
+            // A missing story_value must not become a fake "thin" hold.
+            // story_value_model_reason() already ignores an absent object.
             if (!is_array($review['audience'] ?? null)) {
                 $review['audience'] = array(
                     'pop_culture_top' => false,

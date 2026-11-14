@@ -5210,6 +5210,36 @@ trait TechnoRapper_AI_Wire_Social {
         exit;
     }
 
+    public function download_social_reel_kit() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to download this Reel.', 'technorapper-ai-wire'));
+        }
+        $id = absint($_GET['item_id'] ?? 0);
+        check_admin_referer('tr_ai_wire_download_kit_' . $id);
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE id = %d", $id), ARRAY_A);
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if (!$row || $post_id < 1) {
+            wp_die(esc_html__('That Social queue row is gone.', 'technorapper-ai-wire'));
+        }
+        $kit_id = $this->social_reel_kit_id($post_id);
+        $path = $kit_id > 0 ? get_attached_file($kit_id) : '';
+        if (!$path || !file_exists($path) || filesize($path) < 64) {
+            wp_die(esc_html__('No Reel zip is ready on this row yet. Click Prepare laptop kit once the voiceover is saved.', 'technorapper-ai-wire'));
+        }
+        $filename = 'technorapper-reel-' . $post_id . '.zip';
+        nocache_headers();
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . (string) filesize($path));
+        header('X-Content-Type-Options: nosniff');
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        readfile($path);
+        exit;
+    }
+
     private function social_reel_downloadable_id($post_id) {
         return $this->social_reel_preview_id($post_id);
     }
@@ -5223,6 +5253,18 @@ trait TechnoRapper_AI_Wire_Social {
         return wp_nonce_url(
             admin_url('admin-post.php?action=tr_ai_wire_download_reel&item_id=' . $id),
             'tr_ai_wire_download_reel_' . $id
+        );
+    }
+
+    private function social_reel_kit_download_url($row) {
+        $id = (int) ($row['id'] ?? 0);
+        $post_id = (int) ($row['post_id'] ?? 0);
+        if ($id < 1 || $post_id < 1 || $this->social_reel_kit_id($post_id) < 1) {
+            return '';
+        }
+        return wp_nonce_url(
+            admin_url('admin-post.php?action=tr_ai_wire_download_kit&item_id=' . $id),
+            'tr_ai_wire_download_kit_' . $id
         );
     }
 
@@ -5274,14 +5316,17 @@ trait TechnoRapper_AI_Wire_Social {
         if (!$post instanceof WP_Post || !in_array((string) ($row['platform'] ?? ''), array('instagram', 'youtube'), true) || !$this->social_wants_reel(null, $post->ID)) {
             return;
         }
+        $zip = $this->social_reel_kit_download_url($row);
         if ($this->social_reel_preview_id($post->ID) > 0) {
+            if ($zip !== '') {
+                echo '<p class="tr-ai-wire-reel-downloads"><a class="button button-primary" href="' . esc_url($zip) . '">Download reel zip</a></p>';
+                echo '<p class="description">Laptop kit (.zip): unzip, run make-reel.bat or bash make-reel.sh, then upload reel.mp4.</p>';
+            }
             return;
         }
-        $kit_id = (int) $this->social_reel_kit_id($post->ID);
-        $kit_url = $kit_id > 0 ? wp_get_attachment_url($kit_id) : '';
-        if ($kit_url) {
-            echo '<p style="margin:10px 0;"><a class="button button-primary" href="' . esc_url($kit_url) . '" download>Download laptop kit (.zip)</a></p>';
-            echo '<p class="description">Unzip on your computer, run <code>make-reel.bat</code> (Windows) or <code>bash make-reel.sh</code> (Mac), then upload <code>reel.mp4</code> below.</p>';
+        if ($zip !== '') {
+            echo '<p style="margin:10px 0;"><a class="button button-primary" href="' . esc_url($zip) . '">Download reel zip</a></p>';
+            echo '<p class="description">Laptop kit (.zip). Unzip on your computer, run <code>make-reel.bat</code> (Windows) or <code>bash make-reel.sh</code> (Mac), then upload <code>reel.mp4</code> below.</p>';
         }
         $parts = array(
             'talking host clip' => $this->social_host_id($post->ID),
@@ -5301,12 +5346,12 @@ trait TechnoRapper_AI_Wire_Social {
         $id = (int) ($row['id'] ?? 0);
         $status = sanitize_key((string) ($row['status'] ?? ''));
         if (
-            !$kit_url
+            $zip === ''
             && $id > 0
             && $this->social_voice_id($post->ID) > 0
             && in_array($status, array('queued', 'processing', 'needs_review'), true)
             && $this->social_row_holds_reel_for_review($row)
-            && !$this->social_reel_row_is_live($row)
+            && $status !== 'processing'
         ) {
             echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin:8px 0;">';
             echo '<input type="hidden" name="action" value="tr_ai_wire_pack_reel_kit">';

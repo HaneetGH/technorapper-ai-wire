@@ -191,13 +191,12 @@ trait TechnoRapper_AI_Wire_AI {
         if ($notes === '') {
             return false;
         }
-        if (preg_match('/missing (?:a )?(?:keyphrase|takeaway|faq|h2)|source headline|mirrored|synonym-?spin|generic headline|thin section|paraphrase|unsupported|press blurb|restated|clone/', $notes)) {
+        if (preg_match('/missing (?:a )?(?:keyphrase|takeaway|faq|h2)|source headline|mirrored|synonym-?spin|generic headline|thin section|paraphrase|unsupported claim|press blurb|restated|clone/', $notes)) {
             return true;
         }
-        if (preg_match('/readability|transition word|sentence length|passive voice|style nit|nice-to-have|comma splice|hyphen|\bhumor\b|\bwry\b|\bwit\b|\bcomic\b|\bjoke/', $notes)) {
-            return false;
-        }
-        return true;
+        // A leftover note that is not one of those defects is not a reason to
+        // park a complete article under 90. Reviewers add harmless asides.
+        return false;
     }
 
     private function rewrite_missing_ranking_items($rewrite) {
@@ -218,7 +217,7 @@ trait TechnoRapper_AI_Wire_AI {
         return false;
     }
 
-    private function titles_are_near_duplicates($left, $right) {
+    private function titles_are_near_duplicates($left, $right, $minimum = 82) {
         $a = strtolower(preg_replace('/[^a-z0-9]+/', '', (string) $left));
         $b = strtolower(preg_replace('/[^a-z0-9]+/', '', (string) $right));
         if (strlen($a) < 8 || strlen($b) < 8) {
@@ -228,7 +227,11 @@ trait TechnoRapper_AI_Wire_AI {
             return true;
         }
         similar_text($a, $b, $percent);
-        return $percent >= 82;
+        $minimum = (float) $minimum;
+        if ($minimum < 50) {
+            $minimum = 82;
+        }
+        return $percent >= $minimum;
     }
 
     private function review_notes_text($review) {
@@ -350,7 +353,13 @@ trait TechnoRapper_AI_Wire_AI {
             $reasons[] = 'similarity_risk=' . $risk;
         }
         if (!empty($s['draft_require_grounded']) && $this->is_explicitly_false($review['pragmatism']['is_grounded'] ?? null)) {
-            $reasons[] = 'not grounded in the source';
+            $facts_clear = $this->flag_list_is_empty($review['fact_flags'] ?? null);
+            $score_clears = $score >= $min_score && ($verdict === 'pass' || (!empty($s['draft_allow_revise']) && $verdict === 'revise'));
+            // A pass at the dashboard minimum with an empty fact list is grounded.
+            // Models set is_grounded false on labeled analysis and then every post waits for Force publish.
+            if (!$facts_clear || !$score_clears) {
+                $reasons[] = 'not grounded in the source';
+            }
         }
         if (!empty($s['draft_require_useful']) && empty($review['pragmatism']['is_useful'])) {
             $reasons[] = 'not useful';
@@ -365,7 +374,12 @@ trait TechnoRapper_AI_Wire_AI {
             $reasons[] = 'fact flags';
         }
         $value = $this->story_value_model_reason($review['story_value'] ?? null);
-        if ($value !== '' && !$this->people_are_searching($review) && !($demand_post && $this->story_value_is_only_low_demand($review['story_value'] ?? null))) {
+        $score_clears = $score >= $min_score && ($verdict === 'pass' || (!empty($s['draft_allow_revise']) && $verdict === 'revise'));
+        // Story-value is a filter for items under the dashboard minimum.
+        // A pass that already cleared that score was being quarantined whenever
+        // the reviewer marked ordinary tech news as thin or low-demand, so
+        // nothing auto-published and every row needed Force publish.
+        if ($value !== '' && !$score_clears && !$this->people_are_searching($review) && !($demand_post && $this->story_value_is_only_low_demand($review['story_value'] ?? null))) {
             $reasons[] = $value;
         }
         return $reasons;
@@ -509,7 +523,17 @@ trait TechnoRapper_AI_Wire_AI {
             $words = array();
         }
         $concrete = preg_match('/\d|[$£€]|announc|launch|recall|acqui|releas|unveil|earnings|lawsuit|breach|price|\bships?\b|\bban(?:s|ned)?\b|\bversion\b|cve-|\bsues?\b|\bsuing\b|\bbuys?\b|\bbought\b|\bcuts?\b|\bdelays?\b|\bconfirms?\b|\bleaks?\b/i', $title . ' ' . $body);
-        if (count($words) < 35 && !$concrete) {
+        $significant = 0;
+        $stop = array('a', 'an', 'the', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'from', 'is', 'are', 'as', 'how', 'why', 'what', 'when', 'this', 'that', 'its', 'new');
+        foreach (preg_split('/\s+/', $title, -1, PREG_SPLIT_NO_EMPTY) as $word) {
+            $clean = strtolower(preg_replace('/[^a-z0-9]/', '', (string) $word));
+            if ($clean !== '' && strlen($clean) > 2 && !in_array($clean, $stop, true)) {
+                $significant++;
+            }
+        }
+        // RSS excerpts are often under 35 words. A named headline still goes to
+        // the writer. Only a vague short title with a short body is skipped.
+        if (count($words) < 35 && !$concrete && $significant < 3) {
             return 'Held: not worth publishing. The source is too thin to show a development readers would search for.';
         }
         return '';
