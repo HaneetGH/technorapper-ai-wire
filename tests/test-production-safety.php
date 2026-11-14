@@ -5818,6 +5818,127 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array('collage', 'collage'), $formats);
     }
 
+    public function test_tech_and_comics_packs_stay_separate() {
+        $this->onboard_social(array('instagram'));
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(get_option(TechnoRapper_AI_Wire::OPTION, array()), array(
+            'social_post_format' => 'carousel',
+            'social_mix_saved' => 1,
+            'social_carousel_daily_limit' => 3,
+            'social_slide_count' => 4,
+            'social_daily_limit' => 10,
+        )), false);
+        $tech = array();
+        for ($i = 1; $i <= 4; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Tech pack story ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 880 + $i);
+            update_post_meta($post_id, '_tr_ai_wire_desk_lane', 'tech');
+            $this->fire_social_publish($post_id);
+            $tech[] = $post_id;
+        }
+        $comics = array();
+        for ($i = 1; $i <= 2; $i++) {
+            $post_id = $this->factory()->post->create(array(
+                'post_status' => 'publish',
+                'post_title' => 'Comics pack story ' . (string) $i,
+            ));
+            update_post_meta($post_id, '_tr_ai_wire_queue_id', 890 + $i);
+            update_post_meta($post_id, '_tr_ai_wire_desk_lane', 'comics');
+            $this->fire_social_publish($post_id);
+            $comics[] = $post_id;
+        }
+        global $wpdb;
+        $this->assertSame($comics, array_map('intval', $this->invoke_private('social_batch_ids')));
+        $queued = array_map('intval', $wpdb->get_col("SELECT DISTINCT post_id FROM {$wpdb->prefix}tr_ai_wire_social ORDER BY post_id ASC"));
+        $this->assertSame($tech, $queued);
+        foreach ($tech as $post_id) {
+            $this->assertSame('pack', (string) get_post_meta($post_id, '_tr_ai_wire_social_mode', true));
+        }
+        $cover = $this->invoke_private('social_cover_copy', array(array(
+            array('post' => get_post($tech[0]), 'copy' => array()),
+            array('post' => get_post($tech[1]), 'copy' => array()),
+        ), 'weekly_recap'));
+        $this->assertSame('tech', $cover['_desk']);
+        $this->assertStringContainsString('THIS WEEK IN TECH', $cover['on_image_headline']);
+        $comics_cover = $this->invoke_private('social_cover_copy', array(array(
+            array('post' => get_post($comics[0]), 'copy' => array()),
+            array('post' => get_post($comics[1]), 'copy' => array()),
+        ), 'weekly_recap'));
+        $this->assertSame('comics', $comics_cover['_desk']);
+        $this->assertStringContainsString('THIS WEEK IN COMICS', $comics_cover['on_image_headline']);
+        $caption = $this->invoke_private('instagram_pack_caption', array(array(
+            array('post' => get_post($comics[0]), 'copy' => array('on_image_headline' => 'Comics pack story 1')),
+            array('post' => get_post($comics[1]), 'copy' => array('on_image_headline' => 'Comics pack story 2')),
+        )));
+        $this->assertStringContainsString('Comics on ', $caption);
+        $this->assertStringContainsString('Don\'t skip the last page.', $caption);
+        $prompt = $this->invoke_private('social_image_prompt', array(get_post($comics[0]), array()));
+        $this->assertStringContainsString('comic shop', $prompt);
+        $this->assertStringNotContainsString('technology-news', $prompt);
+        $tech_prompt = $this->invoke_private('social_image_prompt', array(get_post($tech[0]), array()));
+        $this->assertStringContainsString('technology-news', $tech_prompt);
+        $this->assertStringNotContainsString('comic shop', $tech_prompt);
+
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($wpdb->prefix . 'tr_ai_wire_social', array(
+            'post_id' => $comics[0],
+            'platform' => 'instagram',
+            'status' => 'queued',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ));
+        foreach (array($tech[0], $comics[0], $tech[1]) as $post_id) {
+            update_post_meta($post_id, '_tr_ai_wire_social_mode', 'collage');
+            update_post_meta($post_id, '_tr_ai_wire_social_force_pack', 'collage');
+            $wpdb->update($wpdb->prefix . 'tr_ai_wire_social', array(
+                'status' => 'queued',
+                'updated_at' => $now,
+            ), array('post_id' => $post_id));
+        }
+        $lead = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}tr_ai_wire_social WHERE post_id = %d AND platform = 'instagram'",
+            $tech[0]
+        ), ARRAY_A);
+        $pack = $this->invoke_private('claim_instagram_pack', array($lead, 10, get_option(TechnoRapper_AI_Wire::OPTION, array())));
+        $packed = array();
+        foreach ($pack as $row) {
+            $packed[] = (int) $row['post_id'];
+        }
+        $this->assertContains($tech[0], $packed);
+        $this->assertContains($tech[1], $packed);
+        $this->assertNotContains($comics[0], $packed);
+    }
+
+    public function test_comics_collage_uses_a_paper_gutter() {
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagejpeg') || !function_exists('imagecreatefromstring')) {
+            $this->markTestSkipped('GD is required to render a collage.');
+        }
+        $tile = imagecreatetruecolor(40, 40);
+        imagefilledrectangle($tile, 0, 0, 39, 39, imagecolorallocate($tile, 20, 40, 80));
+        ob_start();
+        imagejpeg($tile, null, 80);
+        $jpeg = ob_get_clean();
+        imagedestroy($tile);
+        $tech = $this->invoke_private('compose_social_collage', array(array($jpeg, $jpeg), 'tech'));
+        $comics = $this->invoke_private('compose_social_collage', array(array($jpeg, $jpeg), 'comics'));
+        $this->assertTrue(is_string($tech) && is_string($comics));
+        $tech_image = imagecreatefromstring($tech);
+        $comics_image = imagecreatefromstring($comics);
+        $this->assertNotFalse($tech_image);
+        $this->assertNotFalse($comics_image);
+        $tech_gutter = imagecolorsforindex($tech_image, imagecolorat($tech_image, 538, 400));
+        $comics_gutter = imagecolorsforindex($comics_image, imagecolorat($comics_image, 538, 400));
+        $this->assertLessThan(40, $tech_gutter['red'] + $tech_gutter['green'] + $tech_gutter['blue']);
+        $this->assertGreaterThan(180, $comics_gutter['red']);
+        $comics_rule = imagecolorsforindex($comics_image, imagecolorat($comics_image, 20, 4));
+        $this->assertGreaterThan(120, $comics_rule['red']);
+        $this->assertLessThan(80, $comics_rule['blue']);
+        imagedestroy($tech_image);
+        imagedestroy($comics_image);
+    }
+
     public function test_a_lone_forced_carousel_stays_queued_instead_of_posting_as_a_still() {
         $this->onboard_social(array('instagram'));
         $post_id = $this->factory()->post->create(array(

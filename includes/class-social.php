@@ -1471,6 +1471,9 @@ trait TechnoRapper_AI_Wire_Social {
             if (isset($seen[$post_id]) || $this->social_item_is_manual_repost($candidate)) {
                 continue;
             }
+            if ($this->post_social_desk($post_id) !== $this->post_social_desk((int) $lead['post_id'])) {
+                continue;
+            }
             if ($lead_format !== '') {
                 if ($this->social_row_explicit_pack($candidate) !== $lead_format) {
                     continue;
@@ -1546,6 +1549,7 @@ trait TechnoRapper_AI_Wire_Social {
         $topic = $this->social_cover_topic($prepared);
         $copy = array(
             '_news_format' => $format,
+            '_desk' => $this->social_pack_desk($prepared),
             'instagram_alt' => self::site_brand_name() . ' roundup cover',
             'on_image_kicker' => strtoupper($topic) . ' NEWS',
         );
@@ -1569,6 +1573,7 @@ trait TechnoRapper_AI_Wire_Social {
         $topic = $this->social_cover_topic($prepared);
         return array(
             '_news_format' => 'weekly_recap',
+            '_desk' => $this->social_pack_desk($prepared),
             'instagram_alt' => 'Swipe for the next ' . strtolower($topic) . ' story',
             'on_image_kicker' => 'WAIT',
             'on_image_headline' => 'THE NEXT SLIDE IS THE ONE',
@@ -1623,28 +1628,51 @@ trait TechnoRapper_AI_Wire_Social {
         return $urls;
     }
 
-    private function social_cover_topic($prepared) {
+    private function social_pack_desk($prepared) {
         foreach ((array) $prepared as $item) {
-            $copy = is_array($item['copy'] ?? null) ? $item['copy'] : array();
-            $category = strtoupper($this->clip_social_text((string) ($copy['category'] ?? ''), 16));
-            if ($category !== '' && !is_numeric($category)) {
-                return $category;
+            $post = is_array($item) ? ($item['post'] ?? null) : null;
+            if ($post instanceof WP_Post) {
+                return $this->post_social_desk($post->ID);
             }
-            if ($item['post'] instanceof WP_Post) {
-                $snapshot = $this->social_article_snapshot($item['post']);
-                $category = strtoupper($this->clip_social_text((string) ($snapshot['category'] ?? ''), 16));
-                if ($category !== '' && !is_numeric($category)) {
-                    return $category;
-                }
+            if (is_array($item) && !empty($item['post_id'])) {
+                return $this->post_social_desk((int) $item['post_id']);
             }
         }
-        $profile = $this->site_context_profile();
-        $desks = (array) ($profile['desks'] ?? array());
-        if (!empty($desks[0])) {
-            $desk = strtoupper($this->clip_social_text((string) $desks[0], 16));
-            if ($desk !== '') {
-                return $desk;
+        return 'tech';
+    }
+
+    private function post_social_desk($post_id) {
+        $post_id = (int) $post_id;
+        if ($post_id < 1) {
+            return 'tech';
+        }
+        $stored = sanitize_key((string) get_post_meta($post_id, '_tr_ai_wire_desk_lane', true));
+        if ($stored === 'comics' || $stored === 'tech') {
+            return $stored;
+        }
+        $desk = 'tech';
+        $qid = (int) get_post_meta($post_id, '_tr_ai_wire_queue_id', true);
+        if ($qid > 0) {
+            $item = $this->get_item($qid);
+            if (is_array($item) && $this->item_desk_lane($item) === 'comics') {
+                $desk = 'comics';
             }
+        }
+        if ($desk !== 'comics') {
+            $comics_id = $this->comics_category_term_id();
+            if ($comics_id > 0 && has_category($comics_id, $post_id)) {
+                $desk = 'comics';
+            }
+        }
+        if (get_post($post_id)) {
+            update_post_meta($post_id, '_tr_ai_wire_desk_lane', $desk);
+        }
+        return $desk;
+    }
+
+    private function social_cover_topic($prepared) {
+        if ($this->social_pack_desk($prepared) === 'comics') {
+            return 'COMICS';
         }
         return 'TECH';
     }
@@ -1683,7 +1711,7 @@ trait TechnoRapper_AI_Wire_Social {
                     $bytes[] = $jpeg;
                 }
             }
-            $collage = $this->compose_social_collage($bytes);
+            $collage = $this->compose_social_collage($bytes, $this->social_pack_desk($prepared));
             if (is_wp_error($collage)) {
                 return $collage;
             }
@@ -1749,7 +1777,8 @@ trait TechnoRapper_AI_Wire_Social {
                 $titles[] = $title;
             }
         }
-        $caption = 'Last photo is the one. Today on ' . self::site_brand_name() . ': ' . implode(' • ', $titles);
+        $desk_line = $this->social_pack_desk($prepared) === 'comics' ? 'Comics on ' : 'Today on ';
+        $caption = 'Last photo is the one. ' . $desk_line . self::site_brand_name() . ': ' . implode(' • ', $titles);
         $home = home_url('/');
         if (strpos($caption, $home) === false) {
             $caption .= ' ' . $home;
@@ -1758,9 +1787,10 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function instagram_pack_caption($prepared) {
+        $comics = $this->social_pack_desk($prepared) === 'comics';
         $lines = array(
-            'Don\'t skip the last slide.',
-            'Today on ' . self::site_brand_name() . ':',
+            $comics ? 'Don\'t skip the last page.' : 'Don\'t skip the last slide.',
+            ($comics ? 'Comics on ' : 'Today on ') . self::site_brand_name() . ':',
         );
         $hashtags = array();
         $cta = 'Read the full stories on ' . self::site_brand_name();
@@ -2394,7 +2424,8 @@ trait TechnoRapper_AI_Wire_Social {
         $variant = $this->normalize_poster_variant($copy['_poster_variant'] ?? $this->social_poster_variant_for_post($post));
         $format = sanitize_key((string) ($copy['_news_format'] ?? ''));
         $comic = $this->post_is_comic($post);
-        $prompt = $this->social_image_prompt_for_format($format, $variant, $post, $revision, $profile, $brief, $comic);
+        $desk = ($post instanceof WP_Post) ? $this->post_social_desk($post->ID) : 'tech';
+        $prompt = $this->social_image_prompt_for_format($format, $variant, $post, $revision, $profile, $brief, $comic, $desk);
         $idea = $this->social_custom_idea($format);
         if ($idea) {
             $idea_text = $this->clip_social_text($idea['title'] . '. ' . $idea['description'], 420);
@@ -2413,9 +2444,20 @@ trait TechnoRapper_AI_Wire_Social {
         return $prompt;
     }
 
-    private function social_image_prompt_for_format($format, $variant, $post, $revision, $profile, $brief, $comic = false) {
+    private function social_image_prompt_for_format($format, $variant, $post, $revision, $profile, $brief, $comic = false, $desk = 'tech') {
+        $desk = $desk === 'comics' ? 'comics' : 'tech';
         $art = $this->social_image_art_direction($profile, $comic);
-        $camera = $this->social_image_camera($post, $revision, $comic);
+        $camera = $this->social_image_camera($post, $revision, $comic, $desk);
+        if ($desk === 'comics') {
+            return 'Untitled photoreal photograph, vertical 4:5, full-bleed. '
+                . 'A quiet comic shop or a drawing desk: unbranded graphic novels, paper grain, ink, and halftone dots in the light. '
+                . 'No readable words, no famous characters, no publisher logos, no superhero costumes, no gadgets as the subject. '
+                . 'Do not render any text, letters, numbers, captions, headlines, logos, watermarks, or typography. '
+                . 'This is a photograph, not a cartoon, not a poster, not a title card. '
+                . 'Anonymous fully clothed people (backs, silhouettes) are allowed. Never a real celebrity. '
+                . 'Art direction: warm paper, ink black, one red accent, cinematic shop light. Camera: ' . $camera . '. '
+                . $this->social_image_scroll_stop_clause($comic);
+        }
         $scene = $brief !== '' ? 'Scene: ' . $brief . '. ' : 'Scene: one scroll-stopping technology-news photograph with a single hero subject filling the frame. ';
         $no_text = 'Do not render any text, letters, numbers, captions, headlines, subtitles, logos, watermarks, lower-thirds, or typography of any kind. ';
         $no_people_brands = 'Do not imitate a specific existing photo. Anonymous fully clothed people (backs, silhouettes, generic office workers) are allowed. Never a real celebrity. No real brand logos. ';
@@ -2731,8 +2773,15 @@ trait TechnoRapper_AI_Wire_Social {
                 $ids[] = $post_id;
                 $this->social_batch_save($ids);
             }
-            if (count($ids) >= $this->social_slide_count($settings)) {
-                $this->flush_social_batch(true);
+            $desk = $this->post_social_desk($post_id);
+            $lane_count = 0;
+            foreach ($ids as $held_id) {
+                if ($this->post_social_desk($held_id) === $desk) {
+                    $lane_count++;
+                }
+            }
+            if ($lane_count >= $this->social_slide_count($settings)) {
+                $this->flush_social_lanes($desk, false, false);
             }
             return;
         }
@@ -2870,43 +2919,68 @@ trait TechnoRapper_AI_Wire_Social {
     }
 
     private function flush_social_batch($force = false, $allow_singles = false) {
+        return $this->flush_social_lanes('', $force, $allow_singles);
+    }
+
+    private function flush_social_lanes($only_desk, $force = false, $allow_singles = false) {
         $ids = $this->social_batch_ids();
         if (!$ids) {
             return false;
+        }
+        $only_desk = $only_desk === 'comics' ? 'comics' : ($only_desk === 'tech' ? 'tech' : '');
+        $lanes = array('tech' => array(), 'comics' => array());
+        foreach ($ids as $id) {
+            $desk = $this->post_social_desk($id);
+            $lanes[$desk === 'comics' ? 'comics' : 'tech'][] = (int) $id;
         }
         $settings = $this->settings();
         $wanted = $this->social_slide_count($settings);
         $left = $this->social_mix_remaining($settings);
         $pack_kind = $this->social_next_pack_kind($settings);
-        $count = count($ids);
-        // A carousel/collage needs at least two articles. Process now may ship a
-        // short pack (2+) before the configured slide count, but a single leftover
-        // stays held while pack quota remains — otherwise Instagram publishes it
-        // as a still and the mix looks like "singles only".
-        $as_pack = $pack_kind !== '' && $count >= 2 && ($force || $count >= $wanted);
-        if (!$as_pack && !($allow_singles && $left['single'] > 0 && $pack_kind === '')) {
-            return false;
-        }
-        $this->social_batch_save(array());
-        $mode = $as_pack ? $pack_kind : 'single';
-        $queued = 0;
-        foreach ($ids as $post_id) {
-            if ($mode === 'single' && $queued >= $left['single']) {
-                break;
-            }
-            $post = get_post((int) $post_id);
-            if (!$post || $post->post_status !== 'publish') {
+        $remain = array();
+        $shipped = false;
+        foreach ($lanes as $desk => $lane_ids) {
+            if ($only_desk !== '' && $desk !== $only_desk) {
+                $remain = array_merge($remain, $lane_ids);
                 continue;
             }
-            $this->enqueue_social_article((int) $post_id, $mode === 'carousel' ? 'pack' : $mode);
-            $queued++;
+            $count = count($lane_ids);
+            // A carousel/collage needs at least two articles from the same desk.
+            // Process now may ship a short pack (2+) before the configured slide
+            // count, but a single leftover stays held while pack quota remains.
+            $as_pack = $pack_kind !== '' && $count >= 2 && ($force || $count >= $wanted);
+            if (!$as_pack && !($allow_singles && $left['single'] > 0 && $pack_kind === '')) {
+                $remain = array_merge($remain, $lane_ids);
+                continue;
+            }
+            $mode = $as_pack ? $pack_kind : 'single';
+            $queued = 0;
+            foreach ($lane_ids as $post_id) {
+                if ($mode === 'single' && $queued >= $left['single']) {
+                    $remain[] = (int) $post_id;
+                    continue;
+                }
+                $post = get_post((int) $post_id);
+                if (!$post || $post->post_status !== 'publish') {
+                    continue;
+                }
+                $this->enqueue_social_article((int) $post_id, $mode === 'carousel' ? 'pack' : $mode);
+                $queued++;
+            }
+            if ($queued < 1) {
+                continue;
+            }
+            if ($mode === 'single') {
+                $left['single'] = max(0, $left['single'] - $queued);
+            }
+            $this->social_mix_add($as_pack ? $pack_kind : 'single', $as_pack ? 1 : $queued);
+            $shipped = true;
         }
-        if ($queued < 1) {
-            return false;
+        $this->social_batch_save($remain);
+        if ($shipped) {
+            $this->kick_social_queue(30);
         }
-        $this->social_mix_add($as_pack ? $pack_kind : 'single', $as_pack ? 1 : $queued);
-        $this->kick_social_queue(30);
-        return true;
+        return $shipped;
     }
 
     private function social_mix_option_name() {
@@ -3085,11 +3159,17 @@ trait TechnoRapper_AI_Wire_Social {
         if (!$this->social_distribution_ready() || !$this->social_still_platforms()) {
             return new WP_Error('tr_ai_wire_social_pack', 'Turn on X or Instagram under Social settings before generating a ' . $kind . '. YouTube only receives Reels.');
         }
-        $ids = $this->social_force_pack_candidates($this->social_pack_slide_count($this->settings()), $kind);
+        $limit = $this->social_pack_slide_count($this->settings());
+        $pool = $this->social_force_pack_pool($kind);
+        $ids = $this->social_same_desk_pack($pool, $limit);
         if (count($ids) < 2) {
             $pending = $this->social_explicit_pack_pending_count($kind);
             if ($pending >= 2) {
                 return new WP_Error('tr_ai_wire_social_pack', 'A ' . $kind . ' of ' . (string) $pending . ' articles is already queued. Use Process queued social posts now to publish it.');
+            }
+            $counts = $this->social_desk_counts($pool);
+            if ($counts['tech'] > 0 && $counts['comics'] > 0) {
+                return new WP_Error('tr_ai_wire_social_pack', 'Tech and comics stay in separate ' . $kind . 's. Ready now: ' . (int) $counts['tech'] . ' tech, ' . (int) $counts['comics'] . ' comics. Each desk needs at least 2.');
             }
             $ready = count($ids);
             $ready_label = $ready === 1 ? 'is 1' : ('are ' . (string) $ready);
@@ -3261,13 +3341,50 @@ trait TechnoRapper_AI_Wire_Social {
         return true;
     }
 
-    private function social_force_pack_candidates($limit, $kind) {
+    private function social_desk_counts($ids) {
+        $counts = array('tech' => 0, 'comics' => 0);
+        foreach ((array) $ids as $id) {
+            $desk = $this->post_social_desk($id) === 'comics' ? 'comics' : 'tech';
+            $counts[$desk]++;
+        }
+        return $counts;
+    }
+
+    private function social_same_desk_pack($ids, $limit) {
         $limit = max(2, (int) $limit);
+        $by = array('tech' => array(), 'comics' => array());
+        $order = array();
+        foreach ((array) $ids as $id) {
+            $id = (int) $id;
+            $desk = $this->post_social_desk($id) === 'comics' ? 'comics' : 'tech';
+            if (!isset($order[$desk])) {
+                $order[$desk] = count($order);
+            }
+            if (count($by[$desk]) < $limit) {
+                $by[$desk][] = $id;
+            }
+        }
+        $best = 'tech';
+        $best_count = -1;
+        $best_order = 99;
+        foreach (array('tech', 'comics') as $desk) {
+            $count = count($by[$desk]);
+            $rank = $order[$desk] ?? 99;
+            if ($count > $best_count || ($count === $best_count && $rank < $best_order)) {
+                $best = $desk;
+                $best_count = $count;
+                $best_order = $rank;
+            }
+        }
+        return $by[$best];
+    }
+
+    private function social_force_pack_pool($kind) {
         $kind = $kind === 'collage' ? 'collage' : 'carousel';
         $ids = array();
-        $consider = function ($post_id) use (&$ids, $limit, $kind) {
+        $consider = function ($post_id) use (&$ids, $kind) {
             $post_id = (int) $post_id;
-            if ($post_id < 1 || count($ids) >= $limit || in_array($post_id, $ids, true)) {
+            if ($post_id < 1 || count($ids) >= 80 || in_array($post_id, $ids, true)) {
                 return;
             }
             if ($this->social_force_pack_candidate_ok($post_id, $kind)) {
@@ -3277,16 +3394,10 @@ trait TechnoRapper_AI_Wire_Social {
         foreach ($this->social_batch_ids() as $id) {
             $consider($id);
         }
-        if (count($ids) >= $limit) {
-            return $ids;
-        }
         global $wpdb;
         $queued = $wpdb->get_col("SELECT post_id FROM {$wpdb->prefix}tr_ai_wire_social WHERE status = 'queued' GROUP BY post_id ORDER BY MIN(created_at) ASC LIMIT 40");
         foreach ((array) $queued as $id) {
             $consider($id);
-        }
-        if (count($ids) >= $limit) {
-            return $ids;
         }
         $recent = get_posts(array(
             'post_type' => 'post',
@@ -3418,7 +3529,7 @@ trait TechnoRapper_AI_Wire_Social {
         return (int) $attachment_id;
     }
 
-    private function compose_social_collage($jpegs) {
+    private function compose_social_collage($jpegs, $desk = 'tech') {
         if (!function_exists('imagecreatefromstring') || !function_exists('imagejpeg')) {
             return new WP_Error('tr_ai_wire_social_gd', 'PHP GD is required to render a social collage.');
         }
@@ -3426,11 +3537,13 @@ trait TechnoRapper_AI_Wire_Social {
         if (count($jpegs) < 2) {
             return $jpegs[0] ?? new WP_Error('tr_ai_wire_social_collage', 'A collage needs at least two graphics.');
         }
+        $comics = $desk === 'comics';
         $width = 1080;
         $height = 1350;
-        $gap = 8;
+        $gap = $comics ? 28 : 8;
         $canvas = imagecreatetruecolor($width, $height);
-        imagefilledrectangle($canvas, 0, 0, $width, $height, imagecolorallocate($canvas, 0, 0, 0));
+        $gutter = $comics ? imagecolorallocate($canvas, 244, 232, 208) : imagecolorallocate($canvas, 6, 10, 16);
+        imagefilledrectangle($canvas, 0, 0, $width, $height, $gutter);
         foreach ($this->social_collage_cells(count($jpegs), $width, $height, $gap) as $index => $cell) {
             if (!isset($jpegs[$index])) {
                 break;
@@ -3441,6 +3554,10 @@ trait TechnoRapper_AI_Wire_Social {
             }
             imagecopyresampled($canvas, $source, $cell['x'], $cell['y'], 0, 0, $cell['w'], $cell['h'], imagesx($source), imagesy($source));
             imagedestroy($source);
+        }
+        if ($comics) {
+            imagefilledrectangle($canvas, 0, 0, $width, 22, imagecolorallocate($canvas, 176, 32, 48));
+            imagefilledrectangle($canvas, 0, $height - 22, $width, $height, imagecolorallocate($canvas, 176, 32, 48));
         }
         ob_start();
         imagejpeg($canvas, null, 88);
@@ -3508,7 +3625,16 @@ trait TechnoRapper_AI_Wire_Social {
         return $cells;
     }
 
-    private function social_image_camera($post, $revision = 0, $comic = false) {
+    private function social_image_camera($post, $revision = 0, $comic = false, $desk = 'tech') {
+        if ($desk === 'comics') {
+            $cameras = array(
+                'close-up of unbranded comic pages fanned on a wooden counter, warm shop light, no readable words',
+                'a tall shelf of plain-spine graphic novels in a quiet shop, dust in a window beam',
+                'ink bottle and blank bristol board on a drawing desk, one red pencil, no lettering',
+                'halftone dots on paper filling the frame, macro, no characters',
+                'empty comic-shop aisle at night, warm bulbs, no signage',
+            );
+        } else {
         $cameras = array(
             'tight overhead still life of one device on a dark desk, hard side light, wet reflections',
             'extreme close-up of a phone or laptop edge, neon bokeh, rain on glass',
@@ -3516,7 +3642,8 @@ trait TechnoRapper_AI_Wire_Social {
             'empty newsroom desk at night, cyan monitor glow, no people',
             'wide city grid at dusk from a high window, no figures',
         );
-        if (!empty($comic)) {
+        }
+        if (!empty($comic) && $desk !== 'comics') {
             $cameras[] = 'empty conference table at night with one laptop open and chairs pushed back, dusk windows';
             $cameras[] = 'cold coffee beside a glowing phone on a dark desk, no people';
         }
@@ -4006,7 +4133,11 @@ trait TechnoRapper_AI_Wire_Social {
         $height = 1350;
         $canvas = imagecreatetruecolor($width, $height);
         imagealphablending($canvas, true);
-        $this->draw_social_news_format($canvas, (string) ($copy['_news_format'] ?? 'weekly_recap'), $copy, $width, $height);
+        if (($copy['_desk'] ?? '') === 'comics') {
+            $this->draw_social_comics_cover($canvas, $copy, $width, $height);
+        } else {
+            $this->draw_social_news_format($canvas, (string) ($copy['_news_format'] ?? 'weekly_recap'), $copy, $width, $height);
+        }
         ob_start();
         imagejpeg($canvas, null, 88);
         $result = ob_get_clean();
@@ -4027,6 +4158,27 @@ trait TechnoRapper_AI_Wire_Social {
         $alpha = max(0, min(127, (int) $alpha));
         $overlay = imagecolorallocatealpha($canvas, 0, 0, 0, $alpha);
         imagefilledrectangle($canvas, 0, 0, $width, $height, $overlay);
+    }
+
+    private function draw_social_comics_cover($canvas, $copy, $width, $height) {
+        imagefilledrectangle($canvas, 0, 0, $width, $height, imagecolorallocate($canvas, 244, 232, 208));
+        imagefilledrectangle($canvas, 0, 0, $width, 28, imagecolorallocate($canvas, 176, 32, 48));
+        imagefilledrectangle($canvas, 48, 160, 72, $height - 160, imagecolorallocate($canvas, 20, 16, 14));
+        $font = $this->social_font_path();
+        $ink = imagecolorallocate($canvas, 20, 16, 14);
+        $muted = imagecolorallocate($canvas, 90, 48, 42);
+        $this->draw_social_brand_mark($canvas, $font, $ink, imagecolorallocate($canvas, 176, 32, 48), 96, 100);
+        $headline = trim(wp_strip_all_tags((string) ($copy['on_image_headline'] ?? 'COMICS')));
+        $layout = $this->social_poster_headline_layout($headline, $font, 900, 640, 4);
+        $y = 460;
+        foreach ($layout['lines'] as $line) {
+            $this->draw_social_aligned_text($canvas, $line, $layout['size'], $y, 'left', 108, $ink, $font, $width, $ink, 0);
+            $y += $layout['line_height'];
+        }
+        $subhead = trim(wp_strip_all_tags((string) ($copy['on_image_subhead'] ?? '')));
+        if ($subhead !== '') {
+            $this->draw_social_aligned_text($canvas, $subhead, $font ? 28 : 5, $y + 28, 'left', 108, $muted, $font, $width, $ink, 0);
+        }
     }
 
     private function draw_social_weekly_recap($canvas, $copy, $width, $height) {
