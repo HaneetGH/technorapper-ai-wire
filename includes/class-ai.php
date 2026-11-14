@@ -345,7 +345,8 @@ trait TechnoRapper_AI_Wire_AI {
         $score = isset($review['score']) ? (int) $review['score'] : 0;
         $min_score = (int) $s['draft_min_score'];
         $demand_post = $this->audience_demand_overrides_score($review);
-        if ($score < $min_score && !$demand_post) {
+        $website_pass = $this->review_is_website_pass($review, $s);
+        if ($score < $min_score && !$demand_post && !$website_pass) {
             $reasons[] = 'score ' . $score . ' < ' . $min_score;
         }
         $risk = strtolower((string) ($review['pragmatism']['similarity_risk'] ?? 'high'));
@@ -382,10 +383,63 @@ trait TechnoRapper_AI_Wire_AI {
         // A pass that already cleared that score was being quarantined whenever
         // the reviewer marked ordinary tech news as thin or low-demand, so
         // nothing auto-published and every row needed Force publish.
-        if ($value !== '' && !$score_clears && !$this->people_are_searching($review) && !($demand_post && $this->story_value_is_only_low_demand($review['story_value'] ?? null))) {
+        // A grounded pass at 70+ is the same case when the model parks it
+        // just under an 85 dashboard minimum. An explicit thin or low-demand
+        // label still holds that pass. A missing story-value field does not.
+        $explicit_thin = $this->story_value_is_explicitly_unworthy($review['story_value'] ?? null);
+        if ($website_pass && !$score_clears) {
+            if ($explicit_thin && !$this->people_are_searching($review) && !$demand_post) {
+                $reasons[] = $value !== '' ? $value : 'Held: not worth publishing.';
+            }
+        } elseif ($value !== '' && !$score_clears && !$this->people_are_searching($review) && !($demand_post && $this->story_value_is_only_low_demand($review['story_value'] ?? null))) {
             $reasons[] = $value;
         }
         return $reasons;
+    }
+
+    /**
+     * A grounded pass the reviewer scored at 70 or above. The dashboard
+     * minimum (often 85) was turning these into review holds, so the day
+     * auto-published nothing. Reject, revise, fact flags, and policy flags
+     * stay held. The SEO score floor and the social 90 floor still apply.
+     */
+    private function review_is_website_pass($review, $s) {
+        if (!is_array($review)) {
+            return false;
+        }
+        $verdict = strtolower(trim((string) ($review['verdict'] ?? '')));
+        if ($verdict !== 'pass') {
+            return false;
+        }
+        $score = isset($review['score']) ? (int) $review['score'] : 0;
+        if ($score < 70) {
+            return false;
+        }
+        if (!$this->flag_list_is_empty($review['policy_flags'] ?? null) || !$this->flag_list_is_empty($review['fact_flags'] ?? null)) {
+            return false;
+        }
+        $pragmatism = is_array($review['pragmatism'] ?? null) ? $review['pragmatism'] : array();
+        if ($this->is_explicitly_false($pragmatism['is_grounded'] ?? null)) {
+            return false;
+        }
+        unset($s);
+        return true;
+    }
+
+    /**
+     * The reviewer said this story should not go out. A blank or partial
+     * story_value object is not that sentence.
+     */
+    private function story_value_is_explicitly_unworthy($value) {
+        if (!is_array($value) || !$value) {
+            return false;
+        }
+        $substance = strtolower(trim((string) ($value['substance'] ?? '')));
+        $demand = strtolower(trim((string) ($value['reader_demand'] ?? '')));
+        if ($substance === 'thin' || $demand === 'low' || $this->is_explicitly_false($value['publish'] ?? null) || $this->is_explicitly_false($value['adds_value'] ?? null)) {
+            return true;
+        }
+        return false;
     }
 
     /**

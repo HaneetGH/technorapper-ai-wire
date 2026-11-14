@@ -11851,6 +11851,50 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($older, $settings)));
     }
 
+    public function test_grounded_pass_under_the_dashboard_minimum_publishes() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_min_score'] = 85;
+        $settings['seo_min_score'] = 90;
+        $review = array(
+            'verdict' => 'pass',
+            'score' => 78,
+            'fact_flags' => array(),
+            'policy_flags' => array(),
+            'pragmatism' => array('is_grounded' => true, 'is_useful' => true, 'is_new' => true, 'similarity_risk' => 'low'),
+            'story_value' => array('publish' => true, 'substance' => 'solid'),
+        );
+        $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($review, $settings)));
+        $rewrite = array(
+            'title' => 'Nvidia ships a new inference chip',
+            'lede' => 'The chip raises memory bandwidth for data-center inference.',
+            'body_html' => '<p>Nvidia said the chip ships in April.</p>',
+            'seo' => array('seo_score' => 40, 'has_keyphrase' => true, 'has_social' => true),
+        );
+        $seo_reasons = $this->invoke_private('rewrite_seo_blockers', array($rewrite, $settings, $review));
+        $this->assertStringContainsString('SEO score 40 < 90', implode(' ', $seo_reasons));
+
+        $thin = $review;
+        $thin['story_value'] = array(
+            'publish' => false,
+            'substance' => 'thin',
+            'reader_demand' => 'low',
+            'adds_value' => false,
+            'reason' => 'No named change.',
+        );
+        $thin_reasons = $this->invoke_private('review_draft_blockers', array($thin, $settings));
+        $this->assertStringContainsString('too thin', implode(' ', $thin_reasons));
+
+        $low = $review;
+        $low['score'] = 64;
+        $low_reasons = $this->invoke_private('review_draft_blockers', array($low, $settings));
+        $this->assertStringContainsString('score 64 < 85', implode(' ', $low_reasons));
+
+        $revise = $review;
+        $revise['verdict'] = 'revise';
+        $revise_reasons = $this->invoke_private('review_draft_blockers', array($revise, $settings));
+        $this->assertStringContainsString('score 78 < 85', implode(' ', $revise_reasons));
+    }
+
     public function test_ordinary_review_note_does_not_block_a_90_lift() {
         $review = $this->invoke_private('normalize_review_score', array(
             $this->passing_review_for_score(86, array(
