@@ -15,7 +15,7 @@ trait TechnoRapper_AI_Wire_AI {
 
     private function google_ranking_instructions($comic = false) {
         $prompt = 'Google ranking rules — apply every on-page item while writing. Do not grade, score, or reject your own article: '
-            . '1) Write for this site\'s audience, using the site name and the Site categories list. Do not write a generic world-news dump that ignores the publisher. If the source is a deal list, coupon, best-of list, weekly recap, sponsored item, or too thin to explain a named change a reader would search, return an empty title and an empty body_html. Do not pad that source into an article. '
+            . '1) Write for this site\'s audience, using the site name and the Site categories list. Do not write a generic world-news dump that ignores the publisher. If people are searching this topic on the public internet, write the article, including when the source is a list, a deal, a coupon, a recap, or a short note. That means Google and other search engines, not search on this website. Return an empty title and an empty body_html only when the source has no named topic people could type into a search engine. Do not pad a source that has nothing to look up. '
             . '2) Add a reader angle the headline does not: why the sourced facts matter, who is affected, and what to watch next. Write that as labeled analysis, not as new facts. Do not add numbers, quotes, dates, names, prices, or events that are not in the source. Compare only products or companies the source already names. When the source is global, explain local or regional impact only if the source supports it. Never invent local facts. Missing local context is fine when the source has none — still write the article. '
             . '3) Do not reuse the source headline or its search query. Pick a different job-to-be-done a reader would type. Thin synonym-spins will not rank. '
             . '4) One detailed article, not a brief. Title is the only H1. Required H2s in this order after a Key takeaways box: What changed, Why it matters, Who is affected, What to watch next, Frequently asked questions. Paragraphs are 2–3 sentences, active voice, with transition words. Aim 800–1400 words. '
@@ -52,9 +52,10 @@ trait TechnoRapper_AI_Wire_AI {
             . 'fact_flags must be an empty array when every concrete claim appears in the source. Do not flag single-source reporting, lack of independent verification, hedging, readability, or labeled analysis. A non-empty fact_flags array blocks publication, so list only a claim that contradicts the source or is not in the source. Put style and structure notes in issues. '
             . 'Return JSON with score (0-100), verdict (pass/revise/reject), issues (array), fact_flags (array), policy_flags (array), pragmatism {is_new, is_useful, is_grounded, similarity_risk (low/medium/high), notes}, story_value {publish (boolean), substance (thin/solid/major), reader_demand (low/medium/high), adds_value (boolean), reason}, suggested_fixes (array), safe_to_publish (boolean). is_new means the writing is original versus the source, not that the news event is unpublished. Use verdict pass when the score is 85 or higher and fact_flags is empty. Use verdict revise only for a 70-84 article a human must edit. Use reject for fabrication, policy problems, synonym-spin, missing unique angle, or empty/unusable copy. Set safe_to_publish true when the article is grounded, fact_flags is empty, and there are no policy flags. '
             . 'story_value is a separate publish gate from the score. A clean 85 does not publish a thin story, a list, or a topic readers would not search. Set publish true only when the source describes a concrete development readers would look up: a named product, company, or policy, plus what changed, and there is enough source to explain it. substance is thin when the source cannot explain what changed. reader_demand is low for a deal list, coupon, best-of list, weekly recap, sponsored item, or a minor aside with no named change. adds_value is false when the post would only repeat a press blurb or a list. Set publish false in those cases. '
+            . 'audience is a website-only layer and does not change the 0-100 score or the social stills floor. Return audience {pop_culture_top (boolean), everyone_searching (boolean), reason}. Set pop_culture_top true only when this is a leading pop-culture story general audiences are talking about today, such as a public figure, entertainment, or a viral culture moment, not a routine product note. everyone_searching means people are searching this topic on the public internet (Google, Bing, and other search engines). It does not mean search on this website, this site\'s search box, or a query this site already ranks for. Set everyone_searching true when people on the internet are typing this topic, including a list, deal, coupon, recap, or thin item if that is the internet query. When everyone_searching is true, publish the article on this website. A low score, a low SEO score, a missing keyphrase, a thin story, or a list label does not keep it off the site. Set everyone_searching false only when people on the internet are not searching it. Do not leave it false to be strict. When either flag is true, set reader_demand to high. '
             . $this->pre_publish_gate_reviewer_instructions();
         if (!empty($s['enable_web_search'])) {
-            $prompt .= ' Use the available web search for one corroborating search action and include evidence URLs in issues or notes. Use that search when judging reader_demand, and set it low when readers would not look up the named change. The source text is reference material.';
+            $prompt .= ' Use the available web search for one corroborating search action and include evidence URLs in issues or notes. Use that search to judge public internet demand, not demand on this website. Set everyone_searching true when that search shows people querying this topic on Google or other search engines. Set it false when the search does not show that. Set pop_culture_top true when that search shows a leading pop-culture story. Set reader_demand low when people on the internet would not look up the named change. The source text is reference material.';
         }
         return $prompt;
     }
@@ -112,7 +113,7 @@ trait TechnoRapper_AI_Wire_AI {
         } else {
             $input .= "\n\nAllowed internal URLs on this site: none supplied. Do not lower the score for missing internal links.";
         }
-        $input .= "\n\nYou are not the author. Do not rewrite the article. Publish gate: 85. Social stills gate: 90. If every concrete claim is in the source, return fact_flags as []. Labeled analysis is not a fact flag. If a human editor would publish this, score 85 or higher with verdict pass. If the 90 checklist is met, score 90 or higher — do not park it at 85-89. Also return story_value. A high score does not publish a thin story, a deal or best-of list, or a topic readers would not search.";
+        $input .= "\n\nYou are not the author. Do not rewrite the article. Publish gate: 85. Social stills gate: 90. If every concrete claim is in the source, return fact_flags as []. Labeled analysis is not a fact flag. If a human editor would publish this, score 85 or higher with verdict pass. If the 90 checklist is met, score 90 or higher — do not park it at 85-89. Also return story_value. A high score does not publish a thin story, a deal or best-of list, or a topic readers would not search. Also return audience. everyone_searching means people searching on the public internet, not search on this website. If people are searching for this on the internet, set everyone_searching true so this website posts it even when the score is low, the SEO score is low, the keyphrase is missing, or the item is a list or thin. Social still needs 90. Set everyone_searching false only when people on the internet are not searching it.";
         return $input;
     }
 
@@ -337,7 +338,8 @@ trait TechnoRapper_AI_Wire_AI {
         }
         $score = isset($review['score']) ? (int) $review['score'] : 0;
         $min_score = (int) $s['draft_min_score'];
-        if ($score < $min_score) {
+        $demand_post = $this->audience_demand_overrides_score($review);
+        if ($score < $min_score && !$demand_post) {
             $reasons[] = 'score ' . $score . ' < ' . $min_score;
         }
         $risk = strtolower((string) ($review['pragmatism']['similarity_risk'] ?? 'high'));
@@ -363,23 +365,108 @@ trait TechnoRapper_AI_Wire_AI {
             $reasons[] = 'fact flags';
         }
         $value = $this->story_value_model_reason($review['story_value'] ?? null);
-        if ($value !== '') {
+        if ($value !== '' && !$this->people_are_searching($review) && !($demand_post && $this->story_value_is_only_low_demand($review['story_value'] ?? null))) {
             $reasons[] = $value;
         }
         return $reasons;
     }
 
     /**
+     * People are searching this topic, so the website should carry it.
+     */
+    private function people_are_searching($review) {
+        if (!is_array($review)) {
+            return false;
+        }
+        $audience = $review['audience'] ?? null;
+        if (!is_array($audience)) {
+            return false;
+        }
+        return $this->is_explicitly_true($audience['everyone_searching'] ?? null);
+    }
+
+    /**
+     * Website posts only. Top pop-culture news still clears the review-score
+     * and SEO-score floors. A story people are searching for is posted on
+     * the website. Social keeps its own floor. Reject, policy, facts, and
+     * an ungrounded article stay held.
+     */
+    private function audience_demand_overrides_score($review) {
+        if (!is_array($review)) {
+            return false;
+        }
+        $audience = $review['audience'] ?? null;
+        if (!is_array($audience)) {
+            return false;
+        }
+        return $this->is_explicitly_true($audience['pop_culture_top'] ?? null)
+            || $this->is_explicitly_true($audience['everyone_searching'] ?? null);
+    }
+
+    private function is_explicitly_true($value) {
+        if ($value === true || $value === 1) {
+            return true;
+        }
+        if (!is_string($value)) {
+            return false;
+        }
+        return in_array(strtolower(trim($value)), array('1', 'true', 'yes'), true);
+    }
+
+    /**
+     * The only story-value miss is that readers would not look it up.
+     * Thin copy and a post that adds nothing stay held.
+     */
+    private function story_value_is_only_low_demand($value) {
+        if (!is_array($value)) {
+            return false;
+        }
+        $substance = strtolower(trim((string) ($value['substance'] ?? '')));
+        if (!in_array($substance, array('solid', 'major'), true)) {
+            return false;
+        }
+        if (!$this->is_explicitly_true($value['adds_value'] ?? null)) {
+            return false;
+        }
+        return strtolower(trim((string) ($value['reader_demand'] ?? ''))) === 'low';
+    }
+
+    private function audience_override_note($review, $rewrite, $s) {
+        if (!$this->audience_demand_overrides_score($review)) {
+            return '';
+        }
+        $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
+        $score = isset($review['score']) ? (int) $review['score'] : 0;
+        $min_score = (int) $s['draft_min_score'];
+        $seo = is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : array();
+        $seo_score = (int) ($seo['seo_score'] ?? 0);
+        $seo_min = (int) $s['seo_min_score'];
+        $low_score = $min_score > 0 && $score < $min_score;
+        $low_seo = $seo_min > 0 && $seo_score < $seo_min;
+        $low_demand = $this->story_value_is_only_low_demand($review['story_value'] ?? null);
+        if (!$low_score && !$low_seo && !$low_demand) {
+            return '';
+        }
+        $audience = is_array($review['audience'] ?? null) ? $review['audience'] : array();
+        $why = array();
+        if ($this->is_explicitly_true($audience['pop_culture_top'] ?? null)) {
+            $why[] = 'top pop-culture news';
+        }
+        if ($this->is_explicitly_true($audience['everyone_searching'] ?? null)) {
+            $why[] = 'people are searching for it on the internet';
+        }
+        if (!$why) {
+            return '';
+        }
+        return 'Website post went live as ' . implode(' and ', $why) . '. Internet search demand is public web search, not search on this website. The review-score and SEO-score minimums were not applied. Social still uses its own score floor.';
+    }
+
+    /**
      * Drop feed items that are too thin, or that are lists and deals rather
      * than a development a reader would search. This does not call a model.
      */
-    private function story_value_local_reason($item) {
-        if (!is_array($item)) {
-            return '';
-        }
-        $title = strtolower(trim(wp_strip_all_tags((string) ($item['source_title'] ?? ''))));
-        $body = strtolower(trim(wp_strip_all_tags((string) ($item['source_body'] ?? ''))));
-        $filler = array(
+    private function story_value_local_filler_patterns() {
+        return array(
             '/\b(?:best|top)\s+\d+\b/' => 'it is a best-of list',
             '/\b\d+\s+(?:best|ways|things|tips|gadgets|apps|deals|laptops|phones|headphones)\b/' => 'it is a list, not a story',
             '/\b(?:coupon|promo code|discount code|%\s*off|percent off)\b/' => 'it is a coupon or discount',
@@ -387,7 +474,32 @@ trait TechnoRapper_AI_Wire_AI {
             '/\b(?:daily deals|deal of the day|this week\'?s deals)\b/' => 'it is a deals roundup',
             '/\b(?:weekly roundup|week in review|what to watch this week)\b/' => 'it is a recap, not a story',
         );
-        foreach ($filler as $pattern => $why) {
+    }
+
+    private function story_value_local_is_filler($item) {
+        if (!is_array($item)) {
+            return false;
+        }
+        $title = strtolower(trim(wp_strip_all_tags((string) ($item['source_title'] ?? ''))));
+        if ($title === '') {
+            return false;
+        }
+        foreach ($this->story_value_local_filler_patterns() as $pattern => $why) {
+            unset($why);
+            if (preg_match($pattern, $title)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function story_value_local_reason($item) {
+        if (!is_array($item)) {
+            return '';
+        }
+        $title = strtolower(trim(wp_strip_all_tags((string) ($item['source_title'] ?? ''))));
+        $body = strtolower(trim(wp_strip_all_tags((string) ($item['source_body'] ?? ''))));
+        foreach ($this->story_value_local_filler_patterns() as $pattern => $why) {
             if ($title !== '' && preg_match($pattern, $title)) {
                 return 'Held: not worth publishing. ' . ucfirst($why) . ', and readers are unlikely to look for it.';
             }
