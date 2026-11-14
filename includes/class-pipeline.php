@@ -185,7 +185,9 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s);
-        if ($seo_blockers) {
+        // A low SEO score waits for review. Top pop-culture news and stories
+        // everyone is searching for still publish to the website under that score.
+        if ($seo_blockers && !$this->seo_blockers_are_score_only($seo_blockers)) {
             $this->quarantine_item($id, 'Held after rewrite SEO tests: ' . implode(', ', $seo_blockers), $item, array(
                 'rewrite_json' => wp_json_encode($rewrite),
             ));
@@ -227,6 +229,13 @@ trait TechnoRapper_AI_Wire_Pipeline {
                     'reader_demand' => 'low',
                     'adds_value' => false,
                     'reason' => 'The reviewer did not say this story is worth publishing.',
+                );
+            }
+            if (!is_array($review['audience'] ?? null)) {
+                $review['audience'] = array(
+                    'pop_culture_top' => false,
+                    'everyone_searching' => false,
+                    'reason' => 'The reviewer did not mark this as top pop-culture news or a story everyone is searching for.',
                 );
             }
         }
@@ -312,7 +321,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
             ));
             return;
         }
-        $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s);
+        $seo_blockers = $this->rewrite_seo_blockers($rewrite, $s, $review);
         if ($seo_blockers) {
             $this->quarantine_item($id, 'Held after rewrite SEO tests: ' . implode(', ', $seo_blockers), $item, array(
                 'rewrite_json' => wp_json_encode($rewrite),
@@ -344,7 +353,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
             return;
         }
         $rewrite = $this->prepare_rewrite_seo($rewrite);
-        if ($this->review_draft_blockers($review, $s) || $this->rewrite_seo_blockers($rewrite, $s)) {
+        if ($this->review_draft_blockers($review, $s) || $this->rewrite_seo_blockers($rewrite, $s, $review)) {
             return;
         }
         $gate = $this->evaluate_pre_publish_gate($rewrite, $review, $item, $s);

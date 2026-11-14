@@ -2192,6 +2192,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('gate_status', $reviewer);
         $this->assertStringContainsString('PUBLISH_WITH_WARNINGS', $reviewer);
         $this->assertStringContainsString('Never raise the SEO score', $reviewer);
+        $this->assertStringContainsString('pop_culture_top', $reviewer);
+        $this->assertStringContainsString('everyone_searching', $reviewer);
+        $this->assertStringContainsString('does not change the 0-100 score', $reviewer);
     }
 
     public function test_review_input_does_not_punish_missing_internal_links() {
@@ -2210,6 +2213,8 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertStringContainsString('fact_flags as []', $input);
         $this->assertStringContainsString('If a human editor would publish this, score 85', $input);
         $this->assertStringContainsString('If the 90 checklist is met, score 90 or higher', $input);
+        $this->assertStringContainsString('pop_culture_top or everyone_searching', $input);
+        $this->assertStringContainsString('Social still needs 90', $input);
         $this->assertStringNotContainsString('_tr_score_polish', $input);
     }
 
@@ -11196,6 +11201,189 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $older = $passing;
         unset($older['story_value']);
         $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($older, $settings)));
+    }
+
+    public function test_audience_demand_posts_website_story_under_score_and_seo_floors() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_min_score'] = 70;
+        $settings['seo_min_score'] = 101;
+        $review = array(
+            'verdict' => 'pass',
+            'score' => 42,
+            'policy_flags' => array(),
+            'fact_flags' => array(),
+            'pragmatism' => array('is_grounded' => true, 'is_useful' => true, 'is_new' => true, 'similarity_risk' => 'low'),
+            'story_value' => array(
+                'publish' => true,
+                'substance' => 'major',
+                'reader_demand' => 'low',
+                'adds_value' => true,
+                'reason' => 'Named public moment.',
+            ),
+            'audience' => array(
+                'pop_culture_top' => false,
+                'everyone_searching' => true,
+                'reason' => 'People are looking up the named event.',
+            ),
+        );
+        $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($review, $settings)));
+        $rewrite = array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+            'seo' => array(
+                'seo_score' => 20,
+                'has_keyphrase' => true,
+                'has_social' => true,
+            ),
+        );
+        $this->assertSame(array(), $this->invoke_private('rewrite_seo_blockers', array($rewrite, $settings, $review)));
+        $missing_keyphrase = $rewrite;
+        $missing_keyphrase['seo']['has_keyphrase'] = false;
+        $this->assertStringContainsString('no focus keyphrase', implode(' ', $this->invoke_private('rewrite_seo_blockers', array($missing_keyphrase, $settings, $review))));
+        $cold = $review;
+        $cold['audience'] = array('pop_culture_top' => false, 'everyone_searching' => false, 'reason' => 'Ordinary note.');
+        $cold_reasons = $this->invoke_private('review_draft_blockers', array($cold, $settings));
+        $this->assertStringContainsString('score 42 < 70', implode(' ', $cold_reasons));
+        $this->assertNotEmpty($this->invoke_private('rewrite_seo_blockers', array($rewrite, $settings, $cold)));
+        $missing = $review;
+        unset($missing['audience']);
+        $this->assertNotEmpty($this->invoke_private('review_draft_blockers', array($missing, $settings)));
+
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode($rewrite),
+            'review_json' => wp_json_encode($review),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $post_id = (int) $row['wp_post_id'];
+        $this->assertGreaterThan(0, $post_id);
+        $this->assertStringContainsString('people are searching for it', (string) get_post_meta($post_id, '_tr_ai_wire_audience_override', true));
+        $this->assertFalse($this->invoke_private('social_article_clears_quality_gate', array($post_id, $settings)));
+    }
+
+    public function test_pop_culture_top_news_posts_when_the_review_score_is_low() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['draft_min_score'] = 85;
+        $review = array(
+            'verdict' => 'revise',
+            'score' => 61,
+            'policy_flags' => array(),
+            'fact_flags' => array(),
+            'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            'story_value' => array(
+                'publish' => true,
+                'substance' => 'solid',
+                'reader_demand' => 'high',
+                'adds_value' => true,
+            ),
+            'audience' => array(
+                'pop_culture_top' => 'yes',
+                'everyone_searching' => false,
+                'reason' => 'Leading culture story today.',
+            ),
+        );
+        $this->assertSame(array(), $this->invoke_private('review_draft_blockers', array($review, $settings)));
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode($review),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('published', $row['status']);
+        $this->assertStringContainsString('top pop-culture news', (string) get_post_meta((int) $row['wp_post_id'], '_tr_ai_wire_audience_override', true));
+    }
+
+    public function test_audience_demand_does_not_bypass_reject_policy_or_thin_lists() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $hot = array(
+            'pop_culture_top' => true,
+            'everyone_searching' => true,
+            'reason' => 'Everyone is talking about it.',
+        );
+        $base = array(
+            'score' => 96,
+            'fact_flags' => array(),
+            'policy_flags' => array(),
+            'pragmatism' => array('is_grounded' => true, 'similarity_risk' => 'low'),
+            'story_value' => array(
+                'publish' => true,
+                'substance' => 'major',
+                'reader_demand' => 'high',
+                'adds_value' => true,
+            ),
+            'audience' => $hot,
+        );
+        $reject = $base;
+        $reject['verdict'] = 'reject';
+        $this->assertStringContainsString('verdict=reject', implode(' ', $this->invoke_private('review_draft_blockers', array($reject, $settings))));
+        $policy = $base;
+        $policy['verdict'] = 'pass';
+        $policy['policy_flags'] = array('crude humor');
+        $this->assertStringContainsString('policy flags', implode(' ', $this->invoke_private('review_draft_blockers', array($policy, $settings))));
+        $thin = $base;
+        $thin['verdict'] = 'pass';
+        $thin['story_value'] = array(
+            'publish' => false,
+            'substance' => 'thin',
+            'reader_demand' => 'low',
+            'adds_value' => false,
+            'reason' => 'No named change.',
+        );
+        $this->assertStringContainsString('too thin', implode(' ', $this->invoke_private('review_draft_blockers', array($thin, $settings))));
+        $ungrounded = $base;
+        $ungrounded['verdict'] = 'pass';
+        $ungrounded['score'] = 40;
+        $ungrounded['pragmatism']['is_grounded'] = false;
+        $this->assertStringContainsString('not grounded', implode(' ', $this->invoke_private('review_draft_blockers', array($ungrounded, $settings))));
+
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'reviewed',
+            'source_title' => 'Best 10 laptop deals under $500 this week',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+            'review_json' => wp_json_encode(array_merge($base, array('verdict' => 'pass'))),
+        ), array('id' => $id));
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, error_text, wp_post_id FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('quarantined', $row['status']);
+        $this->assertStringContainsString('best-of list', $row['error_text']);
+        $this->assertEmpty($row['wp_post_id']);
+    }
+
+    public function test_low_seo_score_waits_for_review_instead_of_holding_first() {
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'rewrite_json' => wp_json_encode(array(
+                'title' => 'A useful technology update',
+                'lede' => 'A concise summary.',
+                'body_html' => '<p>Grounded article body.</p>',
+            )),
+        ), array('id' => $id));
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['seo_min_score'] = 101;
+        $this->invoke_private('process_item', array($id, $settings));
+        $row = $wpdb->get_row($wpdb->prepare("SELECT status, wp_post_id, error_text FROM {$wpdb->prefix}tr_ai_wire_items WHERE id = %d", $id), ARRAY_A);
+        $this->assertSame('generated', $row['status']);
+        $this->assertEmpty($row['wp_post_id']);
+        $this->assertEmpty($row['error_text']);
     }
 
     public function test_short_named_launch_is_not_treated_as_thin() {

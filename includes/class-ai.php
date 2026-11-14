@@ -52,9 +52,10 @@ trait TechnoRapper_AI_Wire_AI {
             . 'fact_flags must be an empty array when every concrete claim appears in the source. Do not flag single-source reporting, lack of independent verification, hedging, readability, or labeled analysis. A non-empty fact_flags array blocks publication, so list only a claim that contradicts the source or is not in the source. Put style and structure notes in issues. '
             . 'Return JSON with score (0-100), verdict (pass/revise/reject), issues (array), fact_flags (array), policy_flags (array), pragmatism {is_new, is_useful, is_grounded, similarity_risk (low/medium/high), notes}, story_value {publish (boolean), substance (thin/solid/major), reader_demand (low/medium/high), adds_value (boolean), reason}, suggested_fixes (array), safe_to_publish (boolean). is_new means the writing is original versus the source, not that the news event is unpublished. Use verdict pass when the score is 85 or higher and fact_flags is empty. Use verdict revise only for a 70-84 article a human must edit. Use reject for fabrication, policy problems, synonym-spin, missing unique angle, or empty/unusable copy. Set safe_to_publish true when the article is grounded, fact_flags is empty, and there are no policy flags. '
             . 'story_value is a separate publish gate from the score. A clean 85 does not publish a thin story, a list, or a topic readers would not search. Set publish true only when the source describes a concrete development readers would look up: a named product, company, or policy, plus what changed, and there is enough source to explain it. substance is thin when the source cannot explain what changed. reader_demand is low for a deal list, coupon, best-of list, weekly recap, sponsored item, or a minor aside with no named change. adds_value is false when the post would only repeat a press blurb or a list. Set publish false in those cases. '
+            . 'audience is a website-only layer and does not change the 0-100 score or the social stills floor. Return audience {pop_culture_top (boolean), everyone_searching (boolean), reason}. Set pop_culture_top true only when this is a leading pop-culture story general audiences are talking about today, such as a public figure, entertainment, or a viral culture moment, not a routine product note. Set everyone_searching true only when large numbers of people are actively looking up this named event. Either true is enough for the website to post even when the review score or the SEO score is under the dashboard minimum. Set both false for deals, lists, coupons, recaps, niche asides, and ordinary news. Do not set them true to rescue a weak, thin, or ungrounded article. When either flag is true, set reader_demand to high. '
             . $this->pre_publish_gate_reviewer_instructions();
         if (!empty($s['enable_web_search'])) {
-            $prompt .= ' Use the available web search for one corroborating search action and include evidence URLs in issues or notes. Use that search when judging reader_demand, and set it low when readers would not look up the named change. The source text is reference material.';
+            $prompt .= ' Use the available web search for one corroborating search action and include evidence URLs in issues or notes. Use that search when judging reader_demand and audience. Set reader_demand low when readers would not look up the named change. Set pop_culture_top or everyone_searching true only when that search shows a leading pop-culture story or a query large numbers of people are typing now. The source text is reference material.';
         }
         return $prompt;
     }
@@ -112,7 +113,7 @@ trait TechnoRapper_AI_Wire_AI {
         } else {
             $input .= "\n\nAllowed internal URLs on this site: none supplied. Do not lower the score for missing internal links.";
         }
-        $input .= "\n\nYou are not the author. Do not rewrite the article. Publish gate: 85. Social stills gate: 90. If every concrete claim is in the source, return fact_flags as []. Labeled analysis is not a fact flag. If a human editor would publish this, score 85 or higher with verdict pass. If the 90 checklist is met, score 90 or higher — do not park it at 85-89. Also return story_value. A high score does not publish a thin story, a deal or best-of list, or a topic readers would not search.";
+        $input .= "\n\nYou are not the author. Do not rewrite the article. Publish gate: 85. Social stills gate: 90. If every concrete claim is in the source, return fact_flags as []. Labeled analysis is not a fact flag. If a human editor would publish this, score 85 or higher with verdict pass. If the 90 checklist is met, score 90 or higher — do not park it at 85-89. Also return story_value. A high score does not publish a thin story, a deal or best-of list, or a topic readers would not search. Also return audience. Set pop_culture_top or everyone_searching true when this is top pop-culture news or everyone is searching for it, so the website can post under the review-score and SEO-score minimums. Social still needs 90. Set both false otherwise.";
         return $input;
     }
 
@@ -337,7 +338,8 @@ trait TechnoRapper_AI_Wire_AI {
         }
         $score = isset($review['score']) ? (int) $review['score'] : 0;
         $min_score = (int) $s['draft_min_score'];
-        if ($score < $min_score) {
+        $demand_post = $this->audience_demand_overrides_score($review);
+        if ($score < $min_score && !$demand_post) {
             $reasons[] = 'score ' . $score . ' < ' . $min_score;
         }
         $risk = strtolower((string) ($review['pragmatism']['similarity_risk'] ?? 'high'));
@@ -363,10 +365,86 @@ trait TechnoRapper_AI_Wire_AI {
             $reasons[] = 'fact flags';
         }
         $value = $this->story_value_model_reason($review['story_value'] ?? null);
-        if ($value !== '') {
+        if ($value !== '' && !($demand_post && $this->story_value_is_only_low_demand($review['story_value'] ?? null))) {
             $reasons[] = $value;
         }
         return $reasons;
+    }
+
+    /**
+     * Website posts only. Top pop-culture news, or a story people are
+     * searching in large numbers, still goes live when the review score
+     * or the SEO score is under the dashboard minimum. Social keeps its
+     * own floor. Reject, policy, facts, grounding, and thin or list holds stay.
+     */
+    private function audience_demand_overrides_score($review) {
+        if (!is_array($review)) {
+            return false;
+        }
+        $audience = $review['audience'] ?? null;
+        if (!is_array($audience)) {
+            return false;
+        }
+        return $this->is_explicitly_true($audience['pop_culture_top'] ?? null)
+            || $this->is_explicitly_true($audience['everyone_searching'] ?? null);
+    }
+
+    private function is_explicitly_true($value) {
+        if ($value === true || $value === 1) {
+            return true;
+        }
+        if (!is_string($value)) {
+            return false;
+        }
+        return in_array(strtolower(trim($value)), array('1', 'true', 'yes'), true);
+    }
+
+    /**
+     * The only story-value miss is that readers would not look it up.
+     * Thin copy and a post that adds nothing stay held.
+     */
+    private function story_value_is_only_low_demand($value) {
+        if (!is_array($value)) {
+            return false;
+        }
+        $substance = strtolower(trim((string) ($value['substance'] ?? '')));
+        if (!in_array($substance, array('solid', 'major'), true)) {
+            return false;
+        }
+        if (!$this->is_explicitly_true($value['adds_value'] ?? null)) {
+            return false;
+        }
+        return strtolower(trim((string) ($value['reader_demand'] ?? ''))) === 'low';
+    }
+
+    private function audience_override_note($review, $rewrite, $s) {
+        if (!$this->audience_demand_overrides_score($review)) {
+            return '';
+        }
+        $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
+        $score = isset($review['score']) ? (int) $review['score'] : 0;
+        $min_score = (int) $s['draft_min_score'];
+        $seo = is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : array();
+        $seo_score = (int) ($seo['seo_score'] ?? 0);
+        $seo_min = (int) $s['seo_min_score'];
+        $low_score = $min_score > 0 && $score < $min_score;
+        $low_seo = $seo_min > 0 && $seo_score < $seo_min;
+        $low_demand = $this->story_value_is_only_low_demand($review['story_value'] ?? null);
+        if (!$low_score && !$low_seo && !$low_demand) {
+            return '';
+        }
+        $audience = is_array($review['audience'] ?? null) ? $review['audience'] : array();
+        $why = array();
+        if ($this->is_explicitly_true($audience['pop_culture_top'] ?? null)) {
+            $why[] = 'top pop-culture news';
+        }
+        if ($this->is_explicitly_true($audience['everyone_searching'] ?? null)) {
+            $why[] = 'people are searching for it';
+        }
+        if (!$why) {
+            return '';
+        }
+        return 'Website post went live as ' . implode(' and ', $why) . '. The review-score and SEO-score minimums were not applied. Social still uses its own score floor.';
     }
 
     /**

@@ -275,13 +275,13 @@ trait TechnoRapper_AI_Wire_SEO {
         return array_slice($errors, 0, 8);
     }
 
-    private function rewrite_seo_blockers($rewrite, $s) {
+    private function rewrite_seo_blockers($rewrite, $s, $review = null) {
         $s = wp_parse_args(is_array($s) ? $s : array(), self::defaults());
         $seo = is_array($rewrite['seo'] ?? null) ? $rewrite['seo'] : $this->analyze_rewrite_seo($rewrite);
         $reasons = array();
         $score = (int) ($seo['seo_score'] ?? 0);
         $min_score = (int) $s['seo_min_score'];
-        if ($score < $min_score) {
+        if ($score < $min_score && !$this->audience_demand_overrides_score($review)) {
             $reasons[] = 'SEO score ' . $score . ' < ' . $min_score;
         }
         if (!empty($s['seo_require_keyphrase']) && empty($seo['has_keyphrase'])) {
@@ -291,6 +291,21 @@ trait TechnoRapper_AI_Wire_SEO {
             $reasons[] = 'missing social markup';
         }
         return $reasons;
+    }
+
+    private function seo_blockers_are_score_only($reasons) {
+        $reasons = array_values(array_filter((array) $reasons, function ($reason) {
+            return trim((string) $reason) !== '';
+        }));
+        if (!$reasons) {
+            return false;
+        }
+        foreach ($reasons as $reason) {
+            if (strpos((string) $reason, 'SEO score ') !== 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private function apply_seo_meta($post_id, $rewrite) {

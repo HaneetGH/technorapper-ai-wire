@@ -1084,6 +1084,7 @@ trait TechnoRapper_AI_Wire_Publisher {
         ));
         $rewrite = $this->prepare_rewrite_seo($rewrite);
         $guard = $this->policy_guard_rewrite($rewrite);
+        $audience_note = $this->audience_override_note($review, $rewrite, $s);
         if (is_wp_error($guard)) {
             if ($guard->get_error_code() === 'tr_ai_wire_policy_unavailable') {
                 $this->handle_stage_error($id, $guard);
@@ -1109,6 +1110,9 @@ trait TechnoRapper_AI_Wire_Publisher {
                 return;
             }
             $this->apply_seo_meta($existing_id, $rewrite);
+            if ($audience_note !== '') {
+                update_post_meta($existing_id, '_tr_ai_wire_audience_override', $audience_note);
+            }
             update_post_meta($existing_id, '_tr_ai_wire_voice', $this->item_is_comic($item) ? 'comic' : 'straight');
             $this->prepare_homepage_visibility($existing_id, $item, $rewrite, $s);
             $this->store_pre_publish_gate($existing_id, $rewrite, $review, $item, $s);
@@ -1156,6 +1160,9 @@ trait TechnoRapper_AI_Wire_Publisher {
                 '_tr_ai_wire_review' => wp_json_encode($review),
             ),
         );
+        if ($audience_note !== '') {
+            $insert['meta_input']['_tr_ai_wire_audience_override'] = $audience_note;
+        }
         if ($this->mapped_taxonomy($s) === 'category') {
             $insert['post_category'] = $this->resolve_mapped_term_ids($rewrite, $s, $item);
         }
