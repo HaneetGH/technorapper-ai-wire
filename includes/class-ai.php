@@ -922,15 +922,59 @@ trait TechnoRapper_AI_Wire_AI {
     }
 
     private function remaining_posts_today($s) {
-        global $wpdb;
         $limit = (int) $s['max_posts_per_day'];
         if ($limit <= 0) {
             return 0;
         }
-        $start = gmdate('Y-m-d 00:00:00');
-        $end = gmdate('Y-m-d 23:59:59');
-        $count = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->table} WHERE status IN ('draft', 'published') AND wp_post_id IS NOT NULL AND updated_at BETWEEN %s AND %s", $start, $end));
-        return max(0, $limit - $count);
+        return max(0, $limit - $this->posts_created_today_count($s));
+    }
+
+    /**
+     * Operator phrases. A story that mentions one is written before the rest.
+     * Matching does not skip review, and a hold still does not use a daily slot.
+     */
+    private function hot_topic_phrases($s = null) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        $parts = preg_split('/[\r\n,]+/', (string) ($s['hot_topics'] ?? ''));
+        $out = array();
+        foreach ((array) $parts as $part) {
+            $part = trim(wp_strip_all_tags((string) $part));
+            if (strlen($part) < 2 || strlen($part) > 80) {
+                continue;
+            }
+            $key = strtolower($part);
+            $out[$key] = $part;
+            if (count($out) >= 40) {
+                break;
+            }
+        }
+        return array_values($out);
+    }
+
+    private function sanitize_hot_topics($value) {
+        $lines = array();
+        foreach ($this->hot_topic_phrases(array('hot_topics' => (string) $value)) as $phrase) {
+            $lines[] = sanitize_text_field($phrase);
+        }
+        return implode("\n", $lines);
+    }
+
+    private function item_matches_hot_topic($item, $s = null) {
+        $phrases = $this->hot_topic_phrases($s);
+        if (!$phrases || !is_array($item)) {
+            return false;
+        }
+        $hay = strtolower(wp_strip_all_tags((string) ($item['source_title'] ?? '') . ' ' . (string) ($item['source_body'] ?? '')));
+        if ($hay === '' || $hay === ' ') {
+            return false;
+        }
+        foreach ($phrases as $phrase) {
+            $pattern = '/(?<![a-z0-9])' . preg_quote(strtolower($phrase), '/') . '(?![a-z0-9])/';
+            if (preg_match($pattern, $hay)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function comics_desk_daily_limit($s) {
@@ -954,40 +998,50 @@ trait TechnoRapper_AI_Wire_AI {
     }
 
     private function comics_desk_assigned_today($s = null) {
-        global $wpdb;
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
-        $urls = $this->comics_desk_feed_urls($s);
-        if (!$urls) {
-            return 0;
-        }
-        $start = gmdate('Y-m-d 00:00:00');
-        $end = gmdate('Y-m-d 23:59:59');
-        $placeholders = implode(',', array_fill(0, count($urls), '%s'));
-        $params = array_merge($urls, array($start, $end));
-        return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table}
-             WHERE status IN ('draft', 'published') AND wp_post_id IS NOT NULL
-               AND feed_url IN ({$placeholders})
-               AND updated_at BETWEEN %s AND %s",
-            $params
-        ));
+        return $this->count_plugin_posts_created_today($this->comics_desk_feed_urls($s));
     }
 
     private function posts_created_today_count($s = null) {
+        unset($s);
+        return $this->count_plugin_posts_created_today();
+    }
+
+    /**
+     * Posts this plugin inserted today. Held rows and later edits to an older
+     * post do not consume Maximum posts per day.
+     */
+    private function count_plugin_posts_created_today($feed_urls = null) {
         global $wpdb;
-        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
-        $limit = (int) ($s['max_posts_per_day'] ?? 0);
-        if ($limit <= 0) {
+        if (is_array($feed_urls) && !$feed_urls) {
             return 0;
         }
         $start = gmdate('Y-m-d 00:00:00');
         $end = gmdate('Y-m-d 23:59:59');
+        $params = array($start, $end, $start, $end);
+        $feed_sql = '';
+        if (is_array($feed_urls)) {
+            $feed_sql = ' AND q.feed_url IN (' . implode(',', array_fill(0, count($feed_urls), '%s')) . ')';
+            $params = array_merge($params, $feed_urls);
+        }
         return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table}
-             WHERE status IN ('draft', 'published') AND wp_post_id IS NOT NULL
-               AND updated_at BETWEEN %s AND %s",
-            $start,
-            $end
+            "SELECT COUNT(DISTINCT p.ID)
+             FROM {$wpdb->posts} p
+             INNER JOIN {$this->table} q ON q.wp_post_id = p.ID
+             WHERE q.status IN ('draft', 'published')
+               AND p.post_status IN ('publish', 'draft', 'pending', 'future', 'private')
+               AND p.post_type = 'post'
+               AND (
+                    p.post_date_gmt BETWEEN %s AND %s
+                    OR EXISTS (
+                        SELECT 1 FROM {$wpdb->postmeta} c
+                        WHERE c.post_id = p.ID
+                          AND c.meta_key = '_tr_ai_wire_created_gmt'
+                          AND c.meta_value BETWEEN %s AND %s
+                    )
+               )
+               {$feed_sql}",
+            $params
         ));
     }
 

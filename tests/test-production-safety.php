@@ -2964,6 +2964,83 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame(0, $this->invoke_private('remaining_posts_today', array($settings)));
     }
 
+    public function test_daily_cap_ignores_holds_and_updates_to_older_posts() {
+        $settings = TechnoRapper_AI_Wire::defaults();
+        $settings['max_posts_per_day'] = 5;
+        $settings['auto_publish'] = 1;
+        $published_id = $this->create_queue_item();
+        $this->invoke_private('create_draft', array($published_id, array(
+            'source_url' => 'https://example.com/story',
+            'feed_name' => 'Example Feed',
+            'source_guid' => 'guid-cap-live',
+            'experiment_id' => 'test-experiment',
+            'variant' => 'A',
+            'source_body' => 'Source body <img src="https://cdn.example.com/photo.jpg" alt="photo">',
+        ), array(
+            'title' => 'A useful technology update',
+            'lede' => 'A concise summary.',
+            'body_html' => '<p>Grounded article body.</p>',
+        ), array('verdict' => 'pass'), $settings));
+        $this->assertSame(4, $this->invoke_private('remaining_posts_today', array($settings)));
+
+        $held_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'quarantined',
+            'error_text' => 'Held for editorial review: verdict=reject',
+            'updated_at' => current_time('mysql', true),
+        ), array('id' => $held_id));
+        $this->assertSame(4, $this->invoke_private('remaining_posts_today', array($settings)));
+
+        $old_post = wp_insert_post(array(
+            'post_title' => 'Yesterday story',
+            'post_status' => 'publish',
+            'post_date' => '2026-11-13 12:00:00',
+            'post_date_gmt' => '2026-11-13 12:00:00',
+        ));
+        $old_id = $this->create_queue_item();
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'published',
+            'wp_post_id' => (int) $old_post,
+            'updated_at' => current_time('mysql', true),
+        ), array('id' => $old_id));
+        $this->assertSame(4, $this->invoke_private('remaining_posts_today', array($settings)));
+    }
+
+    public function test_hot_topic_is_written_before_a_newer_story() {
+        $previous = get_option(TechnoRapper_AI_Wire::OPTION, array());
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'hot_topics' => "Justice League\nTMNT",
+            'max_posts_per_day' => 5,
+        )), false);
+        $newer_id = $this->create_queue_item();
+        $hot_id = $this->create_queue_item();
+        $decoy_id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'source_title' => 'A quiet phone rumor',
+        ), array('id' => $newer_id));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'source_title' => 'DC Debuts Monstrous Redesign For Justice League Powerhouse',
+        ), array('id' => $hot_id));
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'source_title' => 'The studio introduced a new camera',
+        ), array('id' => $decoy_id));
+        $this->assertGreaterThan($hot_id, $decoy_id);
+        $this->assertSame($hot_id, $this->invoke_private('next_pipeline_item_id'));
+        $this->assertTrue($this->invoke_private('item_matches_hot_topic', array($this->invoke_private('get_item', array($hot_id)))));
+        $this->assertFalse($this->invoke_private('item_matches_hot_topic', array(array(
+            'source_title' => 'The studio introduced a new camera',
+            'source_body' => 'A note about the camera.',
+        ), array('hot_topics' => 'DC'))));
+        $saved = $this->plugin->sanitize_settings(array('hot_topics' => "Marvel\n\nDC"));
+        $this->assertSame("Marvel\nDC", $saved['hot_topics']);
+        update_option(TechnoRapper_AI_Wire::OPTION, $previous, false);
+    }
+
     public function test_process_item_does_not_chain_review_in_one_step() {
         update_option(TechnoRapper_AI_Wire::API_KEY_OPTION, 'test-key', false);
         $id = $this->create_queue_item('new');

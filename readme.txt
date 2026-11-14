@@ -59,6 +59,8 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 = 0.3.13 =
 * A review that passes at or above the minimum review score auto-publishes. A thin or low-demand label, a missing story-value object, a soft pre-publish note, or an ungrounded flag with an empty fact list no longer holds that pass. Reject, policy flags, fact flags, filler titles, and real near-duplicates still hold.
 * Social queue shows Download reel zip beside a finished video and on a stopped Reel, and the click streams the zip file. Prepare laptop kit stays available when the voiceover is saved and the build is not mid-run.
+* The daily cap counts WordPress posts created today. Held stories and later edits to an older post do not fill it, so the job keeps looking for another story until the cap is full.
+* Hot topics: add phrases under AI Wire settings. A feed story that mentions one is written first. It still has to pass review.
 
 = 0.3.12 =
 * Comics desk mix no longer parks normal drafts in waiting_budget when the Comics desk daily limit is 0.
@@ -300,7 +302,7 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 == Upgrade Notice ==
 
 = 0.3.13 =
-Passing reviews at the dashboard minimum auto-publish again. Social queue Download reel zip streams the laptop kit file.
+Passing reviews at the dashboard minimum auto-publish again. The daily cap counts posts created today, not held attempts. Hot topics are written first. Social queue Download reel zip streams the laptop kit file.
 
 = 0.3.12 =
 Release tag for the Comics desk create_draft gate fix after 0.3.11.

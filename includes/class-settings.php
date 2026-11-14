@@ -10,6 +10,7 @@ trait TechnoRapper_AI_Wire_Settings {
             'cron_frequency' => 'manual',
             'cron_times' => array(),
             'max_posts_per_day' => 0,
+            'hot_topics' => '',
             'max_items_per_run' => 10,
             'monthly_budget_usd' => 5,
             // 200M tokens is about $20–$100 of GPT-6 Luna. The old 1M default
@@ -234,6 +235,7 @@ trait TechnoRapper_AI_Wire_Settings {
         $out['cron_frequency'] = in_array($input['cron_frequency'] ?? '', $frequencies, true) ? $input['cron_frequency'] : $defaults['cron_frequency'];
         $out['cron_times'] = self::sanitize_clock_times($input['cron_times'] ?? array());
         $out['max_posts_per_day'] = min(2000, max(0, absint($input['max_posts_per_day'] ?? $defaults['max_posts_per_day'])));
+        $out['hot_topics'] = $this->sanitize_hot_topics($input['hot_topics'] ?? $defaults['hot_topics']);
         $out['max_items_per_run'] = min(self::DAILY_POST_CAP, max(1, absint($input['max_items_per_run'] ?? $defaults['max_items_per_run'])));
         $out['monthly_budget_usd'] = min(10000, max(0, (float) ($input['monthly_budget_usd'] ?? $defaults['monthly_budget_usd'])));
         $out['monthly_token_limit'] = min(1000000000, max(0, absint($input['monthly_token_limit'] ?? $defaults['monthly_token_limit'])));

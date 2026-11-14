@@ -104,7 +104,8 @@ All day-to-day settings are available in one place under **AI Wire**:
 | OpenAI API key | Credential used for writer and reviewer requests; saved separately from ordinary settings |
 | Automatic processing schedule | Hourly, every 3, 6 or 12 hours, daily, or manual-only |
 | Feed tenants | Each RSS/Atom feed is onboarded as its own tenant in wp-admin. The plugin does not ship any feeds; add the URLs you want |
-| Maximum posts per day | Daily draft and auto-published post cap; `0` pauses creation |
+| Maximum posts per day | Daily cap of posts this plugin created today. Held stories do not use a slot. `0` pauses creation |
+| Hot topics | Phrases you type, one per line. A feed story that mentions one is written before the rest. Review still applies |
 | Maximum items per run | Caps the number of queued retries and new feed items processed in one scheduled/manual run (1–100) |
 | Monthly API budget | Local estimated USD spend ceiling; `0` stops AI calls |
 | Monthly token limit | This plugin's combined monthly input/output token ceiling. Separate from the OpenAI credit balance and project budget. Default is 200,000,000. `0` stops AI calls |

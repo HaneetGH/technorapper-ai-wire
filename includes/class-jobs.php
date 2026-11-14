@@ -1050,7 +1050,8 @@ trait TechnoRapper_AI_Wire_Jobs {
         if (!empty($summary['skipped'])) {
             return (string) $summary['skipped'];
         }
-        return 'Checked ' . (int) ($summary['feeds_checked'] ?? 0) . ' feeds, queued ' . (int) ($summary['new_items'] ?? 0) . ', processed ' . (int) ($summary['processed'] ?? 0) . '.';
+        $s = $this->settings();
+        return 'Checked ' . (int) ($summary['feeds_checked'] ?? 0) . ' feeds, queued ' . (int) ($summary['new_items'] ?? 0) . ', processed ' . (int) ($summary['processed'] ?? 0) . '. Published ' . (int) ($summary['published'] ?? 0) . ', held ' . (int) ($summary['quarantined'] ?? 0) . '. Posts still available today: ' . (int) $this->remaining_posts_today($s) . '. Held stories do not use a daily slot.';
     }
 
     private function public_job($job) {
