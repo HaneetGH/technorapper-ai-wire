@@ -3023,6 +3023,44 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame('publish', get_post_status((int) $row['wp_post_id']));
     }
 
+    public function test_sexual_content_wall_holds_porn_and_sex_products_on_the_comics_desk() {
+        remove_filter('tr_ai_wire_moderation_result', array($this, 'allow_moderation_in_tests'), 10);
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('violence' => true));
+        });
+        $comics = array(
+            'feed_name' => 'SuperHeroHype Comics',
+            'source_title' => 'Avengers: Doomsday',
+        );
+        $blocked = array(
+            'A new AI porn model is making the rounds',
+            'This robot sex toy ships next month',
+            'Hentai app adds a new fight scene',
+            'The film shows a sex doll in the comic shop',
+            'A site is selling p.o.r.n of a comic character',
+        );
+        foreach ($blocked as $text) {
+            $held = $this->invoke_private('policy_guard_text', array($text, 'article', array('_admin_force_publish' => 1), $comics));
+            $this->assertInstanceOf('WP_Error', $held, $text);
+            $this->assertStringContainsString('sexual-content wall', $held->get_error_message(), $text);
+        }
+        $costume = $this->invoke_private('policy_guard_text', array("Wolverine's sexy costume is the goriest thing on screen", 'article', null, $comics));
+        $this->assertTrue($costume);
+
+        remove_all_filters('tr_ai_wire_moderation_result');
+        add_filter('tr_ai_wire_moderation_result', function () {
+            return array('flagged' => true, 'categories' => array('sexual' => true));
+        });
+        $flagged = $this->invoke_private('policy_guard_text', array(
+            'Captain America Makes Doctor Doom More Dangerous Than Ever Before Avengers: Doomsday',
+            'article',
+            array('_admin_force_publish' => 1),
+            $comics,
+        ));
+        $this->assertInstanceOf('WP_Error', $flagged);
+        $this->assertStringContainsString('sexual', $flagged->get_error_message());
+    }
+
     public function test_admin_force_publish_without_a_rewrite_stays_held() {
         $id = $this->create_queue_item();
         global $wpdb;

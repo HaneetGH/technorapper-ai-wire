@@ -1284,7 +1284,15 @@ trait TechnoRapper_AI_Wire_AI {
         if ($local) {
             return new WP_Error('tr_ai_wire_policy', $this->policy_hold_message($context, true, array()));
         }
+        $blob = $this->policy_entertainment_blob($text, $subject);
+        if ($this->policy_sexual_commercial_hits($blob)) {
+            return new WP_Error('tr_ai_wire_policy', $this->policy_sexual_hold_message($context));
+        }
         if (is_array($s) && !empty($s['_admin_force_publish'])) {
+            $forced = $this->openai_moderation($text);
+            if (!is_wp_error($forced) && $this->policy_categories_include_sexual($forced['categories'] ?? array())) {
+                return new WP_Error('tr_ai_wire_policy', $this->policy_hold_message($context, false, $forced['categories']));
+            }
             return true;
         }
         $moderation = $this->openai_moderation($text);
@@ -1300,14 +1308,15 @@ trait TechnoRapper_AI_Wire_AI {
     /**
      * Entertainment desks publish a fight, costume, or monster in a comic,
      * film, series, or game. That is fictional violence. Real-world violence
-     * stays held, and so does every other Moderation category.
+     * stays held. Pornography, sex products, and every sexual Moderation
+     * category stay held even when the desk is comics.
      */
     private function policy_fictional_violence_allowed($text, $categories, $subject = null) {
         if (!$this->policy_categories_are_fictional_violence($categories)) {
             return false;
         }
         $blob = $this->policy_entertainment_blob($text, $subject);
-        if ($this->policy_text_is_real_world_violence($blob)) {
+        if ($this->policy_sexual_commercial_hits($blob) || $this->policy_text_is_real_world_violence($blob)) {
             return false;
         }
         return $this->policy_subject_is_entertainment($subject) || $this->policy_text_is_fictional_entertainment($blob);
@@ -1330,6 +1339,49 @@ trait TechnoRapper_AI_Wire_AI {
             }
         }
         return true;
+    }
+
+    private function policy_categories_include_sexual($categories) {
+        foreach ((array) $categories as $name => $on) {
+            if (!$on) {
+                continue;
+            }
+            $key = $this->policy_category_key($name);
+            if ($key !== '' && strpos($key, 'sexual') === 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function policy_sexual_hold_message($context) {
+        $label = $context === 'social' ? 'social copy' : 'article';
+        return 'Held: ' . $label . ' failed the sexual-content wall. Pornography and sex products stay held. Nothing was posted.';
+    }
+
+    private function policy_sexual_commercial_hits($text) {
+        $blobs = $this->policy_normalized_blobs($text);
+        if (!$blobs) {
+            return false;
+        }
+        $patterns = array(
+            '/\b(?:child|children|underage|preteen|minor)\s+porn(?:ography)?\b/',
+            '/\bchild\s+sexual\b/',
+            '/\b(?:ai\s+)?porn(?:ography|o)?\b/',
+            '/\bhentai\b/',
+            '/\b(?:nudify|deepfake\s+nudes?|ai\s+nudes?)\b/',
+            '/\bsex\s*toys?\b/',
+            '/\bsex\s*(?:robots?|dolls?|bots?)\b/',
+            '/\bonly\s*fans\b/',
+        );
+        foreach ($blobs as $blob) {
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $blob)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private function policy_category_key($name) {
