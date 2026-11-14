@@ -8701,8 +8701,9 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->plugin->social_settings_page();
         $html = ob_get_clean();
         $this->assertStringContainsString('This WordPress host has no', $html);
-        $this->assertStringContainsString('Fal generates the motion clip and assembles the spoken MP4', $html);
-        $this->assertStringNotContainsString('run ffmpeg on your laptop', $html);
+        $this->assertStringContainsString('Fal usually assembles the spoken MP4', $html);
+        $this->assertStringContainsString('Prepare laptop kit', $html);
+        $this->assertStringContainsString('Download laptop kit', $html);
         delete_option(TechnoRapper_AI_Wire::FAL_API_KEY_OPTION);
         remove_all_filters('tr_ai_wire_ffmpeg_path');
     }
