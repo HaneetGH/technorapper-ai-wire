@@ -622,6 +622,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             'pc-hardware' => array('nvidia', 'intel', 'amd', 'gpu', 'laptop', 'graphics card', 'pc hardware', ' ryzen', 'vmware'),
             'reviews' => array('review', 'hands-on'),
             'guides' => array('guide', 'how to', 'deal', 'best '),
+            'comics' => array('marvel', 'dc comics', 'batman', 'superman', 'spider-man', 'spiderman', 'x-men', 'justice league', 'avengers', 'wonder woman', 'manga', 'graphic novel'),
         );
     }
 
@@ -895,6 +896,12 @@ trait TechnoRapper_AI_Wire_Publisher {
     private function resolve_mapped_term_ids($rewrite, $s = null, $item = array()) {
         $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
         $taxonomy = $this->mapped_taxonomy($s);
+        if ($taxonomy === 'category' && $this->item_desk_lane($item, $s) === 'comics') {
+            $comics_id = $this->comics_category_term_id();
+            if ($comics_id > 0) {
+                return array($comics_id);
+            }
+        }
         $ids = array();
         foreach ((array) ($s['map_terms'] ?? array()) as $term_id) {
             $term_id = absint($term_id);
@@ -915,6 +922,14 @@ trait TechnoRapper_AI_Wire_Publisher {
             }
         }
         return $ids;
+    }
+
+    private function comics_category_term_id() {
+        $term = get_term_by('slug', 'comics', 'category');
+        if (!$term || is_wp_error($term)) {
+            $term = get_term_by('name', 'Comics', 'category');
+        }
+        return ($term && !is_wp_error($term)) ? (int) $term->term_id : 0;
     }
 
     private function assign_home_categories($post_id, $rewrite, $s = null, $item = array()) {

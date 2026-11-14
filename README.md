@@ -103,7 +103,7 @@ All day-to-day settings are available in one place under **AI Wire**:
 |---|---|
 | OpenAI API key | Credential used for writer and reviewer requests; saved separately from ordinary settings |
 | Automatic processing schedule | Hourly, every 3, 6 or 12 hours, daily, or manual-only |
-| Feed tenants | Each RSS/Atom feed is onboarded as its own tenant in wp-admin. The plugin does not ship any feeds; add the URLs you want |
+| Feed tenants | Each RSS/Atom feed is onboarded as its own tenant in wp-admin. The plugin does not ship any feeds; add the URLs you want. Fetch tech, Fetch comics, or Fetch this feed runs only that desk or that RSS feed |
 | Maximum posts per day | Daily cap of posts this plugin created today. Held stories do not use a slot. `0` pauses creation |
 | Hot topics | Phrases you type, one per line. A feed story that mentions one is written before the rest. Review still applies |
 | Maximum items per run | Caps the number of queued retries and new feed items processed in one scheduled/manual run (1–100) |

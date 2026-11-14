@@ -81,6 +81,10 @@ trait TechnoRapper_AI_Wire_Pipeline {
                 return 0;
             }
             $item = $this->get_item($id);
+            if (!$this->item_in_fetch_scope($item)) {
+                $tried[$id] = true;
+                continue;
+            }
             if ($this->lane_has_room_for_item($item, $s, $tried)) {
                 return $id;
             }
@@ -128,7 +132,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
         ));
         foreach ((array) $ids as $id) {
             $item = $this->get_item((int) $id);
-            if (!$this->item_matches_hot_topic($item, $s)) {
+            if (!$this->item_matches_hot_topic($item, $s) || !$this->item_in_fetch_scope($item)) {
                 continue;
             }
             if ($this->lane_has_room_for_item($item, $s, $exclude)) {

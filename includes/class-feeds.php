@@ -4,6 +4,9 @@ if (!defined('ABSPATH')) {
 }
 
 trait TechnoRapper_AI_Wire_Feeds {
+    /** @var array{desk_lane:string,feed_url:string} */
+    private $editorial_fetch_scope = array('desk_lane' => '', 'feed_url' => '');
+
     /**
      * Serialize manual and scheduled runs. add_option() is atomic at the
      * database level, unlike a transient-based check-then-set lock.
@@ -119,6 +122,15 @@ trait TechnoRapper_AI_Wire_Feeds {
         }
         $this->maybe_upgrade_schema();
         $this->maybe_backfill_home_media();
+        $this->bind_editorial_fetch_scope($args);
+        try {
+            $this->process_feeds_locked_scoped($lock_token, $args, $summary);
+        } finally {
+            $this->bind_editorial_fetch_scope(array());
+        }
+    }
+
+    private function process_feeds_locked_scoped($lock_token, $args, &$summary) {
         $foreground = !empty($args['foreground']);
         if (!function_exists('fetch_feed')) {
             require_once ABSPATH . WPINC . '/feed.php';
@@ -140,7 +152,7 @@ trait TechnoRapper_AI_Wire_Feeds {
         // ~6 validations used to exhaust the old 90s budget and look like a stop.
         $time_budget_seconds = $foreground ? 180 : 25;
         $reason = sanitize_key($args['reason'] ?? '');
-        $this->note_background_progress(12, $reason === 'continue' ? 'Continuing unfinished items' : 'Fetching feeds');
+        $this->note_background_progress(12, $reason === 'continue' ? 'Continuing unfinished items' : $this->fetch_scope_label($s));
         $this->ingest_new_feed_items($s, $summary);
         $this->note_background_progress(20, 'Feeds checked');
         $touched = array();
@@ -195,8 +207,82 @@ trait TechnoRapper_AI_Wire_Feeds {
         }
     }
 
+    private function normalize_fetch_scope($args) {
+        $args = is_array($args) ? $args : array();
+        $lane = sanitize_key((string) ($args['desk_lane'] ?? ''));
+        if (!in_array($lane, array('tech', 'comics'), true)) {
+            $lane = '';
+        }
+        $feed = esc_url_raw((string) ($args['feed_url'] ?? ''), array('http', 'https'));
+        if ($feed !== '' && !wp_http_validate_url($feed)) {
+            $feed = '';
+        }
+        return array('desk_lane' => $lane, 'feed_url' => $feed);
+    }
+
+    private function bind_editorial_fetch_scope($args) {
+        $this->editorial_fetch_scope = $this->normalize_fetch_scope($args);
+    }
+
+    private function fetch_scope_label($s = null) {
+        $scope = $this->editorial_fetch_scope;
+        $feed = (string) ($scope['feed_url'] ?? '');
+        $lane = (string) ($scope['desk_lane'] ?? '');
+        if ($feed !== '') {
+            $tenant = $this->tenant_for_feed($feed, $s);
+            $name = is_array($tenant) ? trim((string) ($tenant['name'] ?? '')) : '';
+            return 'Fetching ' . ($name !== '' ? $name : $feed);
+        }
+        if ($lane === 'tech') {
+            return 'Fetching tech feeds';
+        }
+        if ($lane === 'comics') {
+            return 'Fetching comics feeds';
+        }
+        return 'Fetching feeds';
+    }
+
+    private function tenant_in_fetch_scope($tenant) {
+        $scope = $this->editorial_fetch_scope;
+        $feed = (string) ($scope['feed_url'] ?? '');
+        $lane = (string) ($scope['desk_lane'] ?? '');
+        if ($feed === '' && $lane === '') {
+            return true;
+        }
+        $url = esc_url_raw(is_array($tenant) ? ($tenant['url'] ?? '') : '', array('http', 'https'));
+        if ($feed !== '' && $url !== $feed) {
+            return false;
+        }
+        if ($lane !== '' && $this->tenant_desk_lane($tenant) !== $lane) {
+            return false;
+        }
+        return true;
+    }
+
+    private function item_in_fetch_scope($item) {
+        $scope = $this->editorial_fetch_scope;
+        $feed = (string) ($scope['feed_url'] ?? '');
+        $lane = (string) ($scope['desk_lane'] ?? '');
+        if ($feed === '' && $lane === '') {
+            return true;
+        }
+        $item = is_array($item) ? $item : array();
+        $url = esc_url_raw((string) ($item['feed_url'] ?? ''), array('http', 'https'));
+        if ($feed !== '' && $url !== $feed) {
+            return false;
+        }
+        if ($lane !== '' && $this->item_desk_lane($item) !== $lane) {
+            return false;
+        }
+        return true;
+    }
+
     /** Keep filling today's post cap after a time or item-limit stop. */
     private function schedule_editorial_continue($exclude = array()) {
+        $scope = $this->editorial_fetch_scope;
+        if (!empty($scope['feed_url']) || !empty($scope['desk_lane'])) {
+            return;
+        }
         $waiting_id = $this->next_pipeline_item_id($exclude);
         if ($waiting_id < 1) {
             return;
@@ -217,6 +303,9 @@ trait TechnoRapper_AI_Wire_Feeds {
         add_filter('http_headers_useragent', array($this, 'feed_user_agent'));
         add_filter('wp_feed_options', array($this, 'configure_feed'), 10, 2);
         foreach ($this->enabled_tenants($s) as $tenant) {
+            if (!$this->tenant_in_fetch_scope($tenant)) {
+                continue;
+            }
             $feed_url = esc_url_raw($tenant['url'] ?? '', array('http', 'https'));
             if (!$feed_url || !wp_http_validate_url($feed_url)) {
                 continue;

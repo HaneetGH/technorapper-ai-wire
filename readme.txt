@@ -3,7 +3,7 @@ Contributors: haneetgh
 Tags: rss, editorial, openai, social, instagram, youtube
 Requires at least: 6.2
 Tested up to: 7.1
-Stable tag: 0.3.13
+Stable tag: 0.3.14
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -55,6 +55,10 @@ No. YouTube Data API v3 has no Google per-video fee. Connect with Sign in with G
 No. Store keys on your WordPress host. Never commit tokens to git or paste them into public issues.
 
 == Changelog ==
+
+= 0.3.14 =
+* Fetch tech and Fetch comics run only that desk. Each saved feed has its own Fetch button, on the tenant and on the queue.
+* Comics-desk feeds publish into the Comics category, so those posts can appear on the homepage Comics slot.
 
 = 0.3.13 =
 * A review that passes at or above the minimum review score auto-publishes. A thin or low-demand label, a missing story-value object, a soft pre-publish note, or an ungrounded flag with an empty fact list no longer holds that pass. Reject, policy flags, fact flags, filler titles, and real near-duplicates still hold.
@@ -300,6 +304,9 @@ No. Store keys on your WordPress host. Never commit tokens to git or paste them 
 * Open-source operator docs. Site name drives bylines and social posters. Document OpenAI vs X credits vs Instagram quota.
 
 == Upgrade Notice ==
+
+= 0.3.14 =
+Fetch one RSS feed, or only the tech desk, or only the comics desk. Comics-desk posts are filed in the Comics category so the homepage can show them.
 
 = 0.3.13 =
 Passing reviews at the dashboard minimum auto-publish again. The daily cap counts posts created today, not held attempts. Hot topics are written first. Social queue Download reel zip streams the laptop kit file.

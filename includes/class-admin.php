@@ -355,6 +355,7 @@ trait TechnoRapper_AI_Wire_Admin {
                 <p class="description">This stays on this page. A background worker fetches new feed items, rewrites, independently reviews, and publishes (or saves drafts if Auto-publish is off). A progress bar at the top tracks it. Save settings first if you just changed feeds.</p>
                 <?php submit_button('Fetch feeds and process queue now', 'secondary'); ?>
             </form>
+            <?php $this->render_scoped_fetch_controls($s, false); ?>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:8px;">
                 <input type="hidden" name="action" value="tr_ai_wire_stop_run">
                 <?php wp_nonce_field('tr_ai_wire_stop_run'); ?>
@@ -1106,12 +1107,41 @@ trait TechnoRapper_AI_Wire_Admin {
         echo '</select>';
     }
 
+    private function render_scoped_fetch_controls($s, $include_feeds = true) {
+        $s = wp_parse_args(is_array($s) ? $s : $this->settings(), self::defaults());
+        echo '<div class="tr-ai-wire-fetch-scopes" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 12px;">';
+        foreach (array('tech' => 'Fetch tech', 'comics' => 'Fetch comics') as $lane => $label) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin:0;">';
+            echo '<input type="hidden" name="action" value="tr_ai_wire_run_now">';
+            wp_nonce_field('tr_ai_wire_run_now');
+            echo '<input type="hidden" name="desk_lane" value="' . esc_attr($lane) . '">';
+            submit_button($label, 'secondary', 'submit', false);
+            echo '</form>';
+        }
+        if ($include_feeds) {
+            foreach ($this->enabled_tenants($s) as $tenant) {
+                $name = trim((string) ($tenant['name'] ?? ''));
+                if ($name === '') {
+                    $name = (string) ($tenant['url'] ?? '');
+                }
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin:0;">';
+                echo '<input type="hidden" name="action" value="tr_ai_wire_run_now">';
+                wp_nonce_field('tr_ai_wire_run_now');
+                echo '<input type="hidden" name="feed_url" value="' . esc_attr((string) ($tenant['url'] ?? '')) . '">';
+                submit_button('Fetch ' . $name, 'secondary', 'submit', false);
+                echo '</form>';
+            }
+        }
+        echo '</div>';
+        echo '<p class="description">Fetch tech and Fetch comics read only that desk. A feed button reads that RSS feed alone. Held stories stay held.</p>';
+    }
+
     public function run_now() {
         if (!current_user_can('manage_options')) {
             wp_die(esc_html__('You are not allowed to run this task.', 'technorapper-ai-wire'));
         }
         check_admin_referer('tr_ai_wire_run_now');
-        $this->enqueue_background_job('fetch');
+        $this->enqueue_background_job('fetch', $this->fetch_scope_from_request());
         wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue'));
         exit;
     }
@@ -1399,6 +1429,7 @@ trait TechnoRapper_AI_Wire_Admin {
         <?php endif; ?>
         <p><strong>This month (AI Wire only):</strong> $<?php echo esc_html(number_format_i18n((float) $usage['cost_usd'], 4)); ?> / $<?php echo esc_html(number_format_i18n((float) $s['monthly_budget_usd'], 2)); ?> · <?php echo esc_html(number_format_i18n((int) $usage['input_tokens'] + (int) $usage['output_tokens'])); ?> / <?php echo esc_html(number_format_i18n((int) $s['monthly_token_limit'])); ?> tokens · <?php echo esc_html((int) $usage['search_calls']); ?> web searches</p>
         <p class="description">These figures are this plugin's counter. A remaining OpenAI credit balance does not by itself release held items. Items stay held until the next call fits under both numbers above.</p>
+        <?php $this->render_scoped_fetch_controls($s); ?>
         <p><strong>Daily post cap:</strong> <?php echo esc_html((int) $s['max_posts_per_day']); ?> · Posts still available today: <?php echo esc_html($this->remaining_posts_today($s)); ?> · Comics desk today: <?php echo esc_html((string) $this->comics_desk_assigned_today($s)); ?> / <?php echo esc_html((string) $this->comics_desk_daily_limit($s)); ?> · Comic voice today: <?php echo esc_html((string) $this->comic_assigned_today()); ?> / <?php echo esc_html((string) (int) ($s['comic_daily_limit'] ?? 0)); ?><?php if (!empty($s['auto_publish'])) : ?> · Auto-publish is on<?php endif; ?> · <a href="<?php echo esc_url(admin_url('admin.php?page=tr-ai-wire-scores')); ?>">View score graph</a></p>
         <form method="get" style="margin:12px 0;"><input type="hidden" name="page" value="tr-ai-wire-queue"><label for="tr-ai-wire-status">Filter status </label><select id="tr-ai-wire-status" name="status"><option value="">All statuses</option><?php foreach ($allowed_statuses as $option_status) : ?><option value="<?php echo esc_attr($option_status); ?>" <?php selected($status_filter, $option_status); ?>><?php echo esc_html($option_status); ?></option><?php endforeach; ?></select> <button class="button">Apply</button></form>
         <table class="widefat striped"><thead><tr><th>Added (UTC)</th><th>Feed</th><th>Source item</th><th>Status</th><th>Voice</th><th>Post / details</th></tr></thead><tbody>
