@@ -1161,7 +1161,7 @@ trait TechnoRapper_AI_Wire_Publisher {
             'no_found_rows' => true,
         ));
         $rewrite = $this->prepare_rewrite_seo($rewrite);
-        $guard = $this->policy_guard_rewrite($rewrite, $s);
+        $guard = $this->policy_guard_rewrite($rewrite, $s, $item);
         $audience_note = $this->audience_override_note($review, $rewrite, $s);
         if (is_wp_error($guard)) {
             if ($guard->get_error_code() === 'tr_ai_wire_policy_unavailable') {

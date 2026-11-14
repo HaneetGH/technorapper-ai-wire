@@ -1267,15 +1267,15 @@ trait TechnoRapper_AI_Wire_AI {
         return $item;
     }
 
-    private function policy_guard_rewrite($rewrite, $s = null) {
-        return $this->policy_guard_text($this->policy_flatten_rewrite($rewrite), 'article', $s);
+    private function policy_guard_rewrite($rewrite, $s = null, $subject = null) {
+        return $this->policy_guard_text($this->policy_flatten_rewrite($rewrite), 'article', $s, $subject);
     }
 
-    private function policy_guard_social_copy($copy) {
-        return $this->policy_guard_text($this->policy_flatten_social_copy($copy), 'social');
+    private function policy_guard_social_copy($copy, $subject = null) {
+        return $this->policy_guard_text($this->policy_flatten_social_copy($copy), 'social', null, $subject);
     }
 
-    private function policy_guard_text($text, $context = 'content', $s = null) {
+    private function policy_guard_text($text, $context = 'content', $s = null, $subject = null) {
         $text = trim(wp_strip_all_tags((string) $text));
         if ($text === '') {
             return true;
@@ -1291,10 +1291,97 @@ trait TechnoRapper_AI_Wire_AI {
         if (is_wp_error($moderation)) {
             return $moderation;
         }
-        if (!empty($moderation['flagged'])) {
+        if (!empty($moderation['flagged']) && !$this->policy_fictional_violence_allowed($text, $moderation['categories'], $subject)) {
             return new WP_Error('tr_ai_wire_policy', $this->policy_hold_message($context, false, $moderation['categories']));
         }
         return true;
+    }
+
+    /**
+     * Entertainment desks publish a fight, costume, or monster in a comic,
+     * film, series, or game. That is fictional violence. Real-world violence
+     * stays held, and so does every other Moderation category.
+     */
+    private function policy_fictional_violence_allowed($text, $categories, $subject = null) {
+        if (!$this->policy_categories_are_fictional_violence($categories)) {
+            return false;
+        }
+        $blob = $this->policy_entertainment_blob($text, $subject);
+        if ($this->policy_text_is_real_world_violence($blob)) {
+            return false;
+        }
+        return $this->policy_subject_is_entertainment($subject) || $this->policy_text_is_fictional_entertainment($blob);
+    }
+
+    private function policy_categories_are_fictional_violence($categories) {
+        $keys = array();
+        foreach ((array) $categories as $name => $on) {
+            if (!$on) {
+                continue;
+            }
+            $keys[] = $this->policy_category_key($name);
+        }
+        if (!$keys) {
+            return false;
+        }
+        foreach ($keys as $key) {
+            if (!in_array($key, array('violence', 'violencegraphic'), true)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function policy_category_key($name) {
+        $key = strtolower((string) $name);
+        return (string) preg_replace('/[^a-z0-9]/', '', $key);
+    }
+
+    private function policy_entertainment_blob($text, $subject) {
+        $parts = array((string) $text);
+        if (is_array($subject)) {
+            $parts[] = (string) ($subject['feed_name'] ?? '');
+            $parts[] = (string) ($subject['source_title'] ?? '');
+        } elseif ($subject instanceof WP_Post) {
+            $parts[] = get_the_title($subject);
+        }
+        return trim(implode("\n", $parts));
+    }
+
+    private function policy_subject_is_entertainment($subject) {
+        if ($subject instanceof WP_Post) {
+            return $this->post_social_desk((int) $subject->ID) === 'comics';
+        }
+        if (!is_array($subject)) {
+            return false;
+        }
+        $feed = strtolower((string) ($subject['feed_name'] ?? ''));
+        if ($feed !== '' && strpos($feed, 'comic') !== false) {
+            return true;
+        }
+        return $this->item_desk_lane($subject) === 'comics';
+    }
+
+    private function policy_text_is_real_world_violence($text) {
+        $text = strtolower(wp_strip_all_tags((string) $text));
+        if ($text === '') {
+            return false;
+        }
+        return (bool) preg_match(
+            '/\b(?:police (?:said|say|have)|officers said|shot and killed|fatally (?:shot|stabbed)|mass shooting|school shooting|terrorist|terrorism|gunman|charged with (?:murder|assault)|arrested for (?:murder|assault)|sexual assault|sexual violence|domestic violence|raped|murder victim)\b/i',
+            $text
+        );
+    }
+
+    private function policy_text_is_fictional_entertainment($text) {
+        $text = strtolower(wp_strip_all_tags((string) $text));
+        if ($text === '') {
+            return false;
+        }
+        return (bool) preg_match(
+            '/\b(?:comics?|manga|anime|superheroes|superhero|supervillains?|graphic novels?|marvel|mcu|avengers|spider-?man|batman|superman|wolverine|x-men|godzilla|kaiju|doctor doom|captain america|box office|trailer|on-?screen|costume|cinematic|video games?|the film|the movie|the series|the episode|fictional)\b/i',
+            $text
+        );
     }
 
     private function policy_flatten_rewrite($rewrite) {

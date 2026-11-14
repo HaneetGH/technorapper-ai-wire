@@ -1388,7 +1388,7 @@ trait TechnoRapper_AI_Wire_Social {
             delete_post_meta($post->ID, '_tr_ai_wire_social_copy');
             return $blocked;
         }
-        $guard = $this->policy_guard_social_copy($copy);
+        $guard = $this->policy_guard_social_copy($copy, $post);
         if (is_wp_error($guard)) {
             delete_post_meta($post->ID, '_tr_ai_wire_social_copy');
             return $guard;
@@ -1716,7 +1716,7 @@ trait TechnoRapper_AI_Wire_Social {
         }
         $format = $this->social_item_pack_format($prepared[0], $settings);
         $caption = $this->instagram_pack_caption($prepared);
-        $guard = $this->policy_guard_text($caption, 'social');
+        $guard = $this->policy_guard_text($caption, 'social', null, $prepared[0]['post'] ?? null);
         if (is_wp_error($guard)) {
             return $guard;
         }
@@ -1782,7 +1782,7 @@ trait TechnoRapper_AI_Wire_Social {
             }
         }
         $caption = $this->x_pack_caption($prepared);
-        $guard = $this->policy_guard_text($caption, 'social');
+        $guard = $this->policy_guard_text($caption, 'social', null, $prepared[0]['post'] ?? null);
         if (is_wp_error($guard)) {
             return $guard;
         }
@@ -1907,7 +1907,7 @@ trait TechnoRapper_AI_Wire_Social {
         $generated = $this->generate_social_copy($post, $settings);
         if (!is_wp_error($generated) && is_array($generated)) {
             $copy = $this->sanitize_social_copy($generated, $post, $settings);
-            $guard = $this->policy_guard_social_copy($copy);
+            $guard = $this->policy_guard_social_copy($copy, $post);
             if (is_wp_error($guard)) {
                 return $guard;
             }
@@ -1922,7 +1922,7 @@ trait TechnoRapper_AI_Wire_Social {
             return $this->sanitize_social_copy($decoded, $post, $settings);
         }
         $copy = $this->sanitize_social_copy(array(), $post, $settings);
-        $guard = $this->policy_guard_social_copy($copy);
+        $guard = $this->policy_guard_social_copy($copy, $post);
         if (is_wp_error($guard)) {
             return $guard;
         }
