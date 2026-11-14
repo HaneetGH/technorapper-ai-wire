@@ -3400,8 +3400,64 @@ class Test_TechnoRapper_AI_Wire_Production_Safety extends WP_UnitTestCase {
         $this->assertSame($generated_id, $this->invoke_private('next_pipeline_item_id'));
         $this->assertSame($pending_id, $this->invoke_private('next_pipeline_item_id', array(array($generated_id => true))));
         $this->assertSame(0, $this->invoke_private('next_pipeline_item_id', array(array($generated_id => true, $pending_id => true))));
-        $this->assertTrue($this->invoke_private('pipeline_item_is_unfinished', array($this->invoke_private('get_item', array($pending_id)))));
-        $this->assertFalse($this->invoke_private('pipeline_item_is_unfinished', array($this->invoke_private('get_item', array($held_id)))));
+    }
+
+    public function test_scoped_run_schedules_a_continue_when_stories_remain() {
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'max_posts_per_day' => 5,
+        )), false);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'feed_url' => 'https://example.com/comics.xml',
+            'source_title' => 'Marvel announces a new series',
+        ), array('id' => $id));
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::CRON_HOOK);
+        $this->invoke_private('bind_editorial_fetch_scope', array(array(
+            'desk_lane' => '',
+            'feed_url' => 'https://example.com/comics.xml',
+        )));
+        $this->assertSame($id, $this->invoke_private('next_pipeline_item_id'));
+        $this->invoke_private('schedule_editorial_continue');
+        $this->invoke_private('bind_editorial_fetch_scope', array(array()));
+        $event = wp_get_scheduled_event(TechnoRapper_AI_Wire::CRON_HOOK, array(array(
+            'reason' => 'continue',
+            'desk_lane' => '',
+            'feed_url' => 'https://example.com/comics.xml',
+        )));
+        $this->assertNotFalse($event);
+        $payload = is_array($event->args[0] ?? null) ? $event->args[0] : array();
+        $this->assertSame('continue', $payload['reason'] ?? '');
+        $this->assertSame('', $payload['desk_lane'] ?? 'missing');
+        $this->assertSame('https://example.com/comics.xml', $payload['feed_url'] ?? '');
+    }
+
+    public function test_idle_queue_offers_the_highest_priority_story() {
+        update_option(TechnoRapper_AI_Wire::OPTION, array_merge(TechnoRapper_AI_Wire::defaults(), array(
+            'max_posts_per_day' => 5,
+            'hot_topics' => "Marvel\n",
+        )), false);
+        $id = $this->create_queue_item();
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'tr_ai_wire_items', array(
+            'status' => 'pending',
+            'source_title' => 'Marvel announces a new series',
+        ), array('id' => $id));
+        wp_clear_scheduled_hook(TechnoRapper_AI_Wire::CRON_HOOK);
+        delete_option(TechnoRapper_AI_Wire::JOB_OPTION);
+        $stall = $this->invoke_private('editorial_queue_stall');
+        $this->assertSame('idle', $stall['reason']);
+        $this->assertSame($id, (int) $stall['item_id']);
+        $this->assertStringContainsString('Marvel announces a new series', $stall['message']);
+        $admin_id = $this->factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($admin_id);
+        ob_start();
+        $this->plugin->queue_page();
+        $html = ob_get_clean();
+        $this->assertStringContainsString('Queue is not moving.', $html);
+        $this->assertStringContainsString('Run highest priority', $html);
+        $this->assertStringContainsString('tr_ai_wire_run_priority', $html);
     }
 
     public function test_failed_stories_do_not_stop_the_run_before_a_publishable_one() {

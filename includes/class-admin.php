@@ -128,6 +128,8 @@ trait TechnoRapper_AI_Wire_Admin {
                 <?php endif; ?>
             <?php endif; ?>
 
+            <?php $this->render_queue_stall_notice(); ?>
+            <?php $this->render_social_stall_notice(); ?>
             <h2 style="margin-top:28px;">Website stories waiting (<?php echo esc_html((string) count($website)); ?>)</h2>
             <?php if (!$website) : ?>
                 <p>No unfinished website queue rows.</p>
@@ -1148,6 +1150,69 @@ trait TechnoRapper_AI_Wire_Admin {
         exit;
     }
 
+    public function run_priority_item() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You are not allowed to run this task.', 'technorapper-ai-wire'));
+        }
+        check_admin_referer('tr_ai_wire_run_priority');
+        $id = $this->next_pipeline_item_id();
+        if ($id < 1 || $this->remaining_posts_today($this->settings()) <= 0) {
+            wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue&queue_notice=priority_blocked'));
+            exit;
+        }
+        $this->enqueue_background_job('priority', array('item_id' => $id));
+        wp_safe_redirect(admin_url('admin.php?page=tr-ai-wire-queue'));
+        exit;
+    }
+
+    private function render_queue_stall_notice() {
+        $stall = $this->editorial_queue_stall();
+        if (!$stall) {
+            return;
+        }
+        ?>
+        <div class="notice notice-warning"><p>
+            <strong>Queue is not moving.</strong>
+            <?php echo esc_html((string) ($stall['message'] ?? '')); ?>
+            <?php if (($stall['reason'] ?? '') === 'idle') : ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-left:8px;">
+                    <input type="hidden" name="action" value="tr_ai_wire_run_priority">
+                    <?php wp_nonce_field('tr_ai_wire_run_priority'); ?>
+                    <?php submit_button('Run highest priority', 'primary', 'submit', false); ?>
+                </form>
+            <?php endif; ?>
+        </p></div>
+        <?php
+    }
+
+    private function render_social_stall_notice() {
+        if ($this->social_active_queued_count() < 1) {
+            return;
+        }
+        $job = get_option(self::JOB_OPTION, array());
+        $kind = is_array($job) ? (string) ($job['kind'] ?? '') : '';
+        $busy = is_array($job) && in_array((string) ($job['status'] ?? ''), array('queued', 'running'), true) && in_array($kind, array('social', 'social_pack', 'social_retry'), true);
+        if ($busy) {
+            return;
+        }
+        $next = wp_next_scheduled(self::SOCIAL_CRON_HOOK);
+        if ($next && $next <= time() + 120) {
+            return;
+        }
+        $count = $this->social_active_queued_count();
+        ?>
+        <div class="notice notice-warning"><p>
+            <strong>Social queue is not moving.</strong>
+            <?php echo esc_html($count . ' social post' . ($count === 1 ? ' is' : 's are') . ' queued and the social job is not running.'); ?>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block;margin-left:8px;">
+                <input type="hidden" name="action" value="tr_ai_wire_run_social_queue">
+                <?php wp_nonce_field('tr_ai_wire_run_social_queue'); ?>
+                <?php submit_button('Run social queue', 'primary', 'submit', false); ?>
+            </form>
+        </p></div>
+        <?php
+    }
+
     public function scores_page() {
         if (!current_user_can('manage_options')) {
             return;
@@ -1373,10 +1438,13 @@ trait TechnoRapper_AI_Wire_Admin {
             'cleared' => 'Unfinished queue items were removed. Drafts, published posts, and WordPress posts were kept.',
             'cleaned' => 'The queue board is clean. WordPress posts were kept. The same feeds can be ingested again.',
             'repaired' => 'Existing AI Wire posts were reassigned to homepage desks and given featured images so they can appear on the home board.',
+            'priority_blocked' => 'No waiting story can run. The daily cap is full, or the desk mix is holding every row.',
         );
         if (isset($notices[$notice])) :
-            ?><div class="notice notice-success is-dismissible"><p><?php echo esc_html($notices[$notice]); ?></p></div><?php
+            ?><div class="notice notice-<?php echo $notice === 'priority_blocked' ? 'warning' : 'success'; ?> is-dismissible"><p><?php echo esc_html($notices[$notice]); ?></p></div><?php
         endif;
+        $this->render_queue_stall_notice();
+        $this->render_social_stall_notice();
         if ($this->is_run_in_progress()) :
             ?><div class="notice notice-warning"><p><strong>A run is in progress.</strong> Use Stop current run to release the lock after the item already in flight.</p></div><?php
         endif;
@@ -1423,6 +1491,9 @@ trait TechnoRapper_AI_Wire_Admin {
                 <?php echo esc_html((string) (int) ($last_run['published'] ?? 0)); ?> published,
                 <?php echo esc_html((string) (int) ($last_run['drafts'] ?? 0)); ?> drafts,
                 <?php echo esc_html((string) (int) ($last_run['quarantined'] ?? 0)); ?> quarantined.
+                <?php if (!empty($last_run['stopped'])) : ?>
+                    <?php echo esc_html((string) $last_run['stopped']); ?>
+                <?php endif; ?>
             <?php endif; ?>
             <?php if (!empty($last_run['feed_errors']) && is_array($last_run['feed_errors'])) : ?>
                 <br><?php echo esc_html(implode(' · ', array_map('sanitize_text_field', $last_run['feed_errors']))); ?>

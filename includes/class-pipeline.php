@@ -75,7 +75,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
         if ($hot_id > 0) {
             return $hot_id;
         }
-        for ($i = 0; $i < 40; $i++) {
+        for ($i = 0; $i < 200; $i++) {
             $id = $this->next_pipeline_item_id_raw($tried);
             if ($id < 1) {
                 return 0;
@@ -127,7 +127,7 @@ trait TechnoRapper_AI_Wire_Pipeline {
              AND (" . implode(' OR ', $likes) . ")
              {$not_in}
              ORDER BY id DESC
-             LIMIT 20",
+             LIMIT 50",
             $params
         ));
         foreach ((array) $ids as $id) {
@@ -501,5 +501,62 @@ trait TechnoRapper_AI_Wire_Pipeline {
         } catch (Throwable $e) {
             // Ledger failure must not change queue or CMS state.
         }
+    }
+
+    private function unfinished_website_count() {
+        global $wpdb;
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$this->table}
+             WHERE status IN ('pending', 'new', 'generated', 'rewritten', 'reviewed', 'waiting_budget', 'retry_wait')"
+        );
+    }
+
+    /**
+     * Waiting stories with no worker and no soon cron. A run that hits the
+     * per-run post limit used to leave this state with no message.
+     */
+    private function editorial_queue_stall() {
+        $count = $this->unfinished_website_count();
+        if ($count < 1) {
+            return array();
+        }
+        $job = get_option(self::JOB_OPTION, array());
+        $job_busy = is_array($job) && in_array((string) ($job['status'] ?? ''), array('queued', 'running'), true);
+        if ($job_busy || $this->is_run_in_progress()) {
+            return array();
+        }
+        $next_cron = $this->next_editorial_cron_timestamp();
+        if ($next_cron && $next_cron <= time() + 120) {
+            return array();
+        }
+        $s = $this->settings();
+        $waiting_id = $this->next_pipeline_item_id();
+        $item = $waiting_id > 0 ? $this->get_item($waiting_id) : null;
+        $title = is_array($item) ? trim((string) ($item['source_title'] ?? '')) : '';
+        $remaining = $this->remaining_posts_today($s);
+        if ($remaining <= 0) {
+            return array(
+                'reason' => 'cap',
+                'count' => $count,
+                'message' => $count . ' stories are waiting, and today\'s post cap is full. Raise Maximum posts per day to run more.',
+            );
+        }
+        if ($waiting_id < 1) {
+            return array(
+                'reason' => 'blocked',
+                'count' => $count,
+                'message' => $count . ' stories are waiting, but none can run. The desk mix or daily cap is holding them.',
+            );
+        }
+        $hot = $this->item_matches_hot_topic($item, $s);
+        $which = $hot ? 'Hot topic' : 'Next story';
+        $named = $title !== '' ? $which . ': ' . $title . '.' : '';
+        return array(
+            'reason' => 'idle',
+            'count' => $count,
+            'item_id' => $waiting_id,
+            'title' => $title,
+            'message' => $count . ' stories are still waiting and no job is running. A run stops after ' . (int) $s['max_items_per_run'] . ' posts. ' . $named,
+        );
     }
 }
